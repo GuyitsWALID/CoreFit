@@ -29,20 +29,15 @@ import {
   CardTitle,
   CardFooter
 } from "@/components/ui/card";
+import { supabase } from "@/supabaseClient";
 
 const formSchema = z.object({
-  fullName: z.string().min(2, {
-    message: "Name must be at least 2 characters.",
-  }),
-  phoneNumber: z.string().min(10, {
-    message: "Phone number must be valid.",
-  }),
-  email: z.string().email({
-    message: "Please enter a valid email address.",
-  }),
-  gender: z.string(),
-  package: z.string(),
-  paymentStatus: z.string(),
+  fullName: z.string().min(2, { message: "Name is required." }),
+  phone: z.string().min(10, { message: "Phone number is required." }),
+  email: z.string().email({ message: "Valid email is required." }),
+  gender: z.string().min(1, { message: "Gender is required." }),
+  mebership_package: z.string().min(1, { message: "Membership package is required." }),
+  paymentStatus: z.string().min(1, { message: "Payment status is required." }),
 });
 
 export default function RegisterClient() {
@@ -52,22 +47,34 @@ export default function RegisterClient() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       fullName: "",
-      phoneNumber: "",
+      phone: "",
       email: "",
       gender: "",
-      package: "",
+      mebership_package: "",
       paymentStatus: "",
     },
   });
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
-    console.log(values);
+  async function onSubmit(values: z.infer<typeof formSchema>) {
+    const { fullName, phone, email, gender, mebership_package, paymentStatus } = values;
+    const { error } = await supabase.from('users').insert([
+      {
+        full_name: fullName,
+        phone,
+        email,
+        gender,
+        mebership_package,
+        payment_status: paymentStatus
+      }
+    ]);
+    if (error) {
+      toast({ title: "Registration failed", description: error.message, variant: "destructive" });
+      return;
+    }
     toast({
       title: "Client registered successfully",
       description: "QR code has been generated for the client.",
     });
-    
-    // In a real app, we'd save this data and generate a QR code
     form.reset();
   }
 
@@ -100,7 +107,7 @@ export default function RegisterClient() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
-                  name="phoneNumber"
+                  name="phone"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Phone Number</FormLabel>
@@ -153,7 +160,7 @@ export default function RegisterClient() {
                 
                 <FormField
                   control={form.control}
-                  name="package"
+                  name="mebership_package"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Membership Package</FormLabel>
