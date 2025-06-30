@@ -45,6 +45,7 @@ export default function Packages() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('active');
   const [displayMode, setDisplayMode] = useState<'card' | 'list'>('card');
+  const [nameError, setNameError] = useState('');
   const [formData, setFormData] = useState({
     id: "",
     name: "",
@@ -88,12 +89,38 @@ export default function Packages() {
     }
   };
 
+  const checkDuplicateName = (name: string) => {
+    if (!name.trim()) {
+      setNameError('');
+      return;
+    }
+
+    const trimmedName = name.trim().toLowerCase();
+    const isDuplicate = packages.some(pkg => 
+      pkg.name.toLowerCase() === trimmedName && 
+      (!isEditing || pkg.id !== formData.id) // Exclude current package when editing
+    );
+
+    if (isDuplicate) {
+      setNameError('A package with this name already exists');
+    } else {
+      setNameError('');
+    }
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
+    const newValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
+    
     setFormData({
       ...formData,
-      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
+      [name]: newValue
     });
+
+    // Check for duplicate names when name field changes
+    if (name === 'name') {
+      checkDuplicateName(value);
+    }
   };
 
   const resetForm = () => {
@@ -109,6 +136,7 @@ export default function Packages() {
       description: ""
     });
     setIsEditing(false);
+    setNameError('');
   };
 
   const handleEdit = (pkg: Package) => {
@@ -192,15 +220,25 @@ export default function Packages() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Final validation before submission
+    if (nameError) {
+      toast({
+        title: "Validation Error",
+        description: "Please fix the name error before submitting.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const packageData = {
-      name: formData.name,
+      name: formData.name.trim(),
       price: parseFloat(formData.price),
       duration_value: parseInt(formData.duration_value),
       duration_unit: formData.duration_unit,
       access_level: formData.access_level,
       number_of_pauses: parseInt(formData.number_of_pauses),
       requires_trainer: formData.requires_trainer,
-      description: formData.description || null
+      description: formData.description.trim() || null
     };
 
     try {
@@ -276,7 +314,7 @@ export default function Packages() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <p className="text-2xl font-bold mb-3">${pkg.price}</p>
+        <p className="text-2xl font-bold mb-3">{pkg.price} ETB</p>
         {pkg.description && (
           <p className="text-gray-600 mb-4">{pkg.description}</p>
         )}
@@ -328,7 +366,7 @@ export default function Packages() {
             </span>
           )}
         </div>
-        <p className="text-2xl font-bold text-fitness-primary mb-1">${pkg.price}</p>
+        <p className="text-2xl font-bold text-fitness-primary mb-1">{pkg.price} ETB</p>
         <p className="text-sm text-gray-600">
           {pkg.duration_value} {pkg.duration_unit} • {pkg.access_level === 'peak_hours' ? 'Peak Hours' : 'Off-Peak Hours'}
           {pkg.requires_trainer && ' • Trainer Required'}
@@ -391,12 +429,15 @@ export default function Packages() {
                     onChange={handleInputChange}
                     required
                     placeholder="e.g. Premium Membership"
-                    className="h-9"
+                    className={`h-9 ${nameError ? 'border-red-500 focus:border-red-500' : ''}`}
                   />
+                  {nameError && (
+                    <p className="text-sm text-red-500 mt-1">{nameError}</p>
+                  )}
                 </div>
                 
                 <div className="space-y-1">
-                  <Label htmlFor="price" className="text-sm">Price ($)</Label>
+                  <Label htmlFor="price" className="text-sm">Price (ETB)</Label>
                   <Input
                     id="price"
                     name="price"
@@ -405,7 +446,7 @@ export default function Packages() {
                     value={formData.price}
                     onChange={handleInputChange}
                     required
-                    placeholder="29.99"
+                    placeholder="1500.00"
                     className="h-9"
                   />
                 </div>
@@ -520,7 +561,7 @@ export default function Packages() {
                   resetForm();
                   setDialogOpen(false);
                 }}>Cancel</Button>
-                <Button type="submit" size="sm" className="bg-fitness-primary hover:bg-fitness-primary/90 text-white">
+                <Button type="submit" size="sm" disabled={!!nameError} className="bg-fitness-primary hover:bg-fitness-primary/90 text-white disabled:opacity-50 disabled:cursor-not-allowed">
                   {isEditing ? "Update Package" : "Create Package"}
                 </Button>
               </DialogFooter>

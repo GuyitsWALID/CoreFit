@@ -35,6 +35,7 @@ export function Header() {
             <DropdownMenuSeparator />
             {/* Below this the mock notifications has to be replaced by actual notification fetched fromt the database
             * notification types should be discussed that are relavant to user */}
+            {/* fetches only 3 most recent notifications from DB and then a link to see more */}
             <DropdownMenuItem className="py-2 cursor-pointer">
               <div className="flex flex-col gap-1">
                 <span className="font-medium">John Doe's membership is expiring</span>

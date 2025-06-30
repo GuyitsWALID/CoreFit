@@ -8,7 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import RegisterClient from "./pages/RegisterClient";
 import CheckIns from "./pages/CheckIns";
 import Packages from "./pages/Packages";
-import ExpiringMemberships from "./pages/ExpiringMemberships";
+import ExpiringMemberships from "./pages/MembershipList";
 import Team from "./pages/Team";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
