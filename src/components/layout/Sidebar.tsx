@@ -12,7 +12,9 @@ import {
   FileText,
   Settings,
   LogOut,
-  Menu
+  Menu,
+  Bell,
+  BellDot
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 
@@ -57,6 +59,11 @@ const navItems: NavItem[] = [
     label: 'Reports',
     href: '/reports',
     icon: FileText,
+  },
+   {
+    label: 'Notifications',
+    href: '/notification',
+    icon: Bell,
   },
   {
     label: 'Settings',

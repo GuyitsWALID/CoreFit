@@ -15,7 +15,8 @@ import Settings from "./pages/Settings";
 import Logout from "./pages/Logout";
 import NotFound from "./pages/NotFound";
 import AdminLogin from './pages/AdminLogin';
-import TestLogin from './TestLogin';
+import Notifications from "./pages/Notifications";
+
 
 const queryClient = new QueryClient();
 
@@ -33,6 +34,7 @@ const App = () => (
           <Route path="/expiring-memberships" element={<DashboardLayout><ExpiringMemberships /></DashboardLayout>} />
           <Route path="/team" element={<DashboardLayout><Team /></DashboardLayout>} />
           <Route path="/reports" element={<DashboardLayout><Reports /></DashboardLayout>} />
+          <Route path="/notification" element={<DashboardLayout><Notifications /></DashboardLayout>} />
           <Route path="/settings" element={<DashboardLayout><Settings /></DashboardLayout>} />
           <Route path="/logout" element={<Logout />} />
           <Route path="/admin/login" element={<AdminLogin />} />
