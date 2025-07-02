@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
@@ -14,9 +13,9 @@ export default function Logout() {
       description: "You have been logged out of your account.",
     });
     
-    // Redirect to home after a brief delay
+    // Redirect to admin login after a brief delay
     setTimeout(() => {
-      navigate('/');
+      navigate('/admin/login');
     }, 1500);
   }, [navigate, toast]);
   

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
 import { supabase } from "@/supabaseClient";
+import { useNavigate } from "react-router-dom";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Valid email is required." }),
@@ -32,6 +33,7 @@ export default function AdminLogin() {
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -62,14 +64,20 @@ export default function AdminLogin() {
         return;
       }
 
-      // Check if user is admin (you might want to check user role from your database)
+      // Check if user exists and is admin (replace this with your real admin check if needed)
       if (data.user) {
+        // Optionally, fetch user profile/role from your DB here and check for admin role
         toast({
           title: "Login successful",
           description: "Welcome to the admin dashboard",
         });
-        // Redirect to admin dashboard
-        // window.location.href = '/admin/dashboard';
+        navigate("/"); // Redirect to dashboard
+      } else {
+        toast({
+          title: "Login failed",
+          description: "No such admin user found.",
+          variant: "destructive",
+        });
       }
     } catch (error) {
       console.error('Login error:', error);
