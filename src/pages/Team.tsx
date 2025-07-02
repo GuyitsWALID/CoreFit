@@ -50,6 +50,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Archive, Search, Fingerprint, Eye, EyeOff, Grid3X3, List, Check, X } from 'lucide-react';
 import { supabase } from "@/supabaseClient";
+import FingerprintScannerCard from "@/components/FingerprintScannerCard";
 
 const formSchema = z.object({
   first_name: z.string().min(2, { message: "First name is required." }),
@@ -64,6 +65,7 @@ const formSchema = z.object({
     message: "Please enter a valid hire date",
   }),
   salary: z.string().min(1, { message: "Salary is required." }),
+  fingerprint_enrolled: z.boolean().optional(), // Add this field
 });
 
 interface TeamMember {
@@ -107,7 +109,8 @@ export default function TeamManagement() {
   const [showFingerprintEnrollment, setShowFingerprintEnrollment] = useState(false);
   const [registeredMemberName, setRegisteredMemberName] = useState("");
   const [registeredMemberId, setRegisteredMemberId] = useState("");
-  const [fingerprintStatus, setFingerprintStatus] = useState<'idle' | 'enrolling' | 'success' | 'error'>('idle');
+  const [fingerprintStatus, setFingerprintStatus] = useState<'idle' | 'scanning' | 'success' | 'error'>('idle');
+  const [fingerprintData, setFingerprintData] = useState<Uint8Array | null>(null);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -122,6 +125,7 @@ export default function TeamManagement() {
       role: "",
       hire_date: "",
       salary: "",
+      fingerprint_enrolled: false, // Add this default value
     },
   });
 
@@ -223,80 +227,88 @@ export default function TeamManagement() {
   // Handle form submission
   async function onSubmit(values: z.infer<typeof formSchema>) {
     try {
-      console.log('Starting team member registration with values:', values);
+      // 1. Register with Supabase Auth
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: values.email,
+        password: values.password,
+      });
 
-      // Check if email already exists
-      const { data: existingUser, error: checkError } = await supabase
-        .from('staff')
-        .select('id, email')
-        .eq('email', values.email)
-        .single();
-
-      if (checkError && checkError.code !== 'PGRST116') {
-        console.error('Error checking email:', checkError);
+      if (signUpError) {
         toast({
           title: "Registration failed",
-          description: `Error checking email: ${checkError.message}`,
+          description: signUpError.message,
           variant: "destructive"
         });
         return;
       }
 
-      if (existingUser) {
+      // Wait for user to exist in auth.users (max 2 seconds)
+      let userId = signUpData?.user?.id;
+      if (!userId) {
         toast({
           title: "Registration failed",
-          description: "A person with this email address already exists.",
+          description: "No user ID returned from signUp.",
           variant: "destructive"
         });
         return;
       }
 
-      // Create staff record with role
-      const { data: staffData, error: staffError } = await supabase
-        .from('staff')
-        .insert([
-          {
-            first_name: values.first_name,
-            last_name: values.last_name,
-            email: values.email,
-            phone: values.phone,
-            date_of_birth: values.date_of_birth || null,
-            gender: values.gender || null,
-            password: values.password, // In production, hash this password
-            role_id: values.role,
-            hire_date: values.hire_date,
-            salary: parseFloat(values.salary),
-            is_active: true
-          }
-        ])
-        .select()
-        .single();
+      // Instead of polling auth.users, just proceed (Supabase Auth inserts are eventually consistent)
+      // If your RPC fails due to missing user, catch and show a clear error
 
-      if (staffError) {
-        console.error('Staff creation error:', staffError);
-        toast({
-          title: "Registration failed",
-          description: `Error: ${staffError.message}`,
-          variant: "destructive"
-        });
+      // 2. Call the new RPC to insert staff profile (fingerprint fields null for now)
+      const { error: rpcError } = await supabase.rpc('register_staff_profile', {
+        p_user_id: userId,
+        p_first_name: values.first_name,
+        p_last_name: values.last_name,
+        p_gender: values.gender || null,
+        p_email: values.email,
+        p_phone: values.phone,
+        p_fingerprint_data: null,
+        p_fingerprint_enrolled: false,
+        p_fingerprint_enrolled_at: null,
+        p_role_id: values.role,
+        p_hire_date: values.hire_date ? new Date(values.hire_date).toISOString().split('T')[0] : null,
+        p_salary: parseFloat(values.salary),
+        p_date_of_birth: values.date_of_birth ? new Date(values.date_of_birth).toISOString().split('T')[0] : null,
+      });
+
+      if (rpcError) {
+        // Check for foreign key violation (user not yet in auth.users)
+        if (
+          rpcError.message &&
+          rpcError.message.toLowerCase().includes("foreign key constraint")
+        ) {
+          toast({
+            title: "Registration failed",
+            description: "User was not yet available in the database. Please wait a few seconds and try again.",
+            variant: "destructive"
+          });
+        } else {
+          toast({
+            title: "Profile registration failed",
+            description: rpcError.message,
+            variant: "destructive"
+          });
+        }
         return;
       }
 
       toast({
         title: "Team member registered successfully",
-        description: `${values.first_name} ${values.last_name} has been added to the team.`,
+        description: `${values.first_name} ${values.last_name} has been added to the team. Please enroll fingerprint.`,
       });
 
-      // Show fingerprint enrollment
       setRegisteredMemberName(`${values.first_name} ${values.last_name}`);
-      setRegisteredMemberId(staffData.id);
+      setRegisteredMemberId(userId);
       setShowFingerprintEnrollment(true);
-      
+      setFingerprintStatus('idle');
+      setFingerprintData(null);
+
       form.reset();
       setDialogOpen(false);
       fetchTeamMembers();
     } catch (error: any) {
-      console.error('Unexpected error during registration:', error);
       toast({
         title: "Registration failed",
         description: `An unexpected error occurred: ${error?.message || 'Unknown error'}`,
@@ -305,59 +317,57 @@ export default function TeamManagement() {
     }
   }
 
-  // Fingerprint enrollment
+  // Fingerprint enrollment logic (after registration)
   const handleFingerprintEnroll = async () => {
-    setFingerprintStatus('enrolling');
-    
-    // Simulate fingerprint enrollment
+    setFingerprintStatus('scanning');
     setTimeout(async () => {
-      try {
-        // In a real implementation, you would capture actual fingerprint data
-        const mockFingerprintData = {
-          template: "mock_fingerprint_template_data",
-          quality: 95,
-          enrolled_at: new Date().toISOString()
-        };
+      const fakeFingerprintData = new Uint8Array([1, 2, 3, 4, 5, Math.floor(Math.random() * 255)]);
+      setFingerprintData(fakeFingerprintData);
 
-        // Update staff with fingerprint data
-        const { error: updateError } = await supabase
-          .from('staff')
-          .update({
-            fingerprint_data: mockFingerprintData,
-            fingerprint_enrolled: true,
-            fingerprint_enrolled_at: new Date().toISOString()
-          })
-          .eq('id', registeredMemberId);
-
-        if (updateError) {
-          console.error('Error saving fingerprint:', updateError);
-          setFingerprintStatus('error');
-          toast({
-            title: "Fingerprint enrollment failed",
-            description: "Could not save fingerprint data",
-            variant: "destructive"
-          });
-        } else {
-          setFingerprintStatus('success');
-          toast({
-            title: "Fingerprint enrolled successfully",
-            description: "Team member can now use fingerprint for access.",
-          });
-          // Refresh team members to show updated fingerprint status
-          fetchTeamMembers();
-        }
-      } catch (error) {
-        console.error('Error during fingerprint enrollment:', error);
+      if (!registeredMemberId) {
         setFingerprintStatus('error');
+        return;
       }
-    }, 3000);
+      // Update fingerprint_data and fingerprint_enrolled
+      const { error } = await supabase
+        .from('staff')
+        .update({
+          fingerprint_data: fakeFingerprintData,
+          fingerprint_enrolled_at: new Date().toISOString(),
+          fingerprint_enrolled: true
+        })
+        .eq('user_id', registeredMemberId);
+
+      if (error) {
+        setFingerprintStatus('error');
+        toast({
+          title: "Fingerprint enrollment failed",
+          description: error.message,
+          variant: "destructive"
+        });
+      } else {
+        setFingerprintStatus('success');
+        form.setValue("fingerprint_enrolled", true);
+        toast({
+          title: "Fingerprint enrolled",
+          description: "Fingerprint has been recorded successfully.",
+        });
+        fetchTeamMembers(); // Refresh the team members list
+      }
+    }, 2000);
   };
 
-  const resetFingerprintSection = () => {
-    setShowFingerprintEnrollment(false);
+  const handleFingerprintRetry = () => {
     setFingerprintStatus('idle');
-    setRegisteredMemberName("");
+    setFingerprintData(null);
+  };
+
+  const handleFingerprintDone = () => {
+    setShowFingerprintEnrollment(false);
     setRegisteredMemberId("");
+    setRegisteredMemberName("");
+    setFingerprintStatus('idle');
+    setFingerprintData(null);
   };
 
   // Filter team members
@@ -489,175 +499,204 @@ export default function TeamManagement() {
 
   return (
     <div className="animate-fade-in">
-      <div className={`grid gap-6 ${showFingerprintEnrollment ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-3xl font-bold tracking-tight">Team Management</h2>
-            
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-fitness-primary hover:bg-fitness-primary/90 text-white" onClick={resetForm}>
-                  <Plus className="mr-2 h-4 w-4" /> Add Team Member
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[525px] max-h-[80vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>Add New Team Member</DialogTitle>
-                  <DialogDescription>
-                    Enter the details of the new team member.
-                  </DialogDescription>
-                </DialogHeader>
-                <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="first_name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>First Name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="John" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="last_name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Last Name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Doe" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="email"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Email</FormLabel>
-                            <FormControl>
-                              <Input placeholder="john@fitnesshub.com" type="email" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="phone"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Phone</FormLabel>
-                            <FormControl>
-                              <Input placeholder="+1 234 567 8900" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Password</FormLabel>
-                          <div className="flex gap-2">
-                            <div className="relative flex-1">
+      <div className="max-w-5xl mx-auto flex flex-col md:flex-row gap-8">
+        <div className="flex flex-1">
+          <div className="space-y-6 w-full">
+            <div className="flex items-center justify-between">
+              <h2 className="text-3xl font-bold tracking-tight">Team Management</h2>
+              
+              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-fitness-primary hover:bg-fitness-primary/90 text-white" onClick={resetForm}>
+                    <Plus className="mr-2 h-4 w-4" /> Add Team Member
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[525px] max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Add New Team Member</DialogTitle>
+                    <DialogDescription>
+                      Enter the details of the new team member.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="first_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>First Name</FormLabel>
                               <FormControl>
-                                <Input 
-                                  placeholder="Enter password" 
-                                  type={showPassword ? "text" : "password"} 
-                                  {...field} 
-                                  className="pr-10"
-                                />
+                                <Input placeholder="John" {...field} />
                               </FormControl>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                                onClick={togglePasswordVisibility}
-                              >
-                                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="last_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Last Name</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Doe" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="email"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Email</FormLabel>
+                              <FormControl>
+                                <Input placeholder="john@fitnesshub.com" type="email" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="phone"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Phone</FormLabel>
+                              <FormControl>
+                                <Input placeholder="+1 234 567 8900" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name="password"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Password</FormLabel>
+                            <div className="flex gap-2">
+                              <div className="relative flex-1">
+                                <FormControl>
+                                  <Input 
+                                    placeholder="Enter password" 
+                                    type={showPassword ? "text" : "password"} 
+                                    {...field} 
+                                    className="pr-10"
+                                  />
+                                </FormControl>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                  onClick={togglePasswordVisibility}
+                                >
+                                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </Button>
+                              </div>
+                              <Button type="button" variant="outline" size="sm" onClick={generatePassword}>
+                                Generate
                               </Button>
                             </div>
-                            <Button type="button" variant="outline" size="sm" onClick={generatePassword}>
-                              Generate
-                            </Button>
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="role"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Role</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select role" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {roles.map((role) => (
-                                  <SelectItem key={role.id} value={role.id}>
-                                    {role.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={form.control}
-                        name="gender"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Gender (Optional)</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select gender" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="male">Male</SelectItem>
-                                <SelectItem value="female">Female</SelectItem>
-                                <SelectItem value="other">Other</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="role"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Role</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select role" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {roles.map((role) => (
+                                    <SelectItem key={role.id} value={role.id}>
+                                      {role.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="gender"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Gender (Optional)</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select gender" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="male">Male</SelectItem>
+                                  <SelectItem value="female">Female</SelectItem>
+                                  <SelectItem value="other">Other</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="hire_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Hire Date</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="salary"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Salary</FormLabel>
+                              <FormControl>
+                                <Input placeholder="50000" type="number" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
                       <FormField
                         control={form.control}
-                        name="hire_date"
+                        name="date_of_birth"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Hire Date</FormLabel>
+                            <FormLabel>Date of Birth (Optional)</FormLabel>
                             <FormControl>
                               <Input type="date" {...field} />
                             </FormControl>
@@ -665,322 +704,201 @@ export default function TeamManagement() {
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={form.control}
-                        name="salary"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Salary</FormLabel>
-                            <FormControl>
-                              <Input placeholder="50000" type="number" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
 
-                    <FormField
-                      control={form.control}
-                      name="date_of_birth"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Date of Birth (Optional)</FormLabel>
-                          <FormControl>
-                            <Input type="date" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <DialogFooter>
-                      <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>
-                        Cancel
-                      </Button>
-                      <Button type="submit" className="bg-fitness-primary hover:bg-fitness-primary/90 text-white">
-                        Add Team Member
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </Form>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          {/* Search and Filters */}
-          <div className="flex flex-col md:flex-row items-center gap-4">
-            <div className="relative w-full md:w-96">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                type="search"
-                placeholder="Search team members..."
-                className="pl-9"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+                      <DialogFooter>
+                        <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button type="submit" className="bg-fitness-primary hover:bg-fitness-primary/90 text-white">
+                          Add Team Member
+                        </Button>
+                      </DialogFooter>
+                    </form>
+                  </Form>
+                </DialogContent>
+              </Dialog>
             </div>
-            
-            <div className="flex items-center gap-2 ml-auto">
-              <Button
-                variant={displayMode === 'card' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setDisplayMode('card')}
-              >
-                <Grid3X3 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={displayMode === 'list' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setDisplayMode('list')}
-              >
-                <List className="h-4 w-4" />
-              </Button>
+
+            {/* Search and Filters */}
+            <div className="flex flex-col md:flex-row items-center gap-4">
+              <div className="relative w-full md:w-96">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                <Input
+                  type="search"
+                  placeholder="Search team members..."
+                  className="pl-9"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex items-center gap-2 ml-auto">
+                <Button
+                  variant={displayMode === 'card' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setDisplayMode('card')}
+                >
+                  <Grid3X3 className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={displayMode === 'list' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setDisplayMode('list')}
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-          </div>
 
-          {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList>
-              <TabsTrigger value="all">All ({filteredMembers.length})</TabsTrigger>
-              <TabsTrigger value="admin">Admins</TabsTrigger>
-              <TabsTrigger value="trainer">Trainers</TabsTrigger>
-              <TabsTrigger value="receptionist">Receptionists</TabsTrigger>
-            </TabsList>
+            {/* Tabs */}
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsList>
+                <TabsTrigger value="all">All ({filteredMembers.length})</TabsTrigger>
+                <TabsTrigger value="admin">Admins</TabsTrigger>
+                <TabsTrigger value="trainer">Trainers</TabsTrigger>
+                <TabsTrigger value="receptionist">Receptionists</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="all" className="mt-6">
-              {displayMode === 'card' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filteredMembers.length === 0 ? (
-                    <div className="col-span-full text-center py-8 text-gray-500">
-                      No team members found. Add your first team member to get started.
-                    </div>
-                  ) : (
-                    filteredMembers.map(renderMemberCard)
-                  )}
-                </div>
-              ) : (
-                <Card>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Salary</TableHead>
-                        <TableHead>Hire Date</TableHead>
-                        <TableHead>Fingerprint</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredMembers.length === 0 ? (
+              <TabsContent value="all" className="mt-6">
+                {displayMode === 'card' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {filteredMembers.length === 0 ? (
+                      <div className="col-span-full text-center py-8 text-gray-500">
+                        No team members found. Add your first team member to get started.
+                      </div>
+                    ) : (
+                      filteredMembers.map(renderMemberCard)
+                    )}
+                  </div>
+                ) : (
+                  <Card>
+                    <Table>
+                      <TableHeader>
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center py-8 text-gray-500">
-                            No team members found. Add your first team member to get started.
-                          </TableCell>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Salary</TableHead>
+                          <TableHead>Hire Date</TableHead>
+                          <TableHead>Fingerprint</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
-                      ) : (
-                        filteredMembers.map(renderMemberRow)
-                      )}
-                    </TableBody>
-                  </Table>
-                </Card>
-              )}
-            </TabsContent>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredMembers.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={8} className="text-center py-8 text-gray-500">
+                              No team members found. Add your first team member to get started.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          filteredMembers.map(renderMemberRow)
+                        )}
+                      </TableBody>
+                    </Table>
+                  </Card>
+                )}
+              </TabsContent>
 
-            <TabsContent value="admin" className="mt-6">
-              {displayMode === 'card' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filteredMembers.map(renderMemberCard)}
-                </div>
-              ) : (
-                <Card>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Salary</TableHead>
-                        <TableHead>Hire Date</TableHead>
-                        <TableHead>Fingerprint</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredMembers.map(renderMemberRow)}
-                    </TableBody>
-                  </Table>
-                </Card>
-              )}
-            </TabsContent>
+              <TabsContent value="admin" className="mt-6">
+                {displayMode === 'card' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {filteredMembers.map(renderMemberCard)}
+                  </div>
+                ) : (
+                  <Card>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Salary</TableHead>
+                          <TableHead>Hire Date</TableHead>
+                          <TableHead>Fingerprint</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredMembers.map(renderMemberRow)}
+                      </TableBody>
+                    </Table>
+                  </Card>
+                )}
+              </TabsContent>
 
-            <TabsContent value="trainer" className="mt-6">
-              {displayMode === 'card' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filteredMembers.map(renderMemberCard)}
-                </div>
-              ) : (
-                <Card>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Salary</TableHead>
-                        <TableHead>Hire Date</TableHead>
-                        <TableHead>Fingerprint</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredMembers.map(renderMemberRow)}
-                    </TableBody>
-                  </Table>
-                </Card>
-              )}
-            </TabsContent>
+              <TabsContent value="trainer" className="mt-6">
+                {displayMode === 'card' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {filteredMembers.map(renderMemberCard)}
+                  </div>
+                ) : (
+                  <Card>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Salary</TableHead>
+                          <TableHead>Hire Date</TableHead>
+                          <TableHead>Fingerprint</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredMembers.map(renderMemberRow)}
+                      </TableBody>
+                    </Table>
+                  </Card>
+                )}
+              </TabsContent>
 
-            <TabsContent value="receptionist" className="mt-6">
-              {displayMode === 'card' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filteredMembers.map(renderMemberCard)}
-                </div>
-              ) : (
-                <Card>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Salary</TableHead>
-                        <TableHead>Hire Date</TableHead>
-                        <TableHead>Fingerprint</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredMembers.map(renderMemberRow)}
-                    </TableBody>
-                  </Table>
-                </Card>
-              )}
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="receptionist" className="mt-6">
+                {displayMode === 'card' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {filteredMembers.map(renderMemberCard)}
+                  </div>
+                ) : (
+                  <Card>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Salary</TableHead>
+                          <TableHead>Hire Date</TableHead>
+                          <TableHead>Fingerprint</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredMembers.map(renderMemberRow)}
+                      </TableBody>
+                    </Table>
+                  </Card>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
         </div>
 
         {/* Fingerprint Enrollment Section */}
         {showFingerprintEnrollment && (
-          <Card className="max-w-2xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Fingerprint className="h-6 w-6" />
-                Fingerprint Enrollment
-              </CardTitle>
-              <CardDescription>
-                Enroll {registeredMemberName}'s fingerprint for secure access.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="text-center">
-                <div className="mx-auto w-32 h-32 bg-gradient-to-b from-teal-400 to-teal-600 rounded-full flex items-center justify-center mb-4">
-                  <Fingerprint className="w-16 h-16 text-white" />
-                </div>
-                
-                {fingerprintStatus === 'idle' && (
-                  <div className="space-y-4">
-                    <p className="text-gray-600">
-                      Touch the fingerprint sensor to enroll {registeredMemberName}'s fingerprint
-                    </p>
-                    <Button 
-                      onClick={handleFingerprintEnroll}
-                      className="bg-teal-600 hover:bg-teal-700 text-white"
-                    >
-                      Start Fingerprint Enrollment
-                    </Button>
-                  </div>
-                )}
-
-                {fingerprintStatus === 'enrolling' && (
-                  <div className="space-y-4">
-                    <div className="animate-pulse">
-                      <div className="w-4 h-4 bg-teal-600 rounded-full mx-auto mb-2"></div>
-                      <p className="text-teal-600 font-medium">
-                        Enrolling fingerprint...
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        Please keep finger on sensor
-                      </p>
-                    </div>
-                    <div className="flex justify-center">
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-teal-600 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-teal-600 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                        <div className="w-2 h-2 bg-teal-600 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {fingerprintStatus === 'success' && (
-                  <div className="space-y-4">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-                      <Check className="w-8 h-8 text-green-600" />
-                    </div>
-                    <p className="text-green-600 font-medium">
-                      Fingerprint enrolled successfully!
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {registeredMemberName} can now use fingerprint for access
-                    </p>
-                  </div>
-                )}
-
-                {fingerprintStatus === 'error' && (
-                  <div className="space-y-4">
-                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
-                      <X className="w-8 h-8 text-red-600" />
-                    </div>
-                    <p className="text-red-600 font-medium">
-                      Fingerprint enrollment failed!
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      Please try again or contact support
-                    </p>
-                    <Button 
-                      onClick={() => setFingerprintStatus('idle')}
-                      variant="outline"
-                    >
-                      Try Again
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-            <CardFooter className="flex justify-between">
-              <Button 
-                variant="outline" 
-                onClick={resetFingerprintSection}
-              >
-                Add Another Member
-              </Button>
-              {fingerprintStatus === 'success' && (
-                <Button 
-                  className="bg-fitness-primary hover:bg-fitness-primary/90 text-white"
-                  onClick={resetFingerprintSection}
-                >
-                  Complete Setup
-                </Button>
-              )}
-            </CardFooter>
-          </Card>
+          <div className="flex-1 flex items-start">
+            <FingerprintScannerCard
+              status={fingerprintStatus}
+              onStart={handleFingerprintEnroll}
+              onDone={handleFingerprintDone}
+              onRetry={handleFingerprintRetry}
+              registeredClientName={registeredMemberName}
+            />
+          </div>
         )}
       </div>
     </div>
