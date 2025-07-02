@@ -157,7 +157,6 @@ export default function RegisterClient() {
         p_relationship: values.relationship || null,
         p_fitness_goal: values.fitness_goal || null,
         p_package_id: values.package_id,
-        p_membership_expiry: values.membership_expiry ? new Date(values.membership_expiry).toISOString() : null,
         p_status: 'active',
         p_date_of_birth: values.date_of_birth ? new Date(values.date_of_birth).toISOString().split('T')[0] : null,
       });
@@ -209,7 +208,7 @@ export default function RegisterClient() {
         .from('users')
         .update({
           fingerprint_data: fakeFingerprintData,
-          updated_at: new Date().toISOString(),
+          fingerprint_enrolled_at: new Date().toISOString(),
           fingerprint_enrolled: true // <-- Set to true on enrollment
         })
         .eq('id', registeredUserId);
