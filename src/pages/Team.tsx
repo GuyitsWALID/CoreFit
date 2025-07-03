@@ -51,6 +51,8 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Archive, Search, Fingerprint, Eye, EyeOff, Grid3X3, List, Check, X } from 'lucide-react';
 import { supabase } from "@/supabaseClient";
 import FingerprintScannerCard from "@/components/FingerprintScannerCard";
+import { Switch } from "@/components/ui/switch";
+import { Dialog as ConfirmDialog, DialogContent as ConfirmDialogContent, DialogHeader as ConfirmDialogHeader, DialogTitle as ConfirmDialogTitle, DialogFooter as ConfirmDialogFooter } from "@/components/ui/dialog";
 
 const formSchema = z.object({
   first_name: z.string().min(2, { message: "First name is required." }),
@@ -111,6 +113,10 @@ export default function TeamManagement() {
   const [registeredMemberId, setRegisteredMemberId] = useState("");
   const [fingerprintStatus, setFingerprintStatus] = useState<'idle' | 'scanning' | 'success' | 'error'>('idle');
   const [fingerprintData, setFingerprintData] = useState<Uint8Array | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editMember, setEditMember] = useState<TeamMember | null>(null);
+  const [confirmActiveDialog, setConfirmActiveDialog] = useState(false);
+  const [pendingActiveMember, setPendingActiveMember] = useState<TeamMember | null>(null);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -137,7 +143,7 @@ export default function TeamManagement() {
 
   const fetchTeamMembers = async () => {
     try {
-      console.log('Fetching team members...');
+      // Remove .eq('is_active', true) to fetch all staff, active and inactive
       const { data, error } = await supabase
         .from('staff')
         .select(`
@@ -147,7 +153,6 @@ export default function TeamManagement() {
             name
           )
         `)
-        .eq('is_active', true)
         .not('role_id', 'is', null)
         .order('created_at', { ascending: false });
 
@@ -258,7 +263,7 @@ export default function TeamManagement() {
 
       // 2. Call the new RPC to insert staff profile (fingerprint fields null for now)
       const { error: rpcError } = await supabase.rpc('register_staff_profile', {
-        p_user_id: userId,
+        p_id: userId,
         p_first_name: values.first_name,
         p_last_name: values.last_name,
         p_gender: values.gender || null,
@@ -336,7 +341,7 @@ export default function TeamManagement() {
           fingerprint_enrolled_at: new Date().toISOString(),
           fingerprint_enrolled: true
         })
-        .eq('user_id', registeredMemberId);
+        .eq('id', registeredMemberId);
 
       if (error) {
         setFingerprintStatus('error');
@@ -370,6 +375,94 @@ export default function TeamManagement() {
     setFingerprintData(null);
   };
 
+  // Edit button handler
+  const handleEdit = (member: TeamMember) => {
+    setEditMember(member);
+    setEditDialogOpen(true);
+    // Populate form fields for editing
+    form.reset({
+      first_name: member.first_name,
+      last_name: member.last_name,
+      email: member.email,
+      phone: member.phone,
+      password: "", // Don't show password
+      date_of_birth: member.date_of_birth || "",
+      gender: member.gender as any,
+      role: member.role_id || "",
+      hire_date: member.hire_date ? new Date(member.hire_date).toISOString().split('T')[0] : "",
+      salary: member.salary?.toString() || "",
+      fingerprint_enrolled: member.fingerprint_enrolled,
+    });
+  };
+
+  // Save edited member
+  const handleEditSave = async () => {
+    if (!editMember) return;
+    const values = form.getValues();
+    const { error } = await supabase
+      .from('staff')
+      .update({
+        first_name: values.first_name,
+        last_name: values.last_name,
+        email: values.email,
+        phone: values.phone,
+        date_of_birth: values.date_of_birth || null,
+        gender: values.gender || null,
+        role_id: values.role,
+        hire_date: values.hire_date ? new Date(values.hire_date).toISOString().split('T')[0] : null,
+        salary: parseFloat(values.salary),
+      })
+      .eq('id', editMember.id);
+
+    if (error) {
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    } else {
+      toast({
+        title: "Staff updated",
+        description: "Staff member details updated."
+      });
+      fetchTeamMembers();
+      setEditDialogOpen(false);
+      setEditMember(null);
+    }
+  };
+
+  // Toggle is_active handler
+  const handleToggleActive = (member: TeamMember) => {
+    setPendingActiveMember(member);
+    setConfirmActiveDialog(true);
+  };
+
+  // Confirm toggle is_active
+  const confirmToggleActive = async () => {
+    if (!pendingActiveMember) return;
+    const newActive = !pendingActiveMember.is_active;
+    const { error } = await supabase
+      .from('staff')
+      .update({ is_active: newActive })
+      .eq('id', pendingActiveMember.id);
+
+    if (error) {
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    } else {
+      toast({
+        title: "Status updated",
+        description: `Staff member is now ${newActive ? "active" : "inactive"}.`
+      });
+      fetchTeamMembers();
+    }
+    setConfirmActiveDialog(false);
+    setPendingActiveMember(null);
+  };
+
   // Filter team members
   const filteredMembers = teamMembers.filter(member => {
     const matchesSearch = searchTerm === '' || 
@@ -400,6 +493,11 @@ export default function TeamManagement() {
                   {member.roles.name}
                 </Badge>
               )}
+              <Switch
+                checked={member.is_active}
+                onCheckedChange={() => handleToggleActive(member)}
+                className="ml-2"
+              />
             </div>
           </div>
           {member.fingerprint_enrolled && (
@@ -414,7 +512,7 @@ export default function TeamManagement() {
         <div className="space-y-2 text-sm">
           <p><span className="font-medium">Email:</span> {member.email}</p>
           <p><span className="font-medium">Phone:</span> {member.phone}</p>
-          <p><span className="font-medium">Salary:</span> ${member.salary?.toLocaleString() || '0'}</p>
+          <p><span className="font-medium">Salary:</span> ETB {member.salary?.toLocaleString() || '0'}</p>
           <p><span className="font-medium">Hire Date:</span> {new Date(member.hire_date).toLocaleDateString()}</p>
           {member.date_of_birth && (
             <p><span className="font-medium">Date of Birth:</span> {new Date(member.date_of_birth).toLocaleDateString()}</p>
@@ -429,12 +527,10 @@ export default function TeamManagement() {
         </div>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button variant="outline" size="sm">
+        <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
           <Edit className="mr-1 h-4 w-4" /> Edit
         </Button>
-        <Button variant="secondary" size="sm">
-          <Archive className="mr-1 h-4 w-4" /> Archive
-        </Button>
+        {/* Archive button removed */}
       </CardFooter>
     </Card>
   );
@@ -461,7 +557,7 @@ export default function TeamManagement() {
       </TableCell>
       <TableCell>{member.email}</TableCell>
       <TableCell>{member.phone}</TableCell>
-      <TableCell>${member.salary?.toLocaleString() || '0'}</TableCell>
+      <TableCell>ETB {member.salary?.toLocaleString() || '0'}</TableCell>
       <TableCell>{new Date(member.hire_date).toLocaleDateString()}</TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
@@ -476,12 +572,18 @@ export default function TeamManagement() {
         </div>
       </TableCell>
       <TableCell>
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={member.is_active}
+            onCheckedChange={() => handleToggleActive(member)}
+          />
+          <span className="text-xs">{member.is_active ? "Active" : "Inactive"}</span>
+        </div>
+      </TableCell>
+      <TableCell>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
             <Edit className="h-4 w-4" />
-          </Button>
-          <Button variant="secondary" size="sm">
-            <Archive className="h-4 w-4" />
           </Button>
         </div>
       </TableCell>
@@ -499,8 +601,9 @@ export default function TeamManagement() {
 
   return (
     <div className="animate-fade-in">
-      <div className="max-w-5xl mx-auto flex flex-col md:flex-row gap-8">
-        <div className="flex flex-1">
+      <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-8">
+        {/* Team List Section (left side, takes 2/3 width on desktop) */}
+        <div className="flex-1 min-w-0">
           <div className="space-y-6 w-full">
             <div className="flex items-center justify-between">
               <h2 className="text-3xl font-bold tracking-tight">Team Management</h2>
@@ -782,6 +885,7 @@ export default function TeamManagement() {
                           <TableHead>Salary</TableHead>
                           <TableHead>Hire Date</TableHead>
                           <TableHead>Fingerprint</TableHead>
+                          <TableHead>Active</TableHead>
                           <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -888,9 +992,9 @@ export default function TeamManagement() {
           </div>
         </div>
 
-        {/* Fingerprint Enrollment Section */}
+        {/* Fingerprint Enrollment Section (right side, fixed width, not central) */}
         {showFingerprintEnrollment && (
-          <div className="flex-1 flex items-start">
+          <div className="w-full md:w-[420px] flex-shrink-0">
             <FingerprintScannerCard
               status={fingerprintStatus}
               onStart={handleFingerprintEnroll}
@@ -901,6 +1005,202 @@ export default function TeamManagement() {
           </div>
         )}
       </div>
+      {/* Confirm Active Toggle Dialog */}
+      <ConfirmDialog open={confirmActiveDialog} onOpenChange={setConfirmActiveDialog}>
+        <ConfirmDialogContent>
+          <ConfirmDialogHeader>
+            <ConfirmDialogTitle>
+              {pendingActiveMember?.is_active
+                ? "Deactivate Staff Member"
+                : "Activate Staff Member"}
+            </ConfirmDialogTitle>
+          </ConfirmDialogHeader>
+          <div>
+            Are you sure you want to {pendingActiveMember?.is_active ? "deactivate" : "activate"}{" "}
+            <span className="font-semibold">{pendingActiveMember?.first_name} {pendingActiveMember?.last_name}</span>?
+          </div>
+          <ConfirmDialogFooter>
+            <Button variant="outline" onClick={() => setConfirmActiveDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              className={pendingActiveMember?.is_active ? "bg-red-600 text-white" : "bg-green-600 text-white"}
+              onClick={confirmToggleActive}
+            >
+              {pendingActiveMember?.is_active ? "Deactivate" : "Activate"}
+            </Button>
+          </ConfirmDialogFooter>
+        </ConfirmDialogContent>
+      </ConfirmDialog>
+      {/* Edit Staff Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-[525px] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Team Member</DialogTitle>
+            <DialogDescription>
+              Update the details of the staff member.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleEditSave)} className="space-y-4">
+              {/* ...reuse the same fields as add form, except password... */}
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="first_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>First Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="John" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="last_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Last Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Doe" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input placeholder="john@fitnesshub.com" type="email" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <Input placeholder="+1 234 567 8900" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="role"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Role</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select role" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {roles.map((role) => (
+                            <SelectItem key={role.id} value={role.id}>
+                              {role.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="gender"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Gender (Optional)</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select gender" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="male">Male</SelectItem>
+                          <SelectItem value="female">Female</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="hire_date"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Hire Date</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="salary"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Salary</FormLabel>
+                      <FormControl>
+                        <Input placeholder="50000" type="number" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={form.control}
+                name="date_of_birth"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Date of Birth (Optional)</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button variant="outline" type="button" onClick={() => setEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="bg-fitness-primary hover:bg-fitness-primary/90 text-white">
+                  Save Changes
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
