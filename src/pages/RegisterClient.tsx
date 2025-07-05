@@ -46,18 +46,21 @@ const formSchema = z.object({
   email: z.string().email({ message: "Valid email is required." }),
   gender: z.string().min(1, { message: "Gender is required." }),
   package_id: z.string().min(1, { message: "Package is required." }),
+  trainer_id: z.string().optional(), // Add trainer selection
   emergency_name: z.string().optional(),
   emergency_phone: z.string().optional(),
   relationship: z.string().optional(),
   fitness_goal: z.string().optional(),
   membership_expiry: z.string().optional(),
   fingerprint_data: z.any().nullable(),
-  fingerprint_enrolled: z.boolean().optional(), // <-- Add this line
+  fingerprint_enrolled: z.boolean().optional(),
 });
 
 export default function RegisterClient() {
   const { toast } = useToast();
-  const [packages, setPackages] = useState<Array<{id: string, name: string}>>([]);
+  const [packages, setPackages] = useState<Array<{id: string, name: string, requires_trainer: boolean}>>([]);
+  const [trainers, setTrainers] = useState<Array<{id: string, full_name: string}>>([]);
+  const [selectedPackage, setSelectedPackage] = useState<{id: string, name: string, requires_trainer: boolean} | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [fingerprintStatus, setFingerprintStatus] = useState<'idle' | 'scanning' | 'success' | 'error'>('idle');
@@ -77,13 +80,14 @@ export default function RegisterClient() {
       email: "",
       gender: "",
       package_id: "",
+      trainer_id: "", // Add trainer default
       emergency_name: "",
       emergency_phone: "",
       relationship: "",
       fitness_goal: "",
       membership_expiry: "",
       fingerprint_data: null,
-      fingerprint_enrolled: false, // <-- Add this line
+      fingerprint_enrolled: false,
     },
   });
 
@@ -91,11 +95,39 @@ export default function RegisterClient() {
     async function fetchPackages() {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name')
+        .select('id, name, requires_trainer')
         .order('name');
       if (!error) setPackages(data || []);
     }
+    
+    async function fetchTrainers() {
+      // First get the trainer role_id
+      const { data: trainerRole } = await supabase
+        .from('roles')
+        .select('id')
+        .eq('name', 'trainer')
+        .single();
+      
+      if (trainerRole) {
+        const { data, error } = await supabase
+          .from('staff')
+          .select('id, first_name, last_name')
+          .eq('role_id', trainerRole.id)
+          .eq('is_active', true)
+          .order('first_name');
+        
+        if (!error) {
+          const formattedTrainers = data?.map(trainer => ({
+            id: trainer.id,
+            full_name: `${trainer.first_name} ${trainer.last_name}`
+          })) || [];
+          setTrainers(formattedTrainers);
+        }
+      }
+    }
+    
     fetchPackages();
+    fetchTrainers();
   }, []);
 
   const togglePasswordVisibility = () => setShowPassword((v) => !v);
@@ -111,6 +143,15 @@ export default function RegisterClient() {
       title: "Password generated",
       description: "A secure password has been generated.",
     });
+  };
+
+  // Handle package selection change
+  const handlePackageChange = (packageId: string) => {
+    const selectedPkg = packages.find(pkg => pkg.id === packageId);
+    setSelectedPackage(selectedPkg || null);
+    form.setValue("package_id", packageId);
+    // Reset trainer selection when package changes
+    form.setValue("trainer_id", "");
   };
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
@@ -143,7 +184,7 @@ export default function RegisterClient() {
         return;
       }
 
-      // 2. Call the RPC to insert profile data (fingerprint_data is null for now)
+      // 2. Call the RPC to insert profile data (including trainer_id)
       const { error: rpcError } = await supabase.rpc('register_user_profile', {
         p_user_id: userId,
         p_first_name: values.first_name,
@@ -157,6 +198,7 @@ export default function RegisterClient() {
         p_relationship: values.relationship || null,
         p_fitness_goal: values.fitness_goal || null,
         p_package_id: values.package_id,
+        p_trainer_id: values.trainer_id || null, // Include trainer assignment
         p_status: 'active',
         p_date_of_birth: values.date_of_birth ? new Date(values.date_of_birth).toISOString().split('T')[0] : null,
       });
@@ -181,6 +223,7 @@ export default function RegisterClient() {
       setFingerprintStatus('idle');
       setFingerprintData(null);
       form.reset();
+      setSelectedPackage(null);
     } catch (error) {
       toast({
         title: "Registration failed",
@@ -401,7 +444,7 @@ export default function RegisterClient() {
                         <FormItem>
                           <FormLabel>Membership Package</FormLabel>
                           <Select 
-                            onValueChange={field.onChange}
+                            onValueChange={handlePackageChange}
                             defaultValue={field.value}
                           >
                             <FormControl>
@@ -422,6 +465,38 @@ export default function RegisterClient() {
                       )}
                     />
                   </div>
+                  
+                  {/* Trainer Selection - Only show when package requires trainer */}
+                  {selectedPackage && selectedPackage.requires_trainer && (
+                    <FormField
+                      control={form.control}
+                      name="trainer_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Assign Trainer *</FormLabel>
+                          <Select 
+                            onValueChange={field.onChange}
+                            defaultValue={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a trainer" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {trainers.map((trainer) => (
+                                <SelectItem key={trainer.id} value={trainer.id}>
+                                  {trainer.full_name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
                   <FormField
                     control={form.control}
                     name="fitness_goal"
