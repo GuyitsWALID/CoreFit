@@ -18,6 +18,7 @@ import AdminLogin from './pages/AdminLogin';
 import Notifications from "./pages/Notifications";
 import { useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { Analytics } from "@vercel/analytics/next"
 import React from "react";
 
 
