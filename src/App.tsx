@@ -16,6 +16,7 @@ import Logout from "./pages/Logout";
 import NotFound from "./pages/NotFound";
 import AdminLogin from './pages/AdminLogin';
 import Notifications from "./pages/Notifications";
+import TrainersList from "./pages/TrainersList";
 import { useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { Analytics } from "@vercel/analytics/next"
@@ -28,8 +29,7 @@ const RequireAdminLogin = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = React.useState(true);
-  const [isLoggedIn, setIsLoggedIn] = React.useState(false);
-
+  const [isLoggedIn, setIsLoggedIn] = React.useState(false);  
   useEffect(() => {
     // Check Supabase auth session
     const checkSession = async () => {
@@ -44,7 +44,7 @@ const RequireAdminLogin = ({ children }: { children: React.ReactNode }) => {
       }
       setIsLoading(false);
     };
-    checkSession();
+    checkSession();    checkSession();
 
     // Listen for auth state changes
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -54,12 +54,12 @@ const RequireAdminLogin = ({ children }: { children: React.ReactNode }) => {
         setIsLoggedIn(false);
         if (location.pathname !== "/admin/login") {
           navigate("/admin/login");
-        }
+        } 
       }
     });
 
     return () => {
-      listener?.subscription.unsubscribe();
+      listener?.subscription.unsubscribe();listener?.subscription.unsubscribe();
     };
   }, [location.pathname, navigate]);
 
@@ -67,7 +67,7 @@ const RequireAdminLogin = ({ children }: { children: React.ReactNode }) => {
     return null;
   }
   if (!isLoggedIn && location.pathname !== "/admin/login") {
-    return null;
+    return null; return null;
   }
   return <>{children}</>;
 };
@@ -90,6 +90,7 @@ const App = () => (
                   <Route path="/check-ins" element={<DashboardLayout><CheckIns /></DashboardLayout>} />
                   <Route path="/packages" element={<DashboardLayout><Packages /></DashboardLayout>} />
                   <Route path="/expiring-memberships" element={<DashboardLayout><ExpiringMemberships /></DashboardLayout>} />
+                  <Route path="/trainers" element={<DashboardLayout><TrainersList /></DashboardLayout>} />
                   <Route path="/team" element={<DashboardLayout><Team /></DashboardLayout>} />
                   <Route path="/reports" element={<DashboardLayout><Reports /></DashboardLayout>} />
                   <Route path="/notification" element={<DashboardLayout><Notifications /></DashboardLayout>} />
@@ -98,12 +99,13 @@ const App = () => (
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </RequireAdminLogin>
-            }
+            } 
           />
         </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
-);
+);  
 
 export default App;
+

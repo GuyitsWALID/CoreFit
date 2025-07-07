@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Search, Download, Users, Clock, AlertTriangle, Bell, MoreHorizontal, RefreshCw, Snowflake, ArrowUpRight, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/supabaseClient";
-import { useOnClickOutside } from "@/hooks/useOnClickOutside";
 
 interface MembershipInfo {
   user_id: string;
@@ -45,6 +44,8 @@ export default function MembershipList() {
   const [availablePackages, setAvailablePackages] = useState<Array<{id: string, name: string, price: number}>>([]);
   const [canFreeze, setCanFreeze] = useState<Record<string, boolean>>({});
   const [processingAction, setProcessingAction] = useState<string | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | 'none'>('none');
 
   useEffect(() => {
     fetchMembershipData();
@@ -74,7 +75,24 @@ export default function MembershipList() {
     if (activeTab === "expiring") matchesTab = member.days_left <= 10 && member.days_left >= 0;
     if (activeTab === "expired") matchesTab = member.days_left < 0;
     return matchesSearch && matchesStatus && matchesPackage && matchesTab;
+  }).sort((a, b) => {
+    if (sortOrder === 'asc') {
+      return a.full_name.localeCompare(b.full_name);
+    } else if (sortOrder === 'desc') {
+      return b.full_name.localeCompare(a.full_name);
+    }
+    return 0; // no sorting for 'none'
   });
+
+  const handleSort = () => {
+    if (sortOrder === 'none') {
+      setSortOrder('asc');
+    } else if (sortOrder === 'asc') {
+      setSortOrder('desc');
+    } else {
+      setSortOrder('none');
+    }
+  };
 
   const expiringCount = members.filter((m) => m.days_left <= 10 && m.days_left >= 0).length;
   const expiredCount = members.filter((m) => m.days_left < 0).length;
@@ -210,161 +228,6 @@ export default function MembershipList() {
     fetchPackages();
   };
 
-  // --- Simple Modal Component ---
-  function SimpleModal({ 
-    isOpen, 
-    onClose, 
-    title, 
-    children 
-  }: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    title: string; 
-    children: React.ReactNode;
-  }) {
-    const modalRef = useRef<HTMLDivElement>(null);
-    
-    useOnClickOutside(modalRef, onClose, isOpen);
-
-    if (!isOpen) return null;
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        {/* Backdrop */}
-        <div className="fixed inset-0 bg-black bg-opacity-50" />
-        
-        {/* Modal */}
-        <div 
-          ref={modalRef}
-          className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto"
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <Bell className="h-5 w-5" />
-              {title}
-            </h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onClose}
-              className="h-6 w-6 p-0"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          
-          {/* Content */}
-          <div className="p-6">
-            {children}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Upgrade Modal Component ---
-  function UpgradeModal({ 
-    isOpen, 
-    onClose, 
-    member,
-    availablePackages,
-    selectedPackage,
-    setSelectedPackage,
-    onSubmit,
-    isProcessing
-  }: { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    member: MembershipInfo | null;
-    availablePackages: Array<{id: string, name: string, price: number}>;
-    selectedPackage: string;
-    setSelectedPackage: (value: string) => void;
-    onSubmit: () => void;
-    isProcessing: boolean;
-  }) {
-    const modalRef = useRef<HTMLDivElement>(null);
-    
-    useOnClickOutside(modalRef, onClose, isOpen);
-
-    if (!isOpen || !member) return null;
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        {/* Backdrop */}
-        <div className="fixed inset-0 bg-black bg-opacity-50" />
-        
-        {/* Modal */}
-        <div 
-          ref={modalRef}
-          className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto"
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b">
-            <h2 className="text-lg font-semibold">Upgrade Package</h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onClose}
-              className="h-6 w-6 p-0"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          
-          {/* Content */}
-          <div className="p-6 space-y-4">
-            <p className="text-sm text-gray-600">
-              Upgrade package for: {member.full_name}
-            </p>
-            
-            <div>
-              <label className="text-sm font-medium text-gray-700">Current Package</label>
-              <Input
-                value={member.package_name}
-                disabled
-                className="mt-1 bg-gray-50"
-              />
-            </div>
-            
-            <div>
-              <label className="text-sm font-medium text-gray-700">New Package</label>
-              <Select value={selectedPackage} onValueChange={setSelectedPackage}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select new package" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availablePackages
-                    .filter(pkg => pkg.id !== member.package_id)
-                    .map(pkg => (
-                      <SelectItem key={pkg.id} value={pkg.id}>
-                        {pkg.name} - ETB {pkg.price?.toLocaleString() || 0}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {/* Footer */}
-            <div className="flex justify-end gap-3 pt-4">
-              <Button variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                className="bg-fitness-primary hover:bg-fitness-primary/90 text-white"
-                onClick={onSubmit}
-                disabled={!selectedPackage || isProcessing}
-              >
-                <ArrowUpRight className="mr-2 h-4 w-4" />
-                {isProcessing ? "Upgrading..." : "Confirm Upgrade"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const handleUpgradeSubmit = async () => {
     if (!upgradeMember || !selectedPackage) {
       toast({
@@ -411,62 +274,15 @@ export default function MembershipList() {
 
   // --- Actions Dropdown ---
   function ActionsDropdown({ member }: { member: MembershipInfo }) {
-    const [isOpen, setIsOpen] = useState(false);
-    const dropdownRef = useRef<HTMLDivElement>(null);
-    
-    // Close dropdown when clicking outside or pressing Escape
-    useOnClickOutside(dropdownRef, () => setIsOpen(false), isOpen);
-    
-    const handleFreezeClick = (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!canFreeze[member.user_id]) {
-        toast({
-          title: "Freeze not allowed",
-          description: "This member doesn't qualify for membership freeze at this time.",
-          variant: "destructive"
-        });
-        return;
-      }
-      setIsOpen(false);
-      handleFreeze(member);
-    };
-
-    const handleRenewClick = (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsOpen(false);
-      handleRenew(member);
-    };
-
-    const handleUpgradeClick = (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsOpen(false);
-      handleUpgrade(member);
-    };
-
-    const handleDeactivateClick = (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsOpen(false);
-      // Add deactivate logic here
-    };
-
-    const handleToggleClick = (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsOpen(!isOpen);
-    };
+    const isOpen = openDropdown === member.user_id;
 
     return (
-      <div className="relative" ref={dropdownRef}>
+      <div className="relative">
         <Button
           variant="outline"
           size="sm"
           className="px-3 py-1 h-8"
-          onClick={handleToggleClick}
-          type="button"
+          onClick={() => setOpenDropdown(isOpen ? null : member.user_id)}
         >
           <MoreHorizontal className="h-4 w-4" />
         </Button>
@@ -474,13 +290,15 @@ export default function MembershipList() {
         {isOpen && (
           <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
             <button 
-              type="button"
               className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 ${
                 !canFreeze[member.user_id] 
                   ? 'opacity-50 cursor-not-allowed text-gray-400' 
                   : 'text-gray-700'
               }`}
-              onClick={handleFreezeClick}
+              onClick={() => {
+                setOpenDropdown(null);
+                handleFreeze(member);
+              }}
               disabled={processingAction === `freeze-${member.user_id}` || !canFreeze[member.user_id]}
             >
               <Snowflake className="h-4 w-4" /> 
@@ -488,9 +306,11 @@ export default function MembershipList() {
             </button>
             
             <button 
-              type="button"
               className="w-full text-left px-3 py-2 text-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50"
-              onClick={handleRenewClick}
+              onClick={() => {
+                setOpenDropdown(null);
+                handleRenew(member);
+              }}
               disabled={processingAction === `renew-${member.user_id}`}
             >
               <RefreshCw className="h-4 w-4" /> 
@@ -498,9 +318,11 @@ export default function MembershipList() {
             </button>
             
             <button 
-              type="button"
               className="w-full text-left px-3 py-2 text-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50"
-              onClick={handleUpgradeClick}
+              onClick={() => {
+                setOpenDropdown(null);
+                handleUpgrade(member);
+              }}
               disabled={processingAction === `upgrade-${member.user_id}`}
             >
               <ArrowUpRight className="h-4 w-4" /> Upgrade Package
@@ -509,14 +331,142 @@ export default function MembershipList() {
             <div className="border-t border-gray-100 my-1"></div>
             
             <button 
-              type="button"
               className="w-full text-left px-3 py-2 text-sm text-red-600 flex items-center gap-2 hover:bg-red-50"
-              onClick={handleDeactivateClick}
+              onClick={() => setOpenDropdown(null)}
             >
               Deactivate
             </button>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // --- Simple Modal Component ---
+  function SimpleModal({ 
+    isOpen, 
+    onClose, 
+    title, 
+    children 
+  }: { 
+    isOpen: boolean; 
+    onClose: () => void; 
+    title: string; 
+    children: React.ReactNode;
+  }) {
+    if (!isOpen) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black bg-opacity-50" />
+        <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between p-6 border-b">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Bell className="h-5 w-5" />
+              {title}
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-6 w-6 p-0"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="p-6">
+            {children}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Upgrade Modal Component ---
+  function UpgradeModal({ 
+    isOpen, 
+    onClose, 
+    member,
+    availablePackages,
+    selectedPackage,
+    setSelectedPackage,
+    onSubmit,
+    isProcessing
+  }: { 
+    isOpen: boolean; 
+    onClose: () => void; 
+    member: MembershipInfo | null;
+    availablePackages: Array<{id: string, name: string, price: number}>;
+    selectedPackage: string;
+    setSelectedPackage: (value: string) => void;
+    onSubmit: () => void;
+    isProcessing: boolean;
+  }) {
+    if (!isOpen || !member) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black bg-opacity-50" />
+        <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between p-6 border-b">
+            <h2 className="text-lg font-semibold">Upgrade Package</h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-6 w-6 p-0"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-gray-600">
+              Upgrade package for: {member.full_name}
+            </p>
+            
+            <div>
+              <label className="text-sm font-medium text-gray-700">Current Package</label>
+              <Input
+                value={member.package_name}
+                disabled
+                className="mt-1 bg-gray-50"
+              />
+            </div>
+            
+            <div>
+              <label className="text-sm font-medium text-gray-700">New Package</label>
+              <Select value={selectedPackage} onValueChange={setSelectedPackage}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select new package" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availablePackages
+                    .filter(pkg => pkg.id !== member.package_id)
+                    .map(pkg => (
+                      <SelectItem key={pkg.id} value={pkg.id}>
+                        {pkg.name} - ETB {pkg.price?.toLocaleString() || 0}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex justify-end gap-3 pt-4">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-fitness-primary hover:bg-fitness-primary/90 text-white"
+                onClick={onSubmit}
+                disabled={!selectedPackage || isProcessing}
+              >
+                <ArrowUpRight className="mr-2 h-4 w-4" />
+                {isProcessing ? "Upgrading..." : "Confirm Upgrade"}
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -571,13 +521,8 @@ export default function MembershipList() {
             
             <div className="flex gap-3 items-center">
               <Button
-                type="button"
                 className="bg-fitness-primary hover:bg-fitness-primary/90 text-white flex items-center gap-2 px-4 py-2"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleNotify(member);
-                }}
+                onClick={() => handleNotify(member)}
               >
                 <Bell className="h-4 w-4" /> Notify
               </Button>
@@ -588,6 +533,20 @@ export default function MembershipList() {
       </div>
     );
   }
+
+  // Click outside handler for dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (openDropdown) {
+        setOpenDropdown(null);
+      }
+    };
+    
+    if (openDropdown) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [openDropdown]);
 
   if (isLoading) {
     return (
@@ -604,11 +563,19 @@ export default function MembershipList() {
             <h2 className="text-3xl font-bold tracking-tight">Membership Management</h2>
             <p className="text-gray-500 mt-1">Manage member subscriptions, renewals, and freezes</p>
           </div>
-          <Button className="bg-fitness-primary hover:bg-fitness-primary/90 text-white" onClick={() => {}}>
+          <Button 
+            className="bg-fitness-primary hover:bg-fitness-primary/90 text-white" 
+            onClick={() => {
+              // Simple export logic
+              console.log("Exporting", filteredMembers.length, "members");
+              toast({ title: "Export started", description: `Exporting ${filteredMembers.length} members` });
+            }}
+          >
             <Download className="h-4 w-4 mr-2" />
             Export ({filteredMembers.length})
           </Button>
         </div>
+        
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-white rounded-xl border p-6 flex flex-col gap-2">
@@ -664,7 +631,19 @@ export default function MembershipList() {
               ))}
             </SelectContent>
           </Select>
+          <Button 
+            variant="outline" 
+            onClick={handleSort}
+            className="flex items-center gap-2"
+          >
+            {sortOrder === 'none' && 'Sort A-Z'}
+            {sortOrder === 'asc' && 'Sort Z-A'}
+            {sortOrder === 'desc' && 'Clear Sort'}
+            {sortOrder === 'asc' && <span className="text-xs">↑</span>}
+            {sortOrder === 'desc' && <span className="text-xs">↓</span>}
+          </Button>
         </div>
+        
         {/* Tabs */}
         <div className="bg-white rounded-lg border mb-4">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -692,6 +671,7 @@ export default function MembershipList() {
           )}
         </div>
       </div>
+      
       {/* Notification Modal */}
       <SimpleModal
         isOpen={notifyDialog}
@@ -750,7 +730,6 @@ export default function MembershipList() {
             />
           </div>
           
-          {/* Footer */}
           <div className="flex justify-end gap-3 pt-4">
             <Button variant="outline" onClick={() => setNotifyDialog(false)}>
               Cancel

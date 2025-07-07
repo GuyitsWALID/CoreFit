@@ -32,7 +32,7 @@ interface Package {
   duration_value: number;
   duration_unit: string;
   access_level: string;
-  number_of_pauses: number;
+  number_of_passes: number;
   requires_trainer: boolean;
   description?: string;
   created_at: string;
@@ -53,7 +53,7 @@ export default function Packages() {
     duration_value: "",
     duration_unit: "months",
     access_level: "off_peak_hours",
-    number_of_pauses: "0",
+    number_of_passes: "0",
     requires_trainer: false,
     description: ""
   });
@@ -131,7 +131,7 @@ export default function Packages() {
       duration_value: "",
       duration_unit: "months",
       access_level: "off_peak_hours",
-      number_of_pauses: "0",
+      number_of_passes: "0",
       requires_trainer: false,
       description: ""
     });
@@ -142,16 +142,17 @@ export default function Packages() {
   const handleEdit = (pkg: Package) => {
     setFormData({
       id: pkg.id,
-      name: pkg.name,
-      price: pkg.price.toString(),
-      duration_value: pkg.duration_value.toString(),
-      duration_unit: pkg.duration_unit,
-      access_level: pkg.access_level,
-      number_of_pauses: pkg.number_of_pauses.toString(),
-      requires_trainer: pkg.requires_trainer,
+      name: pkg.name || "",
+      price: (pkg.price || 0).toString(),
+      duration_value: (pkg.duration_value || 0).toString(),
+      duration_unit: pkg.duration_unit || "months",
+      access_level: pkg.access_level || "off_peak_hours",
+      number_of_passes: (pkg.number_of_passes || 0).toString(),
+      requires_trainer: pkg.requires_trainer || false,
       description: pkg.description || ""
     });
     setIsEditing(true);
+    setNameError('');
     setDialogOpen(true);
   };
 
@@ -236,7 +237,7 @@ export default function Packages() {
       duration_value: parseInt(formData.duration_value),
       duration_unit: formData.duration_unit,
       access_level: formData.access_level,
-      number_of_pauses: parseInt(formData.number_of_pauses),
+      number_of_passes: parseInt(formData.number_of_passes),
       requires_trainer: formData.requires_trainer,
       description: formData.description.trim() || null
     };
@@ -325,7 +326,7 @@ export default function Packages() {
           </li>
           <li className="flex items-center">
             <span className="h-1.5 w-1.5 rounded-full bg-fitness-primary mr-2"></span>
-            {pkg.number_of_pauses} pause{pkg.number_of_pauses !== 1 ? 's' : ''} allowed
+            {pkg.number_of_passes} pass{pkg.number_of_passes !== 1 ? 'es' : ''} allowed
           </li>
           <li className="flex items-center">
             <span className="h-1.5 w-1.5 rounded-full bg-fitness-primary mr-2"></span>
@@ -340,7 +341,11 @@ export default function Packages() {
         </ul>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button variant="outline" size="sm" onClick={() => handleEdit(pkg)}>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => handleEdit(pkg)}
+        >
           <Edit className="mr-1 h-4 w-4" /> Edit
         </Button>
         <Button 
@@ -376,7 +381,11 @@ export default function Packages() {
         )}
       </div>
       <div className="flex gap-2 ml-4">
-        <Button variant="outline" size="sm" onClick={() => handleEdit(pkg)}>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => handleEdit(pkg)}
+        >
           <Edit className="mr-1 h-4 w-4" /> Edit
         </Button>
         <Button 
@@ -495,13 +504,13 @@ export default function Packages() {
                 </div>
                 
                 <div className="space-y-1">
-                  <Label htmlFor="number_of_pauses" className="text-sm">Pauses Allowed</Label>
+                  <Label htmlFor="number_of_passes" className="text-sm">Passes Allowed</Label>
                   <Input
-                    id="number_of_pauses"
-                    name="number_of_pauses"
+                    id="number_of_passes"
+                    name="number_of_passes"
                     type="number"
                     min="0"
-                    value={formData.number_of_pauses}
+                    value={formData.number_of_passes}
                     onChange={handleInputChange}
                     required
                     placeholder="0"

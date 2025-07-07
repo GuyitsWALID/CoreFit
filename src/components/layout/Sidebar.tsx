@@ -46,13 +46,18 @@ const navItems: NavItem[] = [
     icon: Package,
   },
   {
-    label: 'Membership Expiry',
+    label: 'Members List',
     href: '/expiring-memberships',
     icon: Clock,
   },
   {
     label: 'Team',
     href: '/team',
+    icon: UserCog,
+  },
+  {
+    label: 'Trainers',
+    href: '/trainers',
     icon: UserCog,
   },
   {

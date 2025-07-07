@@ -96,6 +96,7 @@ export default function RegisterClient() {
       const { data, error } = await supabase
         .from('packages')
         .select('id, name, requires_trainer')
+        .eq('archived', false) // Only fetch non-archived packages
         .order('name');
       if (!error) setPackages(data || []);
     }
@@ -198,6 +199,7 @@ export default function RegisterClient() {
         p_relationship: values.relationship || null,
         p_fitness_goal: values.fitness_goal || null,
         p_package_id: values.package_id,
+        p_membership_expiry: values.membership_expiry ? new Date(values.membership_expiry).toISOString() : null,
         p_trainer_id: values.trainer_id || null, // Include trainer assignment
         p_status: 'active',
         p_date_of_birth: values.date_of_birth ? new Date(values.date_of_birth).toISOString().split('T')[0] : null,
