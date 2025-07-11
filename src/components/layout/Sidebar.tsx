@@ -14,7 +14,8 @@ import {
   LogOut,
   Menu,
   Bell,
-  BellDot
+  BellDot,
+  Dumbbell
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 
@@ -58,7 +59,7 @@ const navItems: NavItem[] = [
   {
     label: 'Trainers',
     href: '/trainers',
-    icon: UserCog,
+    icon: Dumbbell,
   },
   {
     label: 'Reports',
