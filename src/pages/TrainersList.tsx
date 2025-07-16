@@ -32,6 +32,16 @@ interface Trainer {
     status: string;
   }>;
 }
+// TrainersList.tsx (at the top)
+type MemberRow = {
+  user_id:           string;
+  first_name:        string;
+  last_name:         string;
+  membership_expiry: string;
+  status:            string;
+  package_name:      string;
+};
+
 type Assignment = {
   user_id: string;
   users: {
@@ -96,37 +106,28 @@ export default function TrainersList() {
     // 3) For each trainer, fetch their current assignments
     const trainersWithDetails = await Promise.all(
       trainersData.map(async (trainer) => {
-        // note the explicit typing on `assignments`
-        const { data: rawAssignments, error: assignError } = 
-          await supabase
-            .from('trainer_assignments')
-            .select(`
-              user_id,
-              users (
-                id,
-                first_name,
-                last_name,
-                membership_expiry,
-                status,
-                packages (
-                  id,
-                  name
-                )
-              )
-            `) as { data: Assignment[] | null; error: any };
+        const { data: memberRows, error: memberError } = await supabase
+          .from('trainer_member_details')
+          .select(`
+            user_id,
+            first_name,
+            last_name,
+            membership_expiry,
+            status,
+            package_name
+          `)
+          .eq('trainer_id', trainer.id);
 
-        if (assignError) throw assignError;
+        if (memberError) throw memberError;
 
-        const assignments = rawAssignments || [];
-
-        // map to your Trainer.members shape
-        const formattedMembers = assignments.map(a => ({
-          id:           a.users.id,
-          full_name:    `${a.users.first_name} ${a.users.last_name}`,
-          package_name: a.users.packages[0]?.name ?? 'Unknown',
-          membership_expiry: a.users.membership_expiry,
-          status:       a.users.status,
+        const formattedMembers = (memberRows || []).map(row => ({
+          id:                row.user_id,
+          full_name:         `${row.first_name} ${row.last_name}`,
+          package_name:      row.package_name,
+          membership_expiry: row.membership_expiry,
+          status:            row.status,
         }));
+
 
         // fetch the packages they could be assigned to (unchanged)
         const { data: packages } = await supabase
