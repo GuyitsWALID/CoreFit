@@ -31,6 +31,8 @@ import {
 import { Eye, EyeOff, Fingerprint } from "lucide-react";
 import { supabase } from "@/supabaseClient";
 import FingerprintScannerCard from "@/components/FingerprintScannerCard";
+import PhoneInput from 'react-phone-input-2';
+import 'react-phone-input-2/lib/style.css';
 
 // --- Zod schema for validation ---
 const formSchema = z.object({
@@ -367,34 +369,59 @@ export default function RegisterClient() {
                       )}
                     />
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="phone"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Phone Number</FormLabel>
-                          <FormControl>
-                            <Input placeholder="+1 234 567 8900" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="email"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Email</FormLabel>
-                          <FormControl>
-                            <Input placeholder="john.doe@example.com" {...field} type="email" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Phone Number</FormLabel>
+                            <FormControl>
+                              {/* Use react-phone-input-2 for country code dropdown with flags */}
+                              <div className="w-full">
+                                {/* Ethiopia default: country="et" */}
+                                <PhoneInput
+                                  country={'et'}
+                                  value={field.value}
+                                  onChange={field.onChange}
+                                  inputProps={{
+                                    name: 'phone',
+                                    required: true,
+                                    autoFocus: false,
+                                  }}
+                                  inputClass="w-full"
+                                  containerClass="w-full"
+                                  dropdownClass="z-50"
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="email"
+                        render={({ field, fieldState }) => (
+                          <FormItem>
+                            <FormLabel>Email</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="john.doe@example.com"
+                                {...field}
+                                type="email"
+                                className={fieldState.invalid ? "border-red-500" : ""}
+                              />
+                            </FormControl>
+                            <FormMessage>
+                              {fieldState.error?.message
+                                ? fieldState.error.message
+                                : ""}
+                            </FormMessage>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <FormField
                       control={form.control}

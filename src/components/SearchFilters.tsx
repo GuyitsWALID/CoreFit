@@ -42,6 +42,7 @@ export function SearchFilters({
         <SelectContent>
           <SelectItem value="all">All Status</SelectItem>
           <SelectItem value="active">Active</SelectItem>
+          <SelectItem value="inactive">Inactive</SelectItem>
           <SelectItem value="expired">Expired</SelectItem>
           <SelectItem value="paused">Paused</SelectItem>
         </SelectContent>

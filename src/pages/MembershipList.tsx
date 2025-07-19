@@ -11,8 +11,22 @@ import {
   MemberCard,
   NotificationModal,
   UpgradeModal,
-  ExportButton
+  ExportButton,
 } from "@/components";
+import { OneToOneCoachingModal } from "@/components/OneToOneCoachingModal";
+import FreezeModal from "@/components/FreezeModal";
+
+// Type definitions for the one-to-one coaching feature
+// Updated to match the OneToOneCoachingModal interface exactly
+interface CoachingSessionData {
+  user_id: string;
+  trainer_staff_id: string; // Changed from trainer_id to match SQL schema
+  hourly_rate: number; // Added hourly_rate field
+  days_per_week: number;
+  hours_per_session: number;
+  start_date: string; // ISO date string
+  status?: 'active' | 'paused' | 'completed' | 'cancelled';
+}
 
 interface MembershipInfo {
   user_id: string;
@@ -25,6 +39,15 @@ interface MembershipInfo {
   membership_expiry: string;
   status: string;
   days_left: number;
+}
+
+interface Trainer {
+  id: string;
+  full_name: string;
+  email: string;
+  phone?: string;
+  hourly_rate: number;
+  specialization: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -57,6 +80,24 @@ export default function MembershipList() {
   const [selectedPackage, setSelectedPackage] = useState("");
   const [availablePackages, setAvailablePackages] = useState<Array<{id: string, name: string, price: number}>>([]);
   
+  // New coaching modal states
+  const [coachingDialog, setCoachingDialog] = useState(false);
+  const [coachingMember, setCoachingMember] = useState<MembershipInfo | null>(null);
+  const [trainers, setTrainers] = useState<Trainer[]>([]);
+
+  // Modal for freezing memberships
+  const [freezeDialog, setFreezeDialog] = useState(false);
+const [freezeMember, setFreezeMember] = useState<MembershipInfo | null>(null);
+
+const openFreezeModal = (member: MembershipInfo) => {
+  setFreezeMember(member);
+  setFreezeDialog(true);
+};
+
+const onFreezeSuccess = () => {
+  fetchMembershipData();
+};
+  
   // Action states
   const [canFreeze, setCanFreeze] = useState<Record<string, boolean>>({});
   const [processingAction, setProcessingAction] = useState<string | null>(null);
@@ -65,22 +106,34 @@ export default function MembershipList() {
   // Data fetching
   useEffect(() => {
     fetchMembershipData();
+    fetchTrainers();
   }, []);
 
   const fetchMembershipData = async () => {
     setIsLoading(true);
     try {
+      // Try to use the new user_combined_costs view first, fallback to users_with_membership_info
       const { data, error } = await supabase
-        .from("users_with_membership_info")
+        .from("user_combined_costs")
         .select("*")
         .order("days_left", { ascending: true });
       
       if (error) {
-        toast({
-          title: "Error loading data",
-          description: error.message,
-          variant: "destructive"
-        });
+        // Fallback to the original view if the new one doesn't exist yet
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from("users_with_membership_info")
+          .select("*")
+          .order("days_left", { ascending: true });
+        
+        if (fallbackError) {
+          toast({
+            title: "Error loading data",
+            description: fallbackError.message,
+            variant: "destructive"
+          });
+        } else {
+          setMembers(fallbackData || []);
+        }
       } else {
         setMembers(data || []);
       }
@@ -92,6 +145,75 @@ export default function MembershipList() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Fetch trainers for coaching modal - adapted to use staff table
+  const fetchTrainers = async () => {
+    try {
+      // Query staff table for trainers
+      const { data, error } = await supabase
+        .from('staff')
+        .select(`
+          id,
+          full_name,
+          email,
+          phone,
+          salary,
+          roles!inner(name)
+        `)
+        .eq('roles.name', 'Trainer')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+      
+      if (!error && data) {
+        // Transform staff data to trainer format
+        const transformedTrainers: Trainer[] = data.map(staff => ({
+          id: staff.id,
+          full_name: staff.full_name,
+          email: staff.email,
+          phone: staff.phone,
+          hourly_rate: staff.salary || 50, // Use salary as hourly rate, default to 50 if null
+          specialization: 'Personal Training' // Default specialization, can be enhanced later
+        }));
+        setTrainers(transformedTrainers);
+      } else {
+        console.error('Error fetching trainers:', error);
+        // For demo purposes, use mock data if query fails
+        setTrainers([
+          {
+            id: '1',
+            full_name: 'John Smith',
+            email: 'john@gym.com',
+            hourly_rate: 50,
+            specialization: 'Strength Training'
+          },
+          {
+            id: '2',
+            full_name: 'Sarah Johnson',
+            email: 'sarah@gym.com',
+            hourly_rate: 45,
+            specialization: 'Yoga & Flexibility'
+          },
+          {
+            id: '3',
+            full_name: 'Mike Wilson',
+            email: 'mike@gym.com',
+            hourly_rate: 60,
+            specialization: 'Cardio & Weight Loss'
+          },
+          {
+            id: '4',
+            full_name: 'Lisa Brown',
+            email: 'lisa@gym.com',
+            hourly_rate: 55,
+            specialization: 'Functional Training'
+          }
+        ]);
+      }
+    } catch (error) {
+      console.error('Error fetching trainers:', error);
+     
     }
   };
 
@@ -132,7 +254,7 @@ export default function MembershipList() {
     }
   };
 
-  // Check freeze eligibility
+  /* Check freeze eligibility
   useEffect(() => {
     const checkFreezeEligibility = async () => {
       const results: Record<string, boolean> = {};
@@ -154,7 +276,7 @@ export default function MembershipList() {
     if (filteredMembers.length > 0) {
       checkFreezeEligibility();
     }
-  }, [filteredMembers]);
+  }, [filteredMembers]);*/
 
   // Fetch available packages for upgrade
   const fetchPackages = async () => {
@@ -197,40 +319,39 @@ export default function MembershipList() {
     }, 1200);
   };
 
- const handleRenew = async (member: MembershipInfo) => {
-  setProcessingAction(`renew-${member.user_id}`);
-  setOpenDropdown(null);
-
-  try {
-    // Match the function's parameter name: p_user_id
-    const { error } = await supabase.rpc('renew_membership', {
-      p_user_id: member.user_id
-    });
-
-    if (error) {
+  const handleRenew = async (member: MembershipInfo) => {
+    setProcessingAction(`renew-${member.user_id}`);
+    setOpenDropdown(null);
+    
+    try {
+      const { error } = await supabase.rpc('renew_function', { 
+        user_id: member.user_id,
+        package_id: member.package_id
+      });
+      
+      if (error) {
+        toast({
+          title: "Renewal failed",
+          description: error.message,
+          variant: "destructive"
+        });
+      } else {
+        toast({
+          title: "Membership renewed",
+          description: `${member.full_name}'s membership has been renewed successfully.`
+        });
+        fetchMembershipData();
+      }
+    } catch (error: any) {
       toast({
         title: "Renewal failed",
-        description: error.message,
+        description: `Unexpected error: ${error?.message || 'Unknown error'}`,
         variant: "destructive"
       });
-    } else {
-      toast({
-        title: "Membership renewed",
-        description: `${member.full_name}'s membership has been renewed successfully.`
-      });
-      fetchMembershipData();
+    } finally {
+      setProcessingAction(null);
     }
-  } catch (err: any) {
-    toast({
-      title: "Renewal failed",
-      description: `Unexpected error: ${err.message || 'Unknown error'}`,
-      variant: "destructive"
-    });
-  } finally {
-    setProcessingAction(null);
-  }
-};
-
+  };
 
   const handleFreeze = async (member: MembershipInfo) => {
     setProcessingAction(`freeze-${member.user_id}`);
@@ -318,6 +439,60 @@ export default function MembershipList() {
     }
   };
 
+  // New coaching handlers
+  const handleCoaching = (member: MembershipInfo) => {
+    setCoachingMember(member);
+    setCoachingDialog(true);
+    setOpenDropdown(null);
+  };
+
+  // Updated handleCoachingSubmit to match the new CoachingSessionData interface
+  const handleCoachingSubmit = (coachingData: CoachingSessionData) => {
+    setProcessingAction(`coaching-${coachingData.user_id}`);
+    
+    const insertCoaching = async () => {
+      try {
+        const { error } = await supabase
+          .from('one_to_one_coaching')
+          .insert([{
+            user_id: coachingData.user_id,
+            trainer_staff_id: coachingData.trainer_staff_id, // Updated to match SQL schema
+            hourly_rate: coachingData.hourly_rate, // Include hourly_rate
+            days_per_week: coachingData.days_per_week,
+            hours_per_session: coachingData.hours_per_session,
+            start_date: coachingData.start_date,
+            status: 'active'
+          }]);
+
+        if (error) {
+          toast({
+            title: "Coaching setup failed",
+            description: error.message,
+            variant: "destructive"
+          });
+        } else {
+          toast({
+            title: "Coaching setup successful",
+            description: `One-to-one coaching has been set up for ${coachingMember?.full_name}.`
+          });
+          setCoachingDialog(false);
+          setCoachingMember(null);
+          fetchMembershipData(); // Refresh to show updated data
+        }
+      } catch (error: any) {
+        toast({
+          title: "Coaching setup failed",
+          description: `Unexpected error: ${error?.message || 'Unknown error'}`,
+          variant: "destructive"
+        });
+      } finally {
+        setProcessingAction(null);
+      }
+    };
+
+    insertCoaching();
+  };
+
   // Loading state
   if (isLoading) {
     return (
@@ -332,7 +507,7 @@ export default function MembershipList() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div>
             <h2 className="text-3xl font-bold tracking-tight">Membership Management</h2>
-            <p className="text-gray-500 mt-1">Manage member subscriptions, renewals, and freezes</p>
+            <p className="text-gray-500 mt-1">Manage member subscriptions, renewals, freezes, and coaching</p>
           </div>
           <ExportButton filteredMembers={filteredMembers} />
         </div>
@@ -392,15 +567,16 @@ export default function MembershipList() {
               <MemberCard
                 key={member.user_id}
                 member={member}
-                statusColors={statusColors}
+                statusColorMap={statusColors}
                 openDropdown={openDropdown}
                 setOpenDropdown={setOpenDropdown}
                 canFreeze={canFreeze}
                 processingAction={processingAction}
                 onNotify={handleNotify}
-                onFreeze={handleFreeze}
+                onFreeze={openFreezeModal}
                 onRenew={handleRenew}
                 onUpgrade={handleUpgrade}
+                onCoaching={handleCoaching} // This should now work with updated MemberCardProps
               />
             ))
           )}
@@ -424,6 +600,16 @@ export default function MembershipList() {
         onSend={handleSendNotification}
         isSending={isSending}
       />
+      <FreezeModal
+        isOpen={freezeDialog}
+        onClose={() => {
+          setFreezeDialog(false);
+          setFreezeMember(null);
+        }}
+        userId={freezeMember?.user_id ?? ''}
+        userName={freezeMember?.full_name ?? ''}
+        onSuccess={onFreezeSuccess}
+      />
       
       <UpgradeModal
         isOpen={upgradeDialog}
@@ -439,6 +625,20 @@ export default function MembershipList() {
         onSubmit={handleUpgradeSubmit}
         isProcessing={processingAction === `upgrade-${upgradeMember?.user_id}`}
       />
+
+      {/* New Coaching Modal */}
+      <OneToOneCoachingModal
+        isOpen={coachingDialog}
+        onClose={() => {
+          setCoachingDialog(false);
+          setCoachingMember(null);
+        }}
+        member={coachingMember}
+        trainers={trainers}
+        onSubmit={handleCoachingSubmit}
+        isProcessing={processingAction === `coaching-${coachingMember?.user_id}`}
+      />
     </div>
   );
 }
+

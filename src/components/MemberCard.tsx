@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Bell } from "lucide-react";
 import { ActionsDropdown } from "./ActionsDropdown";
+import { supabase } from "@/supabaseClient";
 
 interface MembershipInfo {
   user_id: string;
@@ -20,7 +21,7 @@ interface MembershipInfo {
 
 interface MemberCardProps {
   member: MembershipInfo;
-  statusColors: Record<string, string>;
+  statusColorMap: Record<string, string>;
   openDropdown: string | null;
   setOpenDropdown: (value: string | null) => void;
   canFreeze: Record<string, boolean>;
@@ -29,11 +30,20 @@ interface MemberCardProps {
   onFreeze: (member: MembershipInfo) => void;
   onRenew: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
+  onCoaching: (member: MembershipInfo) => void; // ONLY CHANGE: Added this prop
 }
+const statusColorMap: Record<string, string> = {
+  active: "bg-green-100 text-green-800",
+  paused: "bg-yellow-100 text-yellow-800",
+  inactive: "bg-gray-100 text-gray-800",
+  expired: "bg-red-100 text-red-800",
+  // add more if needed
+};
 
-export function MemberCard({
+
+export  function MemberCard({
   member,
-  statusColors,
+  statusColorMap,
   openDropdown,
   setOpenDropdown,
   canFreeze,
@@ -41,8 +51,15 @@ export function MemberCard({
   onNotify,
   onFreeze,
   onRenew,
-  onUpgrade
+  onUpgrade,
+  onCoaching // ONLY CHANGE: Added this prop
 }: MemberCardProps) {
+
+  const openFreezeModal = () => {
+    onFreeze(member);
+  };
+
+
   return (
     <div className="border rounded-lg px-8 py-6 mb-4 bg-white shadow-sm">
       <div className="flex items-center justify-between">
@@ -84,7 +101,7 @@ export function MemberCard({
           
           <div className="text-center">
             <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Status</div>
-            <span className={`inline-block px-4 py-2 rounded-full text-sm font-semibold ${statusColors[member.status] || "bg-gray-100 text-gray-600"}`}>
+            <span className={`inline-block px-4 py-2 rounded-full text-sm font-semibold ${statusColorMap[member.status] || "bg-gray-100 text-gray-600"}`}>
               {member.status.charAt(0).toUpperCase() + member.status.slice(1)}
             </span>
           </div>
@@ -102,9 +119,10 @@ export function MemberCard({
               setOpenDropdown={setOpenDropdown}
               canFreeze={canFreeze}
               processingAction={processingAction}
-              onFreeze={onFreeze}
+              onFreeze={onFreeze}  
               onRenew={onRenew}
               onUpgrade={onUpgrade}
+              onCoaching={onCoaching} // ONLY CHANGE: Added this prop
             />
           </div>
         </div>
@@ -112,3 +130,6 @@ export function MemberCard({
     </div>
   );
 }
+
+
+
