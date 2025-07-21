@@ -3,21 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Bell } from "lucide-react";
-import { ActionsDropdown } from "./ActionsDropdown";
+import ActionsDropdown  from "./ActionsDropdown";
 import { supabase } from "@/supabaseClient";
-
-interface MembershipInfo {
-  user_id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  package_id: string;
-  package_name: string;
-  created_at: string;
-  membership_expiry: string;
-  status: string;
-  days_left: number;
-}
+import { MembershipInfo } from "@/types/memberships";
 
 interface MemberCardProps {
   member: MembershipInfo;

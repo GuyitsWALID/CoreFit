@@ -15,7 +15,7 @@ import {
 } from "@/components";
 import { OneToOneCoachingModal } from "@/components/OneToOneCoachingModal";
 import FreezeModal from "@/components/FreezeModal";
-
+import { MembershipInfo } from "@/types/memberships";
 // Type definitions for the one-to-one coaching feature
 // Updated to match the OneToOneCoachingModal interface exactly
 interface CoachingSessionData {
@@ -28,18 +28,7 @@ interface CoachingSessionData {
   status?: 'active' | 'paused' | 'completed' | 'cancelled';
 }
 
-interface MembershipInfo {
-  user_id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  package_id: string;
-  package_name: string;
-  created_at: string;
-  membership_expiry: string;
-  status: string;
-  days_left: number;
-}
+
 
 interface Trainer {
   id: string;
