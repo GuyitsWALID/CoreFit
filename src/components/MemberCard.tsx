@@ -16,6 +16,8 @@ interface MemberCardProps {
   processingAction: string | null;
   onNotify: (member: MembershipInfo) => void;
   onFreeze: (member: MembershipInfo) => void;
+  onExtendFreeze: (member: MembershipInfo) => void;
+  onUnfreeze: (member: MembershipInfo) => void;
   onRenew: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void; // ONLY CHANGE: Added this prop
@@ -38,6 +40,8 @@ export  function MemberCard({
   processingAction,
   onNotify,
   onFreeze,
+  onExtendFreeze,
+  onUnfreeze,
   onRenew,
   onUpgrade,
   onCoaching // ONLY CHANGE: Added this prop
@@ -107,7 +111,9 @@ export  function MemberCard({
               setOpenDropdown={setOpenDropdown}
               canFreeze={canFreeze}
               processingAction={processingAction}
-              onFreeze={onFreeze}  
+              onFreeze={onFreeze} 
+              onExtend={onExtendFreeze}
+              onUnfreeze={onUnfreeze} 
               onRenew={onRenew}
               onUpgrade={onUpgrade}
               onCoaching={onCoaching} // ONLY CHANGE: Added this prop

@@ -14,8 +14,11 @@ import {
   ExportButton,
 } from "@/components";
 import { OneToOneCoachingModal } from "@/components/OneToOneCoachingModal";
-import FreezeModal from "@/components/FreezeModal";
+import FreezeModal, { FreezeMode } from "@/components/FreezeActionModal";
 import { MembershipInfo } from "@/types/memberships";
+import FreezeActionModal from "@/components/FreezeActionModal";
+
+
 // Type definitions for the one-to-one coaching feature
 // Updated to match the OneToOneCoachingModal interface exactly
 interface CoachingSessionData {
@@ -76,16 +79,60 @@ export default function MembershipList() {
 
   // Modal for freezing memberships
   const [freezeDialog, setFreezeDialog] = useState(false);
-const [freezeMember, setFreezeMember] = useState<MembershipInfo | null>(null);
+const [freezeModalOpen, setFreezeModalOpen] = useState(false);
+  const [freezeMode, setFreezeMode]         = useState<FreezeMode>('freeze');
+  const [freezeMember, setFreezeMember]     = useState<MembershipInfo | null>(null);
+  
 
-const openFreezeModal = (member: MembershipInfo) => {
-  setFreezeMember(member);
-  setFreezeDialog(true);
-};
+  // Handlers to open modal in each mode
+  const openFreeze = (member: MembershipInfo) => {
+    setFreezeMode('freeze');
+    setFreezeMember(member);
+    setFreezeModalOpen(true);
+  };
+  const openExtend = (member: MembershipInfo) => {
+    setFreezeMode('extend');
+    setFreezeMember(member);
+    setFreezeModalOpen(true);
+  };
 
-const onFreezeSuccess = () => {
-  fetchMembershipData();
-};
+  // unified confirm for both
+  const handleFreezeConfirm = async (days: number) => {
+    if (!freezeMember) return;
+    const key = `${freezeMode}-${freezeMember.user_id}`;
+    setProcessingAction(key);
+
+    try {
+      let rpcResult;
+      if (freezeMode === 'freeze') {
+        rpcResult = await supabase.rpc('freeze_membership', {
+          p_user_id: freezeMember.user_id,
+          p_days: days,
+        });
+        if (rpcResult.error) throw rpcResult.error;
+        toast({
+          title: 'Membership frozen',
+          description: `${freezeMember.full_name} frozen for ${days} days.`,
+        });
+      } else {
+        rpcResult = await supabase.rpc('extend_freeze_membership', {
+          p_user_id: freezeMember.user_id,
+          p_extra_days: days,
+        });
+        if (rpcResult.error) throw rpcResult.error;
+        toast({
+          title: 'Freeze extended',
+          description: `${freezeMember.full_name} extended by ${days} days.`,
+        });
+      }
+      await fetchMembershipData();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err?.message || 'Unknown error', variant: 'destructive' });
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
   
   // Action states
   const [canFreeze, setCanFreeze] = useState<Record<string, boolean>>({});
@@ -342,38 +389,34 @@ const onFreezeSuccess = () => {
     }
   };
 
-  const handleFreeze = async (member: MembershipInfo) => {
-    setProcessingAction(`freeze-${member.user_id}`);
-    setOpenDropdown(null);
-    
-    try {
-      const { error } = await supabase.rpc('freeze_membership', { 
-        user_id: member.user_id 
-      });
-      
-      if (error) {
-        toast({
-          title: "Freeze failed",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Membership frozen",
-          description: `${member.full_name}'s membership has been frozen successfully.`
-        });
-        fetchMembershipData();
-      }
-    } catch (error: any) {
-      toast({
-        title: "Freeze failed",
-        description: `Unexpected error: ${error?.message || 'Unknown error'}`,
-        variant: "destructive"
-      });
-    } finally {
-      setProcessingAction(null);
+  
+
+// 2) Unfreeze immediately (apply all pending freeze days and set status = active)
+const handleUnfreeze = async (member: MembershipInfo) => {
+  setProcessingAction(`unfreeze-${member.user_id}`);
+  try {
+    const { error } = await supabase.rpc('unfreeze_membership', {
+      p_user_id: member.user_id,
+    });
+    if (error) {
+      throw error;
     }
-  };
+    toast({
+      title: 'Membership Unfrozen',
+      description: `${member.full_name} is now active again.`,
+    });
+    await fetchMembershipData();
+  } catch (error: any) {
+    toast({
+      title: 'Unfreeze Failed',
+      description: error.message || 'Unknown error',
+      variant: 'destructive',
+    });
+  } finally {
+    setProcessingAction(null);
+  }
+};
+
 
   const handleUpgrade = (member: MembershipInfo) => {
     setUpgradeMember(member);
@@ -562,7 +605,9 @@ const onFreezeSuccess = () => {
                 canFreeze={canFreeze}
                 processingAction={processingAction}
                 onNotify={handleNotify}
-                onFreeze={openFreezeModal}
+                onFreeze={openFreeze}
+                onExtendFreeze={openExtend}
+                onUnfreeze={handleUnfreeze}
                 onRenew={handleRenew}
                 onUpgrade={handleUpgrade}
                 onCoaching={handleCoaching} // This should now work with updated MemberCardProps
@@ -589,15 +634,15 @@ const onFreezeSuccess = () => {
         onSend={handleSendNotification}
         isSending={isSending}
       />
-      <FreezeModal
-        isOpen={freezeDialog}
-        onClose={() => {
-          setFreezeDialog(false);
-          setFreezeMember(null);
-        }}
-        userId={freezeMember?.user_id ?? ''}
-        userName={freezeMember?.full_name ?? ''}
-        onSuccess={onFreezeSuccess}
+      <FreezeActionModal
+        isOpen={freezeModalOpen}
+        mode={freezeMode}
+        userId={freezeMember?.user_id || ''}
+        userName={freezeMember?.full_name || ''}
+        defaultDays={freezeMode === 'extend' ? /* optionally compute remaining freeze days */ 1 : 1}
+        onClose={() => setFreezeModalOpen(false)}
+        onConfirm={handleFreezeConfirm}
+        isProcessing={!!processingAction?.startsWith(freezeMode)}
       />
       
       <UpgradeModal

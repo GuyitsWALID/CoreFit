@@ -6,11 +6,13 @@ import {
   RefreshCw,
   ArrowUpRight,
   Users,
+  SquarePlus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/supabaseClient";
 import DeactivateModal from "./DeactivateModal";
 import type { MembershipInfo } from "@/types/memberships";
+import { on } from "process";
 
 interface ActionsDropdownProps {
   member: MembershipInfo;
@@ -19,6 +21,8 @@ interface ActionsDropdownProps {
   canFreeze: Record<string, boolean>;
   processingAction: string | null;
   onFreeze: (member: MembershipInfo) => void;
+  onExtend: (member: MembershipInfo) => void;
+  onUnfreeze: (member: MembershipInfo) => void;
   onRenew: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void;
@@ -31,6 +35,8 @@ export default function ActionsDropdown({
   canFreeze,
   processingAction,
   onFreeze,
+  onExtend,
+  onUnfreeze,
   onRenew,
   onUpgrade,
   onCoaching,
@@ -88,6 +94,7 @@ export default function ActionsDropdown({
             : `${member.full_name} is now active.`,
         variant: newStatus === "inactive" ? "destructive" : "default",
       });
+      if (onRefresh) onRefresh();
     }
   };
 
@@ -104,6 +111,30 @@ export default function ActionsDropdown({
     }
   }, [isOpen, setOpenDropdown]);
 
+  //coverts months weeks into days 
+  const getTotalDays = (unit: string, value: number): number => {
+    switch (unit) {
+      case 'days':
+        return value;
+      case 'weeks':
+        return value * 7;
+      case 'months':
+        return value * 30; // approx
+      case 'years':
+        return value * 365;
+      default:
+        return 0;
+    }
+  };
+
+  // Check if member can be frozen
+  const isFreezeEligible = getTotalDays(member.duration_unit, member.duration_value) >= 90;
+
+  // Reasonable implementation: reload the page or refetch data
+  function onRefresh() {
+    window.location.reload();
+  }
+
   return (
     <div className="relative" ref={dropdownRef}>
       <Button variant="outline" size="sm" className="px-3 py-1 h-8" onClick={handleToggle}>
@@ -112,28 +143,49 @@ export default function ActionsDropdown({
 
       {isOpen && (
         <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
-          {/* Freeze/Unfreeze */}
-          <button
-            type="button"
-            className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 ${
-              !canFreeze[member.user_id]
-                ? 'opacity-50 cursor-not-allowed text-gray-400'
-                : 'text-gray-700'
-            }`}
-            onClick={handleAction(() => onFreeze(member))}
-            disabled={
-              processingAction === `freeze-${member.user_id}` || !canFreeze[member.user_id]
-            }
-          >
-            <Snowflake className="h-4 w-4" />
-            {processingAction === `freeze-${member.user_id}`
-              ? member.status === "paused"
-                ? "Unfreezing..."
-                : "Freezing..."
-              : member.status === "paused"
-                ? "Unfreeze Membership"
-                : "Freeze Membership"}
-          </button>
+          {/* Freeze/Unfreeze/ExtendFreeze */}
+          {member.status === "active" && (
+            <button
+              type="button"
+              className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 ${
+                isFreezeEligible ? "text-gray-700" : "opacity-50 cursor-not-allowed text-gray-400"
+              }`}
+              onClick={handleAction(() => onFreeze(member))}
+              disabled={processingAction === `freeze-${member.user_id}` || !isFreezeEligible}
+            >
+              <Snowflake className="h-4 w-4" />
+              {processingAction === `freeze-${member.user_id}` ? "Freezing..." : "Freeze Membership"}
+            </button>
+          )}
+
+          {member.status === "paused" && (
+            <>
+              {/* Unfreeze button with confirmation */}
+              <button
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                onClick={handleAction(() => {
+                  if (window.confirm("Are you sure you want to unfreeze this membership manually?")) {
+                    onUnfreeze(member);
+                  }
+                })}
+                disabled={processingAction === `freeze-${member.user_id}`}
+              >
+                <Snowflake className="h-4 w-4" />
+                {processingAction === `freeze-${member.user_id}` ? "Unfreezing..." : "Unfreeze Membership"}
+              </button>
+              {/* Extend freeze button (opens modal) */}
+              <button
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                onClick={handleAction(() => onExtend(member))}
+                disabled={processingAction === `extendfreeze-${member.user_id}`}
+              >
+                <SquarePlus className="h-4 w-4" />
+                {processingAction === `extendfreeze-${member.user_id}` ? "Extending..." : "Extend Freeze"}
+              </button>
+            </>
+          )}
 
           {/* Renew */}
           <button
@@ -188,4 +240,8 @@ export default function ActionsDropdown({
         onConfirm={(reason) => handleStatusChange('inactive', reason)} currentStatus={"active"}      />
     </div>
   );
+}
+
+function onRefresh() {
+  throw new Error("Function not implemented.");
 }

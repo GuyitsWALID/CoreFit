@@ -13,4 +13,6 @@ export interface MembershipInfo {
   membership_expiry: string;
   status: MembershipStatus;
   days_left: number;
+  duration_unit: 'days' | 'weeks' | 'months' | 'years';
+  duration_value: number;
 }
