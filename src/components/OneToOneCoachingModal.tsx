@@ -62,7 +62,7 @@ export function OneToOneCoachingModal({
     const rate = parseFloat(hourlyRate);
     if (rate > 0 && daysPerWeek > 0 && hoursPerSession > 0) {
       const weekly = rate * daysPerWeek * hoursPerSession;
-      const monthly = weekly * 4.33; // Average weeks per month (52/12)
+      const monthly = weekly * 4; // Average weeks per month (52/12)
       setWeeklyPrice(weekly);
       setMonthlyPrice(monthly);
     } else {
