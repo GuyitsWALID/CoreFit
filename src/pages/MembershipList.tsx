@@ -17,30 +17,9 @@ import { OneToOneCoachingModal } from "@/components/OneToOneCoachingModal";
 import FreezeModal, { FreezeMode } from "@/components/FreezeActionModal";
 import { MembershipInfo } from "@/types/memberships";
 import FreezeActionModal from "@/components/FreezeActionModal";
+import { CoachingSessionData, Trainer } from "@/types/coaching"; // Ensure this matches your types
+import { fetchTrainers } from "@/lib/supabase_trainer_query";
 
-
-// Type definitions for the one-to-one coaching feature
-// Updated to match the OneToOneCoachingModal interface exactly
-interface CoachingSessionData {
-  user_id: string;
-  trainer_staff_id: string; // Changed from trainer_id to match SQL schema
-  hourly_rate: number; // Added hourly_rate field
-  days_per_week: number;
-  hours_per_session: number;
-  start_date: string; // ISO date string
-  status?: 'active' | 'paused' | 'completed' | 'cancelled';
-}
-
-
-
-interface Trainer {
-  id: string;
-  full_name: string;
-  email: string;
-  phone?: string;
-  hourly_rate: number;
-  specialization: string;
-}
 
 const statusColors: Record<string, string> = {
   active: "text-green-600 bg-green-50",
@@ -79,7 +58,7 @@ export default function MembershipList() {
 
   // Modal for freezing memberships
   const [freezeDialog, setFreezeDialog] = useState(false);
-const [freezeModalOpen, setFreezeModalOpen] = useState(false);
+  const [freezeModalOpen, setFreezeModalOpen] = useState(false);
   const [freezeMode, setFreezeMode]         = useState<FreezeMode>('freeze');
   const [freezeMember, setFreezeMember]     = useState<MembershipInfo | null>(null);
   
@@ -142,7 +121,7 @@ const [freezeModalOpen, setFreezeModalOpen] = useState(false);
   // Data fetching
   useEffect(() => {
     fetchMembershipData();
-    fetchTrainers();
+    
   }, []);
 
   const fetchMembershipData = async () => {
@@ -184,74 +163,42 @@ const [freezeModalOpen, setFreezeModalOpen] = useState(false);
     }
   };
 
-  // Fetch trainers for coaching modal - adapted to use staff table
-  const fetchTrainers = async () => {
+   const loadTrainers = async () => {
+    console.log('loadTrainers: Starting trainer fetch.');
     try {
-      // Query staff table for trainers
-      const { data, error } = await supabase
-        .from('staff')
-        .select(`
-          id,
-          full_name,
-          email,
-          phone,
-          salary,
-          roles!inner(name)
-        `)
-        .eq('roles.name', 'Trainer')
-        .eq('is_active', true)
-        .order('full_name', { ascending: true });
-      
-      if (!error && data) {
-        // Transform staff data to trainer format
-        const transformedTrainers: Trainer[] = data.map(staff => ({
-          id: staff.id,
-          full_name: staff.full_name,
-          email: staff.email,
-          phone: staff.phone,
-          hourly_rate: staff.salary || 50, // Use salary as hourly rate, default to 50 if null
-          specialization: 'Personal Training' // Default specialization, can be enhanced later
-        }));
-        setTrainers(transformedTrainers);
-      } else {
-        console.error('Error fetching trainers:', error);
-        // For demo purposes, use mock data if query fails
-        setTrainers([
-          {
-            id: '1',
-            full_name: 'John Smith',
-            email: 'john@gym.com',
-            hourly_rate: 50,
-            specialization: 'Strength Training'
-          },
-          {
-            id: '2',
-            full_name: 'Sarah Johnson',
-            email: 'sarah@gym.com',
-            hourly_rate: 45,
-            specialization: 'Yoga & Flexibility'
-          },
-          {
-            id: '3',
-            full_name: 'Mike Wilson',
-            email: 'mike@gym.com',
-            hourly_rate: 60,
-            specialization: 'Cardio & Weight Loss'
-          },
-          {
-            id: '4',
-            full_name: 'Lisa Brown',
-            email: 'lisa@gym.com',
-            hourly_rate: 55,
-            specialization: 'Functional Training'
-          }
-        ]);
-      }
+      const trainersData = await fetchTrainers();
+      console.log('loadTrainers: Trainers data received:', trainersData);
+      setTrainers(trainersData);
     } catch (error) {
-      console.error('Error fetching trainers:', error);
-     
+      console.error('loadTrainers: Error fetching trainers:', error);
+      // Set empty array if fetch fails
+      setTrainers([]);
+      toast({
+        title: "Error loading trainers",
+        description: "Could not load trainer data. Please try refreshing the page.",
+        variant: "destructive"
+      });
     }
   };
+  useEffect(() => {
+    
+  const loadAllData = async () => {
+    setIsLoading(true);
+    try {
+      await Promise.all([
+        fetchMembershipData(),
+        loadTrainers()
+      ]);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  loadAllData();
+}, []);
+  
 
   // Computed values
   const packageTypes = Array.from(new Set(members.map((m) => m.package_name))).sort();
@@ -480,6 +427,7 @@ const handleUnfreeze = async (member: MembershipInfo) => {
 
   // Updated handleCoachingSubmit to match the new CoachingSessionData interface
   const handleCoachingSubmit = (coachingData: CoachingSessionData) => {
+    console.log('handleCoachingSubmit: Submitting coaching data:', coachingData);
     setProcessingAction(`coaching-${coachingData.user_id}`);
     
     const insertCoaching = async () => {
@@ -488,21 +436,24 @@ const handleUnfreeze = async (member: MembershipInfo) => {
           .from('one_to_one_coaching')
           .insert([{
             user_id: coachingData.user_id,
-            trainer_staff_id: coachingData.trainer_staff_id, // Updated to match SQL schema
-            hourly_rate: coachingData.hourly_rate, // Include hourly_rate
+            trainer_id: coachingData.trainer_id,
+            hourly_rate: coachingData.hourly_rate,
             days_per_week: coachingData.days_per_week,
             hours_per_session: coachingData.hours_per_session,
             start_date: coachingData.start_date,
-            status: 'active'
+            end_date: coachingData.end_date,
+            status: coachingData.status || 'active'
           }]);
 
         if (error) {
+          console.error('handleCoachingSubmit: Supabase insert error:', error);
           toast({
             title: "Coaching setup failed",
             description: error.message,
             variant: "destructive"
           });
         } else {
+          console.log('handleCoachingSubmit: Coaching setup successful.');
           toast({
             title: "Coaching setup successful",
             description: `One-to-one coaching has been set up for ${coachingMember?.full_name}.`
@@ -512,18 +463,21 @@ const handleUnfreeze = async (member: MembershipInfo) => {
           fetchMembershipData(); // Refresh to show updated data
         }
       } catch (error: any) {
+        console.error('handleCoachingSubmit: Unexpected error during insert:', error);
         toast({
           title: "Coaching setup failed",
           description: `Unexpected error: ${error?.message || 'Unknown error'}`,
           variant: "destructive"
         });
       } finally {
+        console.log('handleCoachingSubmit: Setting processingAction to null.');
         setProcessingAction(null);
       }
     };
 
     insertCoaching();
   };
+
 
   // Loading state
   if (isLoading) {

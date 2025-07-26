@@ -148,7 +148,7 @@ export default function ActionsDropdown({
             <button
               type="button"
               className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 ${
-                isFreezeEligible ? "text-gray-700" : "opacity-50 cursor-not-allowed text-gray-400"
+          isFreezeEligible ? "text-gray-700" : "opacity-50 cursor-not-allowed text-gray-400"
               }`}
               onClick={handleAction(() => onFreeze(member))}
               disabled={processingAction === `freeze-${member.user_id}` || !isFreezeEligible}
@@ -162,27 +162,27 @@ export default function ActionsDropdown({
             <>
               {/* Unfreeze button with confirmation */}
               <button
-                type="button"
-                className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
-                onClick={handleAction(() => {
-                  if (window.confirm("Are you sure you want to unfreeze this membership manually?")) {
-                    onUnfreeze(member);
-                  }
-                })}
-                disabled={processingAction === `freeze-${member.user_id}`}
+          type="button"
+          className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+          onClick={handleAction(() => {
+            if (window.confirm("Are you sure you want to unfreeze this membership manually?")) {
+              onUnfreeze(member);
+            }
+          })}
+          disabled={processingAction === `freeze-${member.user_id}`}
               >
-                <Snowflake className="h-4 w-4" />
-                {processingAction === `freeze-${member.user_id}` ? "Unfreezing..." : "Unfreeze Membership"}
+          <Snowflake className="h-4 w-4" />
+          {processingAction === `freeze-${member.user_id}` ? "Unfreezing..." : "Unfreeze Membership"}
               </button>
               {/* Extend freeze button (opens modal) */}
               <button
-                type="button"
-                className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
-                onClick={handleAction(() => onExtend(member))}
-                disabled={processingAction === `extendfreeze-${member.user_id}`}
+          type="button"
+          className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+          onClick={handleAction(() => onExtend(member))}
+          disabled={processingAction === `extendfreeze-${member.user_id}`}
               >
-                <SquarePlus className="h-4 w-4" />
-                {processingAction === `extendfreeze-${member.user_id}` ? "Extending..." : "Extend Freeze"}
+          <SquarePlus className="h-4 w-4" />
+          {processingAction === `extendfreeze-${member.user_id}` ? "Extending..." : "Extend Freeze"}
               </button>
             </>
           )}
@@ -220,19 +220,27 @@ export default function ActionsDropdown({
           <div className="border-t border-gray-100 my-1" />
 
           {/* Deactivate / Activate */}
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 text-sm text-red-600 flex items-center gap-2 hover:bg-red-50"
-            onClick={handleAction(() => {
-              if (member.status === 'active') setDeactOpen(true);
-              else handleStatusChange('active');
-            })}
-          >
-            {member.status === 'active' ? 'Deactivate' : 'Activate'}
-          </button>
+          {["active", "expired", "paused"].includes(member.status) && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm text-red-600 flex items-center gap-2 hover:bg-red-50"
+              onClick={handleAction(() => setDeactOpen(true))}
+            >
+              <Snowflake className="h-4 w-4" /> Deactivate Membership
+            </button>
+          )}
+          {member.status === "inactive" && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm text-green-600 flex items-center gap-2 hover:bg-green-50"
+              onClick={handleAction(() => handleStatusChange("active"))}
+            >
+              Activate Membership
+            </button>
+          )}
         </div>
       )}
-
+      
       <DeactivateModal
         isOpen={deactOpen}
         onClose={() => setDeactOpen(false)}

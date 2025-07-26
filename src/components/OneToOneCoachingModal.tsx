@@ -4,28 +4,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Calendar, User, Clock, DollarSign, X } from "lucide-react";
 import { useState, useEffect } from "react";
+import type { MembershipInfo } from "@/types/memberships";
+import { Trainer, CoachingSessionData } from "@/types/coaching"; 
+import { supabase } from "@/supabaseClient";
 
-interface MembershipInfo {
-  user_id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  package_id: string;
-  package_name: string;
-  created_at: string;
-  membership_expiry: string;
-  status: string;
-  days_left: number;
-}
+// Updated Trainer interface to match staff table structure
 
-interface Trainer {
-  id: string;
-  full_name: string;
-  email: string;
-  phone?: string;
-  hourly_rate: number;
-  specialization: string;
-}
 
 interface OneToOneCoachingModalProps {
   isOpen: boolean;
@@ -36,16 +20,8 @@ interface OneToOneCoachingModalProps {
   isProcessing: boolean;
 }
 
-// Updated CoachingSessionData interface to match the simplified SQL schema
-export interface CoachingSessionData {
-  user_id: string;
-  trainer_staff_id: string; // Changed from trainer_id to match SQL schema
-  hourly_rate: number; // Added hourly_rate field
-  days_per_week: number;
-  hours_per_session: number;
-  start_date: string;
-  status?: 'active' | 'paused' | 'completed' | 'cancelled';
-}
+
+
 
 export function OneToOneCoachingModal({
   isOpen,
@@ -56,55 +32,76 @@ export function OneToOneCoachingModal({
   isProcessing
 }: OneToOneCoachingModalProps) {
   const [selectedTrainer, setSelectedTrainer] = useState<string>("");
+  const [hourlyRate, setHourlyRate] = useState<string>(""); // Changed to string for input handling
   const [daysPerWeek, setDaysPerWeek] = useState<number>(1);
   const [hoursPerSession, setHoursPerSession] = useState<number>(1);
   const [startDate, setStartDate] = useState<string>("");
-  const [calculatedCost, setCalculatedCost] = useState<number>(0);
+  const [endDate, setEndDate] = useState<string>("");
+  const [weeklyPrice, setWeeklyPrice] = useState<number>(0);
+  const [monthlyPrice, setMonthlyPrice] = useState<number>(0);
+
 
   // Reset form when modal opens/closes
   useEffect(() => {
     if (isOpen) {
       setSelectedTrainer("");
+      setHourlyRate("");
       setDaysPerWeek(1);
       setHoursPerSession(1);
       setStartDate("");
-      setCalculatedCost(0);
+      setEndDate("");
+      setWeeklyPrice(0);
+      setMonthlyPrice(0);
     }
   }, [isOpen]);
 
-  // Calculate cost when inputs change
+  
+
+  // Calculate weekly and monthly prices when inputs change
   useEffect(() => {
-    if (selectedTrainer && daysPerWeek && hoursPerSession) {
-      const trainer = trainers.find(t => t.id === selectedTrainer);
-      if (trainer) {
-        const monthlyCost = trainer.hourly_rate * daysPerWeek * hoursPerSession * 4; // 4 weeks per month
-        setCalculatedCost(monthlyCost);
-      }
+    const rate = parseFloat(hourlyRate);
+    if (rate > 0 && daysPerWeek > 0 && hoursPerSession > 0) {
+      const weekly = rate * daysPerWeek * hoursPerSession;
+      const monthly = weekly * 4.33; // Average weeks per month (52/12)
+      setWeeklyPrice(weekly);
+      setMonthlyPrice(monthly);
     } else {
-      setCalculatedCost(0);
+      setWeeklyPrice(0);
+      setMonthlyPrice(0);
     }
-  }, [selectedTrainer, daysPerWeek, hoursPerSession, trainers]);
+  }, [hourlyRate, daysPerWeek, hoursPerSession]);
+
+  const handleHourlyRateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Allow empty string or valid decimal numbers
+    if (value === "" || /^\d*\.?\d*$/.test(value)) {
+      setHourlyRate(value);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!member || !selectedTrainer || !startDate) {
+    if (!member || !selectedTrainer || !startDate || !hourlyRate) {
       return;
     }
 
-    const trainer = trainers.find(t => t.id === selectedTrainer);
-    if (!trainer) {
+    const rate = parseFloat(hourlyRate);
+    if (rate <= 0) {
       return;
     }
 
     const coachingData: CoachingSessionData = {
       user_id: member.user_id,
-      trainer_staff_id: selectedTrainer, // Using trainer_staff_id to match SQL schema
-      hourly_rate: trainer.hourly_rate, // Include hourly_rate
+      trainer_id: selectedTrainer,
+      hourly_rate: rate,
       days_per_week: daysPerWeek,
       hours_per_session: hoursPerSession,
       start_date: startDate,
-      status: 'active'
+      end_date: endDate || undefined,
+      status: 'active',
+      weekly_price: weeklyPrice,
+      monthly_price: monthlyPrice
     };
 
     onSubmit(coachingData);
@@ -114,7 +111,7 @@ export function OneToOneCoachingModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Setup One-to-One Coaching</h3>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -149,13 +146,28 @@ export function OneToOneCoachingModal({
                     <div className="flex flex-col">
                       <span>{trainer.full_name}</span>
                       <span className="text-xs text-gray-500">
-                        ${trainer.hourly_rate}/hr • {trainer.specialization}
+                        {trainer.email}
                       </span>
                     </div>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Hourly Rate Input */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Hourly Rate (Birr)</label>
+            <Input
+              type="text"
+              value={hourlyRate}
+              onChange={handleHourlyRateChange}
+              placeholder="Enter hourly rate (e.g., 500.00)"
+              className="w-full"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Enter the hourly rate for this coaching session
+            </p>
           </div>
 
           {/* Days per Week */}
@@ -183,12 +195,9 @@ export function OneToOneCoachingModal({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="0.5">30 minutes</SelectItem>
                 <SelectItem value="1">1 hour</SelectItem>
                 <SelectItem value="1.5">1.5 hours</SelectItem>
                 <SelectItem value="2">2 hours</SelectItem>
-                <SelectItem value="2.5">2.5 hours</SelectItem>
-                <SelectItem value="3">3 hours</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -204,8 +213,22 @@ export function OneToOneCoachingModal({
             />
           </div>
 
+          {/* End Date (Optional) */}
+          <div>
+            <label className="block text-sm font-medium mb-1">End Date (Optional)</label>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              min={startDate || new Date().toISOString().split('T')[0]}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Leave empty for ongoing coaching
+            </p>
+          </div>
+
           {/* Cost Breakdown */}
-          {calculatedCost > 0 && (
+          {weeklyPrice > 0 && (
             <div className="p-3 bg-blue-50 rounded-lg">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign className="h-4 w-4 text-blue-600" />
@@ -214,7 +237,7 @@ export function OneToOneCoachingModal({
               <div className="text-sm space-y-1">
                 <div className="flex justify-between">
                   <span>Hourly Rate:</span>
-                  <span>${trainers.find(t => t.id === selectedTrainer)?.hourly_rate}/hr</span>
+                  <span>ETB {parseFloat(hourlyRate).toFixed(2)}/hr</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Sessions per Week:</span>
@@ -226,8 +249,12 @@ export function OneToOneCoachingModal({
                 </div>
                 <hr className="my-2" />
                 <div className="flex justify-between font-medium text-blue-900">
+                  <span>Weekly Total:</span>
+                  <span>ETB {weeklyPrice.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between font-medium text-blue-900">
                   <span>Monthly Total:</span>
-                  <span>${calculatedCost.toFixed(2)}</span>
+                  <span>ETB {monthlyPrice.toFixed(2)}</span>
                 </div>
               </div>
             </div>
@@ -241,7 +268,7 @@ export function OneToOneCoachingModal({
             <Button 
               type="submit" 
               className="flex-1"
-              disabled={!selectedTrainer || !startDate || isProcessing}
+              disabled={!selectedTrainer || !startDate || !hourlyRate || parseFloat(hourlyRate) <= 0 || isProcessing}
             >
               {isProcessing ? "Setting up..." : "Setup Coaching"}
             </Button>
@@ -251,4 +278,3 @@ export function OneToOneCoachingModal({
     </div>
   );
 }
-
