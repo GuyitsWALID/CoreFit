@@ -28,11 +28,11 @@ import {
   CardTitle,
   CardFooter
 } from "@/components/ui/card";
-import { Eye, EyeOff, Fingerprint } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/supabaseClient";
-import FingerprintScannerCard from "@/components/FingerprintScannerCard";
 import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
+import QRCodeSVG from 'react-qr-code';// Import QRCode library
 
 // --- Zod schema for validation ---
 const formSchema = z.object({
@@ -54,8 +54,8 @@ const formSchema = z.object({
   relationship: z.string().optional(),
   fitness_goal: z.string().optional(),
   membership_expiry: z.string().optional(),
-  fingerprint_data: z.any().nullable(),
-  fingerprint_enrolled: z.boolean().optional(),
+  // Removed fingerprint_data and fingerprint_enrolled
+  qr_code_data: z.string().optional(), // New field for QR code data
 });
 
 export default function RegisterClient() {
@@ -65,11 +65,10 @@ export default function RegisterClient() {
   const [selectedPackage, setSelectedPackage] = useState<{id: string, name: string, requires_trainer: boolean} | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [fingerprintStatus, setFingerprintStatus] = useState<'idle' | 'scanning' | 'success' | 'error'>('idle');
-  const [fingerprintData, setFingerprintData] = useState<Uint8Array | null>(null);
-  const [showFingerprint, setShowFingerprint] = useState(false);
+  // Removed fingerprint related states
   const [registeredUserId, setRegisteredUserId] = useState<string | null>(null);
   const [registeredClientName, setRegisteredClientName] = useState<string>("");
+  const [qrCodeValue, setQrCodeValue] = useState<string | null>(null); // New state for QR code value
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -88,8 +87,8 @@ export default function RegisterClient() {
       relationship: "",
       fitness_goal: "",
       membership_expiry: "",
-      fingerprint_data: null,
-      fingerprint_enrolled: false,
+      // Removed fingerprint_data and fingerprint_enrolled
+      qr_code_data: "", // Default for new QR code data field
     },
   });
 
@@ -187,7 +186,16 @@ export default function RegisterClient() {
         return;
       }
 
-      // 2. Call the RPC to insert profile data (including trainer_id)
+      // Generate QR code data
+      const qrData = JSON.stringify({
+        userId: userId,
+        firstName: values.first_name,
+        lastName: values.last_name,
+        packageId: values.package_id,
+        // Add other relevant info for check-in if needed
+      });
+
+      // 2. Call the RPC to insert profile data (including trainer_id and QR code data)
       const { error: rpcError } = await supabase.rpc('register_user_profile', {
         p_user_id: userId,
         p_first_name: values.first_name,
@@ -195,7 +203,7 @@ export default function RegisterClient() {
         p_gender: values.gender,
         p_email: values.email,
         p_phone: values.phone,
-        p_fingerprint_data: null,
+        // Removed p_fingerprint_data
         p_emergency_name: values.emergency_name || null,
         p_emergency_phone: values.emergency_phone || null,
         p_relationship: values.relationship || null,
@@ -205,6 +213,7 @@ export default function RegisterClient() {
         p_trainer_id: values.trainer_id || null, // Include trainer assignment
         p_status: 'active',
         p_date_of_birth: values.date_of_birth ? new Date(values.date_of_birth).toISOString().split('T')[0] : null,
+        p_qr_code_data: qrData, // Pass QR code data to RPC
       });
 
       if (rpcError) {
@@ -219,13 +228,11 @@ export default function RegisterClient() {
 
       toast({
         title: "Registration successful",
-        description: "Client has been registered successfully. Please enroll fingerprint.",
+        description: "Client has been registered successfully. QR code generated.",
       });
       setRegisteredUserId(userId);
       setRegisteredClientName(`${values.first_name} ${values.last_name}`);
-      setShowFingerprint(true);
-      setFingerprintStatus('idle');
-      setFingerprintData(null);
+      setQrCodeValue(qrData); // Set QR code value to display
       form.reset();
       setSelectedPackage(null);
     } catch (error) {
@@ -239,56 +246,10 @@ export default function RegisterClient() {
     }
   }
 
-  // Fingerprint enrollment logic (after registration)
-  const handleFingerprintEnroll = async () => {
-    setFingerprintStatus('scanning');
-    setTimeout(async () => {
-      const fakeFingerprintData = new Uint8Array([1, 2, 3, 4, 5, Math.floor(Math.random() * 255)]);
-      setFingerprintData(fakeFingerprintData);
-
-      if (!registeredUserId) {
-        setFingerprintStatus('error');
-        return;
-      }
-      // Update fingerprint_data and fingerprint_enrolled
-      const { error } = await supabase
-        .from('users')
-        .update({
-          fingerprint_data: fakeFingerprintData,
-          fingerprint_enrolled_at: new Date().toISOString(),
-          fingerprint_enrolled: true // <-- Set to true on enrollment
-        })
-        .eq('id', registeredUserId);
-
-      if (error) {
-        setFingerprintStatus('error');
-        toast({
-          title: "Fingerprint enrollment failed",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        setFingerprintStatus('success');
-        form.setValue("fingerprint_enrolled", true); // <-- Update form state
-        toast({
-          title: "Fingerprint enrolled",
-          description: "Fingerprint has been recorded successfully.",
-        });
-      }
-    }, 2000);
-  };
-
-  const handleFingerprintRetry = () => {
-    setFingerprintStatus('idle');
-    setFingerprintData(null);
-  };
-
-  const handleFingerprintDone = () => {
-    setShowFingerprint(false);
+  const handleQrCodeDone = () => {
     setRegisteredUserId(null);
     setRegisteredClientName("");
-    setFingerprintStatus('idle');
-    setFingerprintData(null);
+    setQrCodeValue(null);
   };
 
   return (
@@ -377,9 +338,7 @@ export default function RegisterClient() {
                           <FormItem>
                             <FormLabel>Phone Number</FormLabel>
                             <FormControl>
-                              {/* Use react-phone-input-2 for country code dropdown with flags */}
                               <div className="w-full">
-                                {/* Ethiopia default: country="et" */}
                                 <PhoneInput
                                   country={'et'}
                                   value={field.value}
@@ -434,9 +393,8 @@ export default function RegisterClient() {
                               <FormControl>
                                 <Input 
                                   placeholder="Enter password" 
-                                  type={showPassword ? "text" : "password"} 
-                                  {...field} 
-                                  className="pr-10"
+                                  type={showPassword ? "text" : "password"}
+                                  {...field}
                                 />
                               </FormControl>
                               <Button
@@ -447,18 +405,13 @@ export default function RegisterClient() {
                                 onClick={togglePasswordVisibility}
                               >
                                 {showPassword ? (
-                                  <EyeOff className="h-4 w-4" />
+                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
                                 ) : (
-                                  <Eye className="h-4 w-4" />
+                                  <Eye className="h-4 w-4 text-muted-foreground" />
                                 )}
                               </Button>
                             </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={generatePassword}
-                            >
+                            <Button type="button" onClick={generatePassword} variant="outline">
                               Generate
                             </Button>
                           </div>
@@ -472,13 +425,10 @@ export default function RegisterClient() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Membership Package</FormLabel>
-                          <Select 
-                            onValueChange={handlePackageChange}
-                            defaultValue={field.value}
-                          >
+                          <Select onValueChange={handlePackageChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
-                                <SelectValue placeholder="Select package" />
+                                <SelectValue placeholder="Select a package" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
@@ -494,22 +444,17 @@ export default function RegisterClient() {
                       )}
                     />
                   </div>
-                  
-                  {/* Trainer Selection - Only show when package requires trainer */}
-                  {selectedPackage && selectedPackage.requires_trainer && (
+                  {selectedPackage?.requires_trainer && (
                     <FormField
                       control={form.control}
                       name="trainer_id"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Assign Trainer *</FormLabel>
-                          <Select 
-                            onValueChange={field.onChange}
-                            defaultValue={field.value}
-                          >
+                          <FormLabel>Assign Trainer</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
-                                <SelectValue placeholder="Select a trainer" />
+                                <SelectValue placeholder="Select a trainer (optional)" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
@@ -525,7 +470,54 @@ export default function RegisterClient() {
                       )}
                     />
                   )}
-
+                  
+                  <Card className="mt-6">
+                    <CardHeader>
+                      <CardTitle>Emergency Contact (Optional)</CardTitle>
+                      <CardDescription>Provide details for an emergency contact.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="emergency_name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Emergency Contact Name" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="emergency_phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Phone Number</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Emergency Contact Phone" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="relationship"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Relationship</FormLabel>
+                            <FormControl>
+                              <Input placeholder="e.g., Parent, Spouse" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </CardContent>
+                  </Card>
                   <FormField
                     control={form.control}
                     name="fitness_goal"
@@ -533,75 +525,40 @@ export default function RegisterClient() {
                       <FormItem>
                         <FormLabel>Fitness Goal (Optional)</FormLabel>
                         <FormControl>
-                          <Input placeholder="Weight loss, muscle gain, etc." {...field} />
+                          <Input placeholder="e.g., Weight loss, Muscle gain" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="emergency_name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Emergency Contact Name (Optional)</FormLabel>
-                          <FormControl>
-                            <Input placeholder="Jane Doe" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="emergency_phone"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Emergency Contact Phone (Optional)</FormLabel>
-                          <FormControl>
-                            <Input placeholder="+1 234 567 8900" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="relationship"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Relationship to Emergency Contact (Optional)</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Spouse, Parent, Sibling, etc." {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <div className="pt-4">
-                    <Button type="submit" className="bg-fitness-primary hover:bg-fitness-primary/90 text-white" disabled={isLoading}>
-                      {isLoading ? "Registering..." : "Register Client"}
-                    </Button>
-                  </div>
+                  <Button type="submit" className="w-full" disabled={isLoading}>
+                    {isLoading ? "Registering..." : "Register Client"}
+                  </Button>
                 </form>
               </Form>
             </CardContent>
           </Card>
         </div>
-        {showFingerprint && registeredUserId && (
-          <div className="flex-1 flex items-start">
-            <FingerprintScannerCard
-              status={fingerprintStatus}
-              onStart={handleFingerprintEnroll}
-              onDone={handleFingerprintDone}
-              onRetry={handleFingerprintRetry}
-              registeredClientName={registeredClientName}
-            />
+        {qrCodeValue && (
+          <div className="flex flex-1">
+            <Card className="w-full">
+              <CardHeader>
+                <CardTitle>QR Code for {registeredClientName}</CardTitle>
+                <CardDescription>Scan this QR code for check-in.</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col items-center justify-center p-6">
+                <QRCodeSVG value={qrCodeValue} size={256} level="H" />
+                <p className="text-sm text-muted-foreground mt-4 text-center">User ID: {registeredUserId}</p>
+              </CardContent>
+              <CardFooter className="flex justify-end">
+                <Button onClick={handleQrCodeDone}>Done</Button>
+              </CardFooter>
+            </Card>
           </div>
         )}
+
       </div>
     </div>
   );
 }
+

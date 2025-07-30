@@ -303,38 +303,39 @@ export default function MembershipList() {
   };
 
   const handleRenew = async (member: MembershipInfo) => {
-    setProcessingAction(`renew-${member.user_id}`);
-    setOpenDropdown(null);
-    
-    try {
-      const { error } = await supabase.rpc('renew_function', { 
-        user_id: member.user_id,
-        package_id: member.package_id
-      });
-      
-      if (error) {
-        toast({
-          title: "Renewal failed",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Membership renewed",
-          description: `${member.full_name}'s membership has been renewed successfully.`
-        });
-        fetchMembershipData();
-      }
-    } catch (error: any) {
+  setProcessingAction(`renew-${member.user_id}`);
+  setOpenDropdown(null);
+
+  try {
+    const { error } = await supabase.rpc('renew_function', {
+      user_id:    member.user_id,
+      package_id: member.package_id,
+    });
+
+    if (error) {
       toast({
         title: "Renewal failed",
-        description: `Unexpected error: ${error?.message || 'Unknown error'}`,
-        variant: "destructive"
+        description: error.message,
+        variant: "destructive",
       });
-    } finally {
-      setProcessingAction(null);
+    } else {
+      toast({
+        title: "Membership renewed",
+        description: `${member.full_name}'s membership has been renewed successfully.`,
+      });
+      fetchMembershipData();
     }
-  };
+  } catch (err: any) {
+    toast({
+      title: "Renewal failed",
+      description: `Unexpected error: ${err.message || 'Unknown error'}`,
+      variant: "destructive",
+    });
+  } finally {
+    setProcessingAction(null);
+  }
+};
+
 
   
 

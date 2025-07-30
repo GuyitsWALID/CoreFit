@@ -87,23 +87,26 @@ export function UpgradeModal({
             />
           </div>
           
-          <div>
+            <div>
             <label className="text-sm font-medium text-gray-700">New Package</label>
             <Select value={selectedPackage} onValueChange={setSelectedPackage}>
               <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Select new package" />
+              <SelectValue placeholder="Select new package" />
               </SelectTrigger>
               <SelectContent>
-                {availablePackages
-                  .filter(pkg => pkg.id !== member.package_id)
-                  .map(pkg => (
-                    <SelectItem key={pkg.id} value={pkg.id}>
-                      {pkg.name} - ETB {pkg.price?.toLocaleString() || 0}
-                    </SelectItem>
-                  ))}
+              {availablePackages
+                .filter(pkg => 
+                pkg.id !== member.package_id &&
+                pkg.price > Number(member.package_id && availablePackages.find(p => p.id === member.package_id)?.price || 0)
+                )
+                .map(pkg => (
+                <SelectItem key={pkg.id} value={pkg.id}>
+                  {pkg.name} - ETB {pkg.price?.toLocaleString() || 0}
+                </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-          </div>
+            </div>
           
           <div className="flex justify-end gap-3 pt-4">
             <Button variant="outline" onClick={onClose} type="button">
