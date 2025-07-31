@@ -247,10 +247,12 @@ export default function MemberFormModal({
       });
     }
   }
-
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent
+        className="sm:max-w-[425px] max-h-[90vh] overflow-y-auto"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
         <DialogHeader>
           <DialogTitle>{memberToEdit ? "Edit Team Member" : "Add New Team Member"}</DialogTitle>
           <DialogDescription>

@@ -2,7 +2,7 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Bell } from "lucide-react";
+import { Bell, MoreVertical } from "lucide-react";
 import ActionsDropdown  from "./ActionsDropdown";
 import { supabase } from "@/supabaseClient";
 import { MembershipInfo } from "@/types/memberships";
@@ -53,8 +53,8 @@ export  function MemberCard({
 
 
   return (
-    <div className="border rounded-lg px-8 py-6 mb-4 bg-white shadow-sm">
-      <div className="flex items-center justify-between">
+    <div className="border rounded-lg px-4 py-4 mb-4 bg-white shadow-sm relative">
+      <div className="flex items-center justify-between overflow-x-auto flex-nowrap gap-6 md:gap-8" style={{ WebkitOverflowScrolling: "touch" }}>
         <div className="flex items-center gap-6">
           <Avatar className="h-16 w-16">
             <AvatarFallback className="bg-blue-100 text-blue-600 text-xl font-bold">
@@ -105,22 +105,37 @@ export  function MemberCard({
             >
               <Bell className="h-4 w-4" /> Notify
             </Button>
-            <ActionsDropdown 
-              member={member}
-              openDropdown={openDropdown}
-              setOpenDropdown={setOpenDropdown}
-              canFreeze={canFreeze}
-              processingAction={processingAction}
-              onFreeze={onFreeze} 
-              onExtend={onExtendFreeze}
-              onUnfreeze={onUnfreeze} 
-              onRenew={onRenew}
-              onUpgrade={onUpgrade}
-              onCoaching={onCoaching} // ONLY CHANGE: Added this prop
-            />
+            
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => setOpenDropdown(openDropdown === member.user_id ? null : member.user_id)}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
           </div>
         </div>
       </div>
+      
+      {/* ActionsDropdown positioned as floating element */}
+      {openDropdown === member.user_id && (
+        <div className="absolute z-50 right-4   bg-white border rounded-lg shadow-lg">
+          <ActionsDropdown 
+            member={member}
+            openDropdown={openDropdown}
+            setOpenDropdown={setOpenDropdown}
+            canFreeze={canFreeze}
+            processingAction={processingAction}
+            onFreeze={onFreeze} 
+            onExtend={onExtendFreeze}
+            onUnfreeze={onUnfreeze} 
+            onRenew={onRenew}
+            onUpgrade={onUpgrade}
+            onCoaching={onCoaching}
+          />
+        </div>
+      )}
     </div>
   );
 }

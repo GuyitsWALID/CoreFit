@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Bell } from "lucide-react";
-import { SimpleModal } from "./SimpleModal";
+import { SimpleModal } from "../SimpleModal";
 
 interface MembershipInfo {
   user_id: string;

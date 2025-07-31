@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { SimpleModal } from './SimpleModal';
+import { SimpleModal } from '../SimpleModal';
 
 interface DeactivateModalProps {
   isOpen: boolean;

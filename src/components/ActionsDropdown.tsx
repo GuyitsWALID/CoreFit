@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/supabaseClient";
-import DeactivateModal from "./DeactivateModal";
+import DeactivateModal from "./Modals/DeactivateModal";
 import type { MembershipInfo } from "@/types/memberships";
 import { on } from "process";
 
@@ -137,10 +137,7 @@ export default function ActionsDropdown({
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <Button variant="outline" size="sm" className="px-3 py-1 h-8" onClick={handleToggle}>
-        <MoreHorizontal className="h-4 w-4" />
-      </Button>
-
+      
       {isOpen && (
         <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
           {/* Freeze/Unfreeze/ExtendFreeze */}

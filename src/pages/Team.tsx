@@ -50,7 +50,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import MemberFormModal from "@/components/MemberFormModal";
+import MemberFormModal from "@/components/Modals/MemberFormModal";
 
 interface Role {
   id: string;

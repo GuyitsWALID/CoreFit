@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from "@/hooks/use-toast";
-import { Button } from '@/components/ui/button';
+import {
+  Button
+} from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -39,6 +41,11 @@ interface Package {
   archived: boolean;
 }
 
+interface AccessLevelType {
+  value: string;
+  label: string;
+}
+
 export default function Packages() {
   const { toast } = useToast();
   const [packages, setPackages] = useState<Package[]>([]);
@@ -46,13 +53,14 @@ export default function Packages() {
   const [activeTab, setActiveTab] = useState('active');
   const [displayMode, setDisplayMode] = useState<'card' | 'list'>('card');
   const [nameError, setNameError] = useState('');
+  const [accessLevelTypes, setAccessLevelTypes] = useState<AccessLevelType[]>([]);
   const [formData, setFormData] = useState({
     id: "",
     name: "",
     price: "",
     duration_value: "",
     duration_unit: "months",
-    access_level: "off_peak_hours",
+    access_level: "", // Initialize as empty string
     number_of_passes: "0",
     requires_trainer: false,
     description: ""
@@ -60,9 +68,10 @@ export default function Packages() {
   const [isEditing, setIsEditing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Fetch packages from database
+  // Fetch packages and access level types from database
   useEffect(() => {
     fetchPackages();
+    fetchAccessLevelTypes();
   }, []);
 
   const fetchPackages = async () => {
@@ -89,6 +98,55 @@ export default function Packages() {
     }
   };
 
+  /*const fetchAccessLevelTypes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('access_time_windows') 
+        .select('access_level')
+        
+
+      if (error) {
+        console.error('Error fetching access level types:', error);
+        toast({
+          title: "Error loading access levels",
+          description: "Could not load access levels from database",
+          variant: "destructive"
+        });
+      } else {
+        const types = data.map((item: { access_level: string }) => ({
+          value: item.access_level,
+          label: item.access_level.replace(/_/g, ' ').replace(/\b\w/g, (char: string) => char.toUpperCase()),
+        }));
+        setAccessLevelTypes(types);
+        if (types.length > 0 && !formData.access_level) {
+          setFormData(prev => ({ ...prev, access_level: types[0].value }));
+        }
+      }
+    } catch (error) {
+      console.error('Unexpected error fetching access level types:', error);
+    }
+  };*/
+  
+  const fetchAccessLevelTypes = async () => {
+  const { data, error } = await supabase.rpc('get_enum_values', {
+    enum_type: 'access_level_type' // exact name of the enum type
+  });
+
+  if (error) {
+    console.error("Failed to fetch access level types:", error.message);
+    return [];
+  }
+
+  console.log("Access levels:", data);
+  return data; // This will be a string array like ['admin', 'coach', 'staff']
+};
+
+useEffect(() => {
+  fetchAccessLevelTypes();
+}, []);
+
+  
+
   const checkDuplicateName = (name: string) => {
     if (!name.trim()) {
       setNameError('');
@@ -98,7 +156,7 @@ export default function Packages() {
     const trimmedName = name.trim().toLowerCase();
     const isDuplicate = packages.some(pkg => 
       pkg.name.toLowerCase() === trimmedName && 
-      (!isEditing || pkg.id !== formData.id) // Exclude current package when editing
+      (!isEditing || pkg.id !== formData.id) 
     );
 
     if (isDuplicate) {
@@ -117,7 +175,6 @@ export default function Packages() {
       [name]: newValue
     });
 
-    // Check for duplicate names when name field changes
     if (name === 'name') {
       checkDuplicateName(value);
     }
@@ -130,7 +187,7 @@ export default function Packages() {
       price: "",
       duration_value: "",
       duration_unit: "months",
-      access_level: "off_peak_hours",
+      access_level: accessLevelTypes.length > 0 ? accessLevelTypes[0].value : "",
       number_of_passes: "0",
       requires_trainer: false,
       description: ""
@@ -146,7 +203,7 @@ export default function Packages() {
       price: (pkg.price || 0).toString(),
       duration_value: (pkg.duration_value || 0).toString(),
       duration_unit: pkg.duration_unit || "months",
-      access_level: pkg.access_level || "off_peak_hours",
+      access_level: pkg.access_level || (accessLevelTypes.length > 0 ? accessLevelTypes[0].value : ""),
       number_of_passes: (pkg.number_of_passes || 0).toString(),
       requires_trainer: pkg.requires_trainer || false,
       description: pkg.description || ""
@@ -221,7 +278,6 @@ export default function Packages() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Final validation before submission
     if (nameError) {
       toast({
         title: "Validation Error",
@@ -284,7 +340,7 @@ export default function Packages() {
 
       resetForm();
       setDialogOpen(false);
-      fetchPackages(); // Refresh the list
+      fetchPackages(); 
     } catch (error) {
       console.error('Submit error:', error);
       toast({
@@ -311,7 +367,7 @@ export default function Packages() {
           )}
         </CardTitle>
         <CardDescription>
-          {pkg.duration_value} {pkg.duration_unit} • {pkg.access_level === 'peak_hours' ? 'Peak Hours' : 'Off-Peak Hours'}
+          {pkg.duration_value} {pkg.duration_unit} • {accessLevelTypes.find(type => type.value === pkg.access_level)?.label || pkg.access_level}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -322,7 +378,7 @@ export default function Packages() {
         <ul className="space-y-1 text-sm">
           <li className="flex items-center">
             <span className="h-1.5 w-1.5 rounded-full bg-fitness-primary mr-2"></span>
-            {pkg.access_level === 'peak_hours' ? 'Peak Hours Access' : 'Off-Peak Hours Access'}
+            {accessLevelTypes.find(type => type.value === pkg.access_level)?.label || pkg.access_level} Access
           </li>
           <li className="flex items-center">
             <span className="h-1.5 w-1.5 rounded-full bg-fitness-primary mr-2"></span>
@@ -373,7 +429,7 @@ export default function Packages() {
         </div>
         <p className="text-2xl font-bold text-fitness-primary mb-1">{pkg.price} ETB</p>
         <p className="text-sm text-gray-600">
-          {pkg.duration_value} {pkg.duration_unit} • {pkg.access_level === 'peak_hours' ? 'Peak Hours' : 'Off-Peak Hours'}
+          {pkg.duration_value} {pkg.duration_unit} • {accessLevelTypes.find(type => type.value === pkg.access_level)?.label || pkg.access_level}
           {pkg.requires_trainer && ' • Trainer Required'}
         </p>
         {pkg.description && (
@@ -498,155 +554,103 @@ export default function Packages() {
                     className="w-full px-3 py-1 h-9 border border-gray-300 rounded-md bg-white text-sm"
                     required
                   >
-                    <option value="off_peak_hours">Off-Peak Hours</option>
-                    <option value="peak_hours">Peak Hours</option>
+                    {accessLevelTypes.map((type) => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 
                 <div className="space-y-1">
-                  <Label htmlFor="number_of_passes" className="text-sm">Passes Allowed</Label>
+                  <Label htmlFor="number_of_passes" className="text-sm">Number of Passes</Label>
                   <Input
                     id="number_of_passes"
                     name="number_of_passes"
                     type="number"
-                    min="0"
                     value={formData.number_of_passes}
                     onChange={handleInputChange}
-                    required
                     placeholder="0"
                     className="h-9"
                   />
                 </div>
                 
-                <div className="flex items-center justify-between py-1">
-                  <Label htmlFor="requires_trainer" className="text-sm font-normal">
-                    Requires Trainer
-                  </Label>
-                  <div className="relative">
-                    <input
-                      id="requires_trainer"
-                      name="requires_trainer"
-                      type="checkbox"
-                      checked={formData.requires_trainer}
-                      onChange={handleInputChange}
-                      className="sr-only"
-                    />
-                    <div
-                      className={`w-11 h-6 rounded-full p-1 cursor-pointer transition-colors duration-200 ease-in-out ${
-                        formData.requires_trainer ? 'bg-fitness-primary' : 'bg-gray-300'
-                      }`}
-                      onClick={() => handleInputChange({
-                        target: {
-                          name: 'requires_trainer',
-                          type: 'checkbox',
-                          checked: !formData.requires_trainer
-                        }
-                      } as any)}
-                    >
-                      <div
-                        className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200 ease-in-out ${
-                          formData.requires_trainer ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </div>
-                  </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="requires_trainer"
+                    name="requires_trainer"
+                    checked={formData.requires_trainer}
+                    onChange={handleInputChange}
+                    className="h-4 w-4 text-fitness-primary border-gray-300 rounded"
+                  />
+                  <Label htmlFor="requires_trainer" className="text-sm">Requires Trainer</Label>
                 </div>
                 
                 <div className="space-y-1">
-                  <Label htmlFor="description" className="text-sm">Description (Optional)</Label>
+                  <Label htmlFor="description" className="text-sm">Description (optional)</Label>
                   <Textarea
                     id="description"
                     name="description"
                     value={formData.description}
                     onChange={handleInputChange}
                     placeholder="Package description (optional)"
-                    rows={2}
-                    className="text-sm"
+                    className="min-h-[80px]"
                   />
                 </div>
               </div>
-              <DialogFooter className="pt-3">
-                <Button variant="outline" type="button" size="sm" onClick={() => {
-                  resetForm();
-                  setDialogOpen(false);
-                }}>Cancel</Button>
-                <Button type="submit" size="sm" disabled={!!nameError} className="bg-fitness-primary hover:bg-fitness-primary/90 text-white disabled:opacity-50 disabled:cursor-not-allowed">
-                  {isEditing ? "Update Package" : "Create Package"}
+              <DialogFooter>
+                <Button type="submit" className="bg-fitness-primary hover:bg-fitness-primary/90 text-white" disabled={!!nameError}>
+                  {isEditing ? "Save Changes" : "Create Package"}
                 </Button>
               </DialogFooter>
             </form>
           </DialogContent>
         </Dialog>
+
+        <div className="flex items-center gap-2">
+          <Button 
+            variant={displayMode === 'card' ? 'default' : 'outline'} 
+            size="sm" 
+            onClick={() => setDisplayMode('card')}
+            className={displayMode === 'card' ? 'bg-fitness-primary text-white' : ''}
+          >
+            <Grid3X3 className="h-4 w-4" />
+          </Button>
+          <Button 
+            variant={displayMode === 'list' ? 'default' : 'outline'} 
+            size="sm" 
+            onClick={() => setDisplayMode('list')}
+            className={displayMode === 'list' ? 'bg-fitness-primary text-white' : ''}
+          >
+            <List className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
-        <div className="flex items-center justify-between">
-          <TabsList>
-            <TabsTrigger value="active">Active</TabsTrigger>
-            <TabsTrigger value="archived">Archived</TabsTrigger>
-          </TabsList>
-          
-          <div className="flex items-center gap-2">
-            <Button
-              variant={displayMode === 'card' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setDisplayMode('card')}
-            >
-              <Grid3X3 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={displayMode === 'list' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setDisplayMode('list')}
-            >
-              <List className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
+        <TabsList className="grid w-fit grid-cols-2">
+          <TabsTrigger value="active">Active Packages</TabsTrigger>
+          <TabsTrigger value="archived">Archived Packages</TabsTrigger>
+        </TabsList>
         <TabsContent value="active">
-          {displayMode === 'card' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filteredPackages.length === 0 ? (
-                <div className="col-span-full text-center py-8 text-gray-500">
-                  No active packages found. Create your first package to get started.
-                </div>
-              ) : (
-                filteredPackages.map(renderPackageCard)
-              )}
-            </div>
+          {filteredPackages.length === 0 && !isLoading ? (
+            <p className="text-center text-gray-500 py-8">No active packages found.</p>
           ) : (
-            <div className="space-y-4">
-              {filteredPackages.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No active packages found. Create your first package to get started.
-                </div>
-              ) : (
-                filteredPackages.map(renderPackageList)
+            <div className={`${displayMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}`}>
+              {filteredPackages.map(pkg => 
+                displayMode === 'card' ? renderPackageCard(pkg) : renderPackageList(pkg)
               )}
             </div>
           )}
         </TabsContent>
-
         <TabsContent value="archived">
-          {displayMode === 'card' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filteredPackages.length === 0 ? (
-                <div className="col-span-full text-center py-8 text-gray-500">
-                  No archived packages found.
-                </div>
-              ) : (
-                filteredPackages.map(renderPackageCard)
-              )}
-            </div>
+          {filteredPackages.length === 0 && !isLoading ? (
+            <p className="text-center text-gray-500 py-8">No archived packages found.</p>
           ) : (
-            <div className="space-y-4">
-              {filteredPackages.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  No archived packages found.
-                </div>
-              ) : (
-                filteredPackages.map(renderPackageList)
+            <div className={`${displayMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}`}>
+              {filteredPackages.map(pkg => 
+                displayMode === 'card' ? renderPackageCard(pkg) : renderPackageList(pkg)
               )}
             </div>
           )}
@@ -655,3 +659,4 @@ export default function Packages() {
     </div>
   );
 }
+
