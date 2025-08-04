@@ -1,210 +1,293 @@
-import React, { useState } from 'react';
-import { User, Lock, Bell, Users } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/supabaseClient";
+
+const TABS = ["Personal Info", "Notifications", "Account", "Password"];
 
 export default function Settings() {
-  const [password, setPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [email, setEmail] = useState('admin@example.com');
-  const [gymName, setGymName] = useState('ATL Fitness Hub');
-  const [message, setMessage] = useState('');
-
-  // Notification preferences state
+  const [tab, setTab] = useState("Personal Info");
+  const [userInfo, setUserInfo] = useState<{ full_name: string; email: string; role: string } | null>(null);
   const [emailNotif, setEmailNotif] = useState(true);
-  const [smsNotif, setSmsNotif] = useState(false);
+  const [pushNotif, setPushNotif] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordStrength, setPasswordStrength] = useState(0);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const navigate = useNavigate();
 
-  // Member roles state
-  const [roles, setRoles] = useState([
-    { name: "Admin", enabled: true },
-    { name: "Trainer", enabled: true },
-    { name: "Receptionist", enabled: false },
-    { name: "Member", enabled: true }
-  ]);
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      let { data, error } = await supabase
+        .from('staff')
+        .select('full_name, email, role:roles(name)')
+        .eq('id', user.id)
+        .single();
+      if (error && user.email) {
+        const { data: emailData } = await supabase
+          .from('staff')
+          .select('full_name, email, role:roles(name)')
+          .eq('email', user.email)
+          .single();
+        data = emailData;
+      }
+      let roleName: string | undefined;
+      if (Array.isArray(data?.role)) {
+        roleName = data.role[0]?.name;
+      } else {
+        roleName = data?.role?.name;
+      }
+      setUserInfo({
+        full_name: data?.full_name || "",
+        email: data?.email || "",
+        role: roleName || "",
+      });
+    };
+    fetchUserInfo();
+  }, []);
 
-  const handleRoleToggle = (idx: number) => {
-    setRoles(roles =>
-      roles.map((role, i) =>
-        i === idx ? { ...role, enabled: !role.enabled } : role
-      )
-    );
-  };
+  // Password strength checker
+  function getPasswordStrength(pw: string) {
+    let score = 0;
+    if (pw.length >= 8) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[a-z]/.test(pw)) score++;
+    if (/\d/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+    return score;
+  }
 
-  const handlePasswordChange = (e: React.FormEvent) => {
+  useEffect(() => {
+    setPasswordStrength(getPasswordStrength(newPassword));
+  }, [newPassword]);
+
+  async function handlePasswordReset(e: React.FormEvent) {
     e.preventDefault();
-    if (newPassword !== confirmPassword) {
-      setMessage('New passwords do not match.');
+    setPasswordError("");
+    setPasswordSuccess("");
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError("All fields are required.");
       return;
     }
-    // Add password change logic here
-    setMessage('Password changed successfully.');
-  };
-
-  const handleProfileSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Add profile save logic here
-    setMessage('Profile updated successfully.');
-  };
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+    if (passwordStrength < 4) {
+      setPasswordError("Password is not strong enough.");
+      return;
+    }
+    // Re-authenticate user (Supabase does not support password check directly, so you must sign in again)
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (!user || !user.email) {
+      setPasswordError("User not found.");
+      return;
+    }
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword,
+    });
+    if (signInError) {
+      setPasswordError("Current password is incorrect.");
+      return;
+    }
+    // Update password
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    if (updateError) {
+      setPasswordError("Failed to update password.");
+    } else {
+      setPasswordSuccess("Password updated successfully.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    }
+  }
 
   return (
-    <div className="animate-fade-in min-h-screen bg-white py-10 px-2 md:px-0">
-      <div className="max-w-3xl mx-auto">
-        <h2 className="text-4xl font-extrabold tracking-tight mb-10 text-center" style={{ color: "#6c9d9a" }}>
-          Settings
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Profile Settings Card */}
-          <div className="bg-white rounded-2xl shadow-lg p-8 flex flex-col gap-6 border" style={{ borderColor: "#6c9d9a" }}>
-            <div className="flex items-center gap-3 mb-2">
-              <User className="h-6 w-6" style={{ color: "#6c9d9a" }} />
-              <h3 className="text-xl font-semibold" style={{ color: "#6c9d9a" }}>Profile Settings</h3>
-            </div>
-            <form onSubmit={handleProfileSave} className="space-y-4">
+    <div className="max-w-2xl mx-auto py-10 px-4">
+      <h1 className="text-3xl font-bold mb-6">Settings</h1>
+      <div className="flex border-b mb-8">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-6 py-2 -mb-px border-b-2 transition-all font-medium ${
+              tab === t
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-blue-600"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="bg-white rounded-xl shadow p-8">
+        {tab === "Personal Info" && (
+          <div>
+            <h2 className="font-semibold text-lg mb-2">Personal Information</h2>
+            <p className="text-gray-500 mb-4">View your account details and role.</p>
+            <div className="space-y-6">
               <div>
-                <label className="block mb-1 font-medium" style={{ color: "#6c9d9a" }}>Gym Name</label>
-                <input
-                  type="text"
-                  value={gymName}
-                  onChange={e => setGymName(e.target.value)}
-                  className="w-full p-3 rounded-lg border focus:outline-none focus:ring-2 bg-[#f3f7f7]"
-                  style={{ borderColor: "#6c9d9a", color: "#222" }}
-                  // focus:ring color
-                  onFocus={e => e.target.style.boxShadow = `0 0 0 2px #6c9d9a`}
-                  onBlur={e => e.target.style.boxShadow = ""}
-                />
-              </div>
-              <div>
-                <label className="block mb-1 font-medium" style={{ color: "#6c9d9a" }}>Admin Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="w-full p-3 rounded-lg border focus:outline-none focus:ring-2 bg-[#f3f7f7]"
-                  style={{ borderColor: "#6c9d9a", color: "#222" }}
-                  onFocus={e => e.target.style.boxShadow = `0 0 0 2px #6c9d9a`}
-                  onBlur={e => e.target.style.boxShadow = ""}
-                />
-              </div>
-              <button type="submit" className="px-6 py-2 rounded-lg font-semibold transition" style={{ background: "#6c9d9a", color: "#fff" }}>
-                Save Changes
-              </button>
-            </form>
-          </div>
-
-          {/* Change Password Card */}
-          <div className="bg-white rounded-2xl shadow-lg p-8 flex flex-col gap-6 border" style={{ borderColor: "#6c9d9a" }}>
-            <div className="flex items-center gap-3 mb-2">
-              <Lock className="h-6 w-6" style={{ color: "#6c9d9a" }} />
-              <h3 className="text-xl font-semibold" style={{ color: "#6c9d9a" }}>Change Password</h3>
-            </div>
-            <form onSubmit={handlePasswordChange} className="space-y-4">
-              <div>
-                <label className="block mb-1 font-medium" style={{ color: "#6c9d9a" }}>Current Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  className="w-full p-3 rounded-lg border focus:outline-none focus:ring-2 bg-[#f3f7f7]"
-                  style={{ borderColor: "#6c9d9a", color: "#222" }}
-                  onFocus={e => e.target.style.boxShadow = `0 0 0 2px #6c9d9a`}
-                  onBlur={e => e.target.style.boxShadow = ""}
-                />
+                <label className="block text-sm font-medium mb-1">Full Name</label>
+                <Input value={userInfo?.full_name || ""} disabled />
               </div>
               <div>
-                <label className="block mb-1 font-medium" style={{ color: "#6c9d9a" }}>New Password</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={e => setNewPassword(e.target.value)}
-                  className="w-full p-3 rounded-lg border focus:outline-none focus:ring-2 bg-[#f3f7f7]"
-                  style={{ borderColor: "#6c9d9a", color: "#222" }}
-                  onFocus={e => e.target.style.boxShadow = `0 0 0 2px #6c9d9a`}
-                  onBlur={e => e.target.style.boxShadow = ""}
-                />
+                <label className="block text-sm font-medium mb-1">Email</label>
+                <Input value={userInfo?.email || ""} disabled />
               </div>
               <div>
-                <label className="block mb-1 font-medium" style={{ color: "#6c9d9a" }}>Confirm New Password</label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)}
-                  className="w-full p-3 rounded-lg border focus:outline-none focus:ring-2 bg-[#f3f7f7]"
-                  style={{ borderColor: "#6c9d9a", color: "#222" }}
-                  onFocus={e => e.target.style.boxShadow = `0 0 0 2px #6c9d9a`}
-                  onBlur={e => e.target.style.boxShadow = ""}
-                />
+                <label className="block text-sm font-medium mb-1">Role</label>
+                <Input value={userInfo?.role || ""} disabled />
               </div>
-              <button type="submit" className="px-6 py-2 rounded-lg font-semibold transition" style={{ background: "#6c9d9a", color: "#fff" }}>
-                Change Password
-              </button>
-            </form>
-          </div>
-        </div>
-
-        {/* Notification Preferences Card */}
-        <div className="bg-white rounded-2xl shadow-lg p-8 mt-8 border" style={{ borderColor: "#6c9d9a" }}>
-          <div className="flex items-center gap-3 mb-2">
-            <Bell className="h-6 w-6" style={{ color: "#6c9d9a" }} />
-            <h3 className="text-xl font-semibold" style={{ color: "#6c9d9a" }}>Notification Preferences</h3>
-          </div>
-          <form className="space-y-4 mt-4">
-            <div className="flex items-center gap-4">
-              <label className="font-medium" style={{ color: "#6c9d9a" }}>Email Notifications</label>
-              <input
-                type="checkbox"
-                checked={emailNotif}
-                onChange={() => setEmailNotif(v => !v)}
-                className="h-5 w-5"
-                style={{ accentColor: "#6c9d9a" }}
-              />
-            </div>
-            <div className="flex items-center gap-4">
-              <label className="font-medium" style={{ color: "#6c9d9a" }}>SMS Notifications</label>
-              <input
-                type="checkbox"
-                checked={smsNotif}
-                onChange={() => setSmsNotif(v => !v)}
-                className="h-5 w-5"
-                style={{ accentColor: "#6c9d9a" }}
-              />
-            </div>
-          </form>
-        </div>
-
-        {/* Member Roles Card */}
-        <div className="bg-white rounded-2xl shadow-lg p-8 mt-8 border" style={{ borderColor: "#6c9d9a" }}>
-          <div className="flex items-center gap-3 mb-2">
-            <Users className="h-6 w-6" style={{ color: "#6c9d9a" }} />
-            <h3 className="text-xl font-semibold" style={{ color: "#6c9d9a" }}>Member Roles</h3>
-          </div>
-          <div className="space-y-3 mt-4">
-            {roles.map((role, idx) => (
-              <div key={role.name} className="flex items-center gap-4">
-                <span className="font-medium w-32" style={{ color: "#6c9d9a" }}>{role.name}</span>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={role.enabled}
-                    onChange={() => handleRoleToggle(idx)}
-                    className="h-5 w-5"
-                    style={{ accentColor: "#6c9d9a" }}
-                  />
-                  <span style={{ color: role.enabled ? "#6c9d9a" : "#bbb" }}>
-                    {role.enabled ? "Enabled" : "Disabled"}
-                  </span>
-                </label>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Message display */}
-        {message && (
-          <div className="mt-8 text-center">
-            <div className="inline-block px-6 py-3 rounded-lg font-semibold shadow" style={{ background: "#6c9d9a", color: "#fff" }}>
-              {message}
             </div>
           </div>
         )}
+        {tab === "Notifications" && (
+          <div>
+            <h2 className="font-semibold text-lg mb-2">Notification Preferences</h2>
+            <p className="text-gray-500 mb-6">Manage how and when you receive notifications</p>
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">Email Notifications</div>
+                    <div className="text-gray-500 text-sm">Receive notifications via email</div>
+                  </div>
+                  <Switch checked={emailNotif} onCheckedChange={setEmailNotif} />
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">Push Notifications</div>
+                    <div className="text-gray-500 text-sm">Receive notifications on your device</div>
+                  </div>
+                  <Switch checked={pushNotif} onCheckedChange={setPushNotif} />
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button>Save Preferences</Button>
+              </div>
+            </div>
+          </div>
+        )}
+        {tab === "Account" && (
+          <div>
+            <h2 className="font-semibold text-lg mb-2">Account Management</h2>
+            <p className="text-gray-500 mb-6">Manage your account access and data</p>
+            <div className="space-y-6">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="font-semibold mb-1">Data Export</div>
+                <div className="text-sm text-yellow-800 mb-2">
+                  You can request a copy of all your data. This includes your profile information, listings, and messages.
+                </div>
+                <Button
+                  variant="outline"
+                  className="border-yellow-400 text-yellow-800"
+                  disabled={exporting}
+                  onClick={() => setExporting(true)}
+                >
+                  {exporting ? "Exporting..." : "Request Data Export"}
+                </Button>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="font-semibold mb-1 text-red-700">Delete Account</div>
+                <div className="text-sm text-red-700 mb-2">
+                  Permanently delete your account and all your data. This action cannot be undone.
+                </div>
+                <Button
+                  variant="destructive"
+                  disabled={deleting}
+                  onClick={() => setDeleting(true)}
+                >
+                  {deleting ? "Deleting..." : "Delete Account"}
+                </Button>
+              </div>
+              <div>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => navigate("/logout")}
+                >
+                  Sign Out
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+        {tab === "Password" && (
+          <form onSubmit={handlePasswordReset} className="max-w-md mx-auto space-y-6">
+            <h2 className="font-semibold text-lg mb-2">Reset Password</h2>
+            <p className="text-gray-500 mb-4">Change your account password. Make sure your new password is strong.</p>
+            <div>
+              <label className="block text-sm font-medium mb-1">Current Password</label>
+              <Input
+                type="password"
+                value={currentPassword}
+                onChange={e => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">New Password</label>
+              <Input
+                type="password"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+              <PasswordStrengthBar strength={passwordStrength} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Confirm New Password</label>
+              <Input
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            {passwordError && <div className="text-red-600 text-sm">{passwordError}</div>}
+            {passwordSuccess && <div className="text-green-600 text-sm">{passwordSuccess}</div>}
+            <div className="flex justify-end">
+              <Button type="submit">Update Password</Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Password strength bar component
+function PasswordStrengthBar({ strength }: { strength: number }) {
+  const levels = [
+    { color: "bg-red-400", label: "Very Weak" },
+    { color: "bg-orange-400", label: "Weak" },
+    { color: "bg-yellow-400", label: "Fair" },
+    { color: "bg-blue-400", label: "Good" },
+    { color: "bg-green-500", label: "Strong" },
+  ];
+  return (
+    <div className="mt-2">
+      <div className="flex gap-1">
+        {[0, 1, 2, 3, 4].map(i => (
+          <div
+            key={i}
+            className={`h-2 rounded transition-all duration-200 flex-1 ${i < strength ? levels[i].color : "bg-gray-200"}`}
+          />
+        ))}
+      </div>
+      <div className="text-xs mt-1 text-gray-500">
+        {levels[Math.max(0, strength - 1)].label}
       </div>
     </div>
   );

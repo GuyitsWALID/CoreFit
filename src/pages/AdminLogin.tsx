@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
 import { supabase } from "@/supabaseClient";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Valid email is required." }),
@@ -180,12 +180,12 @@ export default function AdminLogin() {
                       Remember me
                     </label>
                   </div>
-                  <a
-                    href="#"
+                  <Link
+                    to="/reset-password"
                     className="text-sm text-fitness-primary hover:text-fitness-primary/80"
                   >
                     Forgot password?
-                  </a>
+                  </Link>
                 </div>
 
                 <Button

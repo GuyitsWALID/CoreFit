@@ -1,46 +1,133 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Menu, LogOut } from "lucide-react";
+import {
+  Menu,
+  LogOut,
+  Home,
+  UserPlus2Icon as User,
+  Users,
+  Dumbbell,
+  ClipboardList,
+  Package,
+  Bell,
+  Settings
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/supabaseClient";
 
-// Define NavItem type if not already defined
 type NavItem = {
   label: string;
   href: string;
-  icon: React.ComponentType<{ size?: number }>;
-};
-
-// Add a role prop or get it from context/auth
-type SidebarProps = {
-  role: 'admin' | 'receptionist';
+  icon: React.ComponentType<{ size?: string | number }>;
 };
 
 const navItems: NavItem[] = [
-  // ...same as before
+  {
+    label: "Dashboard",
+    href: "/",
+    icon: Home,
+  },
+  {
+    label: "Register Client",
+    href: "/register-client",
+    icon: User,
+  },
+  {
+    label: "Team",
+    href: "/team",
+    icon: Users,
+  },
+  {
+    label: "Trainer",
+    href: "/trainers",
+    icon: Dumbbell,
+  },
+  {
+    label: "Check-ins",
+    href: "/check-ins",
+    icon: ClipboardList,
+  },
+  {
+    label: "Packages",
+    href: "/packages",
+    icon: Package,
+  },
+  {
+    label: "Members List",
+    href: "/expiring-memberships",
+    icon: Users,
+  },
+  {
+    label: "Reports",
+    href: "/reports",
+    icon: ClipboardList,
+  },
+  
+  {
+    label: "Notifications",
+    href: "/notification",
+    icon: Bell,
+  },
+  {
+    label: "Settings",
+    href: "/settings",
+    icon: Settings,
+  },
 ];
 
-// Define which tabs are visible for each role
-const navItemsByRole: Record<SidebarProps['role'], string[]> = {
-  admin: navItems.map(item => item.label), // all tabs
+const navItemsByRole: Record<'admin' | 'receptionist', string[]> = {
+  admin: navItems.map(item => item.label),
   receptionist: [
-    'Dashboard',
-    'Register Client',
-    'Check-ins',
-    'Packages',
-    'Members List',
-    'Notifications',
-    'Settings',
+    "Dashboard",
+    "Register Client",
+    "Team",
+    "Trainer",
+    "Check-ins",
   ],
 };
 
-export function Sidebar({ role }: SidebarProps) {
+export function Sidebar() {
   const location = useLocation();
   const [collapsed, setCollapsed] = React.useState(false);
+  const [role, setRole] = useState<'admin' | 'receptionist' | null>(null);
 
-  // Filter navItems based on role
+  useEffect(() => {
+    const fetchStaffRole = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return setRole(null);
+
+      // Join staff with roles table to get the role name
+      let { data, error } = await supabase
+        .from('staff')
+        .select('id, email, role:roles(name)')
+        .eq('id', user.id)
+        .single();
+
+      if (error && user.email) {
+        // fallback to email if id not found
+        const { data: emailData } = await supabase
+          .from('staff')
+          .select('id, email, role:roles(name)')
+          .eq('email', user.email)
+          .single();
+        data = emailData;
+      }
+
+      // data.role will be { name: 'admin' } or { name: 'receptionist' }
+      const roleName = data?.role?.name;
+      if (roleName === 'admin' || roleName === 'receptionist') {
+        setRole(roleName);
+      } else {
+        setRole(null);
+      }
+    };
+
+    fetchStaffRole();
+  }, []);
+
   const filteredNavItems = navItems.filter(item =>
-    navItemsByRole[role].includes(item.label)
+    (role && navItemsByRole[role]) ? navItemsByRole[role].includes(item.label) : false
   );
 
   return (
