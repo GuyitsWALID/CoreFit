@@ -1,87 +1,48 @@
-
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { cn } from '@/lib/utils';
-import { 
-  Home, 
-  Users, 
-  Calendar, 
-  Package, 
-  Clock, 
-  UserCog, 
-  FileText,
-  Settings,
-  LogOut,
-  Menu,
-  Bell,
-  BellDot,
-  Dumbbell
-} from 'lucide-react';
+import React from "react";
+import { Link, useLocation } from "react-router-dom";
+import { Menu, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
+// Define NavItem type if not already defined
 type NavItem = {
   label: string;
   href: string;
-  icon: React.ElementType;
+  icon: React.ComponentType<{ size?: number }>;
+};
+
+// Add a role prop or get it from context/auth
+type SidebarProps = {
+  role: 'admin' | 'receptionist';
 };
 
 const navItems: NavItem[] = [
-  {
-    label: 'Dashboard',
-    href: '/',
-    icon: Home,
-  },
-  {
-    label: 'Register Client',
-    href: '/register-client',
-    icon: Users,
-  },
-  {
-    label: 'Check-ins',
-    href: '/check-ins',
-    icon: Calendar,
-  },
-  {
-    label: 'Packages',
-    href: '/packages',
-    icon: Package,
-  },
-  {
-    label: 'Members List',
-    href: '/expiring-memberships',
-    icon: Clock,
-  },
-  {
-    label: 'Team',
-    href: '/team',
-    icon: UserCog,
-  },
-  {
-    label: 'Trainers',
-    href: '/trainers',
-    icon: Dumbbell,
-  },
-  {
-    label: 'Reports',
-    href: '/reports',
-    icon: FileText,
-  },
-   {
-    label: 'Notifications',
-    href: '/notification',
-    icon: Bell,
-  },
-  {
-    label: 'Settings',
-    href: '/settings',
-    icon: Settings,
-  },
+  // ...same as before
 ];
 
-export function Sidebar() {
+// Define which tabs are visible for each role
+const navItemsByRole: Record<SidebarProps['role'], string[]> = {
+  admin: navItems.map(item => item.label), // all tabs
+  receptionist: [
+    'Dashboard',
+    'Register Client',
+    'Check-ins',
+    'Packages',
+    'Members List',
+    'Notifications',
+    'Settings',
+  ],
+};
+
+export function Sidebar({ role }: SidebarProps) {
   const location = useLocation();
   const [collapsed, setCollapsed] = React.useState(false);
-  
+
+  // Filter navItems based on role
+  const filteredNavItems = navItems.filter(item =>
+    navItemsByRole[role].includes(item.label)
+  );
+
   return (
     <aside className={cn(
       "bg-white border-r border-gray-200 min-h-screen transition-all duration-300 flex flex-col",
@@ -106,7 +67,7 @@ export function Sidebar() {
       
       <nav className="flex-1 py-4">
         <ul className="space-y-1 px-2">
-          {navItems.map((item) => (
+          {filteredNavItems.map((item) => (
             <li key={item.href}>
               <Link
                 to={item.href}

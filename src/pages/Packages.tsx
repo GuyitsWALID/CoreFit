@@ -554,11 +554,13 @@ useEffect(() => {
                     className="w-full px-3 py-1 h-9 border border-gray-300 rounded-md bg-white text-sm"
                     required
                   >
-                    {accessLevelTypes.map((type) => (
+                    {/*{accessLevelTypes.map((type) => (
                       <option key={type.value} value={type.value}>
                         {type.label}
-                      </option>
-                    ))}
+                      </option>))}*/}
+                    <option value="basic">All Hours</option>
+                    <option value="premium">Peak Hours</option>
+                    <option value="admin">Off Peak Hours</option>
                   </select>
                 </div>
                 
