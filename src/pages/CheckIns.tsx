@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -17,7 +17,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Search, Fingerprint, Filter, Download, Users, UserCheck } from 'lucide-react';
+import { Search, QrCode, Filter, Download, Users, UserCheck } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -66,6 +66,14 @@ interface StaffCheckIn {
   };
 }
 
+// Allow using BarcodeDetector without TS lib
+declare global {
+  interface Window {
+    BarcodeDetector?: any;
+    jsQR?: any;
+  }
+}
+
 export default function CheckIns() {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
@@ -73,17 +81,76 @@ export default function CheckIns() {
   const [roleFilter, setRoleFilter] = useState('all');
   const [clientCheckIns, setClientCheckIns] = useState<ClientCheckIn[]>([]);
   const [staffCheckIns, setStaffCheckIns] = useState<StaffCheckIn[]>([]);
-  const [fingerprintScanActive, setFingerprintScanActive] = useState(false);
-  const [fingerprintStatus, setFingerprintStatus] = useState<'idle' | 'scanning' | 'success' | 'error' | 'not_found'>('idle');
+  const [qrScanActive, setQrScanActive] = useState(false);
+  const [qrStatus, setQrStatus] = useState<'idle' | 'scanning' | 'success' | 'error' | 'not_found'>('idle');
+  const [manualQr, setManualQr] = useState('');
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const scanTimerRef = useRef<number | null>(null);
+  const detectorRef = useRef<any>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('clients');
+  const [barcodeDetectorSupported, setBarcodeDetectorSupported] = useState(false);
+  const [jsQRLoaded, setJsQRLoaded] = useState(false);
+  
+  // Add state to prevent duplicate processing
+  const [isProcessingQR, setIsProcessingQR] = useState(false);
+  const [lastProcessedQR, setLastProcessedQR] = useState<string>('');
+  const lastProcessedTimeRef = useRef<number>(0);
   
   const todayDate = new Date().toISOString().split('T')[0];
   const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
   useEffect(() => {
     fetchCheckIns();
+    checkBarcodeDetectorSupport();
+    loadJsQR();
   }, []);
+
+  useEffect(() => {
+    // Cleanup camera/interval on unmount
+    return () => stopQrScan();
+  }, []);
+
+  const addDebugInfo = (info: string) => {
+    console.log('QR Debug:', info);
+    setDebugInfo(prev => [...prev.slice(-4), `${new Date().toLocaleTimeString()}: ${info}`]);
+  };
+
+  const loadJsQR = async () => {
+    try {
+      // Load jsQR from CDN
+      if (!window.jsQR) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+        script.onload = () => {
+          setJsQRLoaded(true);
+          addDebugInfo('jsQR library loaded successfully');
+        };
+        script.onerror = () => {
+          addDebugInfo('Failed to load jsQR library');
+        };
+        document.head.appendChild(script);
+      } else {
+        setJsQRLoaded(true);
+        addDebugInfo('jsQR library already available');
+      }
+    } catch (error) {
+      addDebugInfo(`jsQR loading error: ${error}`);
+    }
+  };
+
+  const checkBarcodeDetectorSupport = () => {
+    if ('BarcodeDetector' in window) {
+      setBarcodeDetectorSupported(true);
+      addDebugInfo('BarcodeDetector API is supported');
+    } else {
+      setBarcodeDetectorSupported(false);
+      addDebugInfo('BarcodeDetector API is NOT supported - will use jsQR fallback');
+    }
+  };
 
   const fetchCheckIns = async () => {
     setIsLoading(true);
@@ -200,440 +267,986 @@ export default function CheckIns() {
         checkIn.staff.email.toLowerCase().includes(searchTerm.toLowerCase())
       );
     });
-  
-  const handleFingerprintScan = async () => {
-    setFingerprintScanActive(true);
-    setFingerprintStatus('scanning');
-    
-    // Simulate fingerprint scanning process
-    setTimeout(async () => {
-      try {
-        // In a real implementation, you would:
-        // 1. Capture fingerprint data from sensor
-        // 2. Compare with stored fingerprint templates in database
-        // 3. Find matching person and create check-in record
-        
-        // Simulate fingerprint matching process
-        const mockFingerprintData = "captured_fingerprint_template";
-        
-        // Simulate database lookup for matching fingerprint
-        const { data: matchingPerson, error: lookupError } = await supabase
-          .from('staff')
-          .select(`
-            id,
-            first_name,
-            last_name,
-            fingerprint_data,
-            roles (name)
-          `)
-          .eq('fingerprint_enrolled', true)
-          .limit(1); // In reality, you'd match against the captured template
-        
-        if (lookupError) {
-          console.error('Error looking up fingerprint:', lookupError);
-          setFingerprintStatus('error');
-          return;
-        }
 
-        if (matchingPerson && matchingPerson.length > 0) {
-          const person = matchingPerson[0];
-          
-          // Create check-in record (example for staff - you'd determine if it's staff or client)
-          const { error: checkinError } = await supabase
-            .from('staff_checkins')
-            .insert([
-              {
-                staff_id: person.id,
-                checkin_time: new Date().toISOString(),
-                checkin_date: new Date().toISOString().split('T')[0]
-              }
-            ]);
-
-          if (checkinError) {
-            console.error('Error creating check-in:', checkinError);
-            setFingerprintStatus('error');
-            toast({
-              title: "Check-in failed",
-              description: "Could not record check-in. Please try again.",
-              variant: "destructive"
-            });
-          } else {
-            setFingerprintStatus('success');
-            toast({
-              title: "Check-in successful",
-              description: `${person.first_name} ${person.last_name} has been checked in successfully.`,
-            });
-            
-            // Refresh check-ins after successful scan
-            fetchCheckIns();
-          }
-        } else {
-          setFingerprintStatus('not_found');
-          toast({
-            title: "Fingerprint not recognized",
-            description: "No matching fingerprint found. Please ensure you're enrolled in the system.",
-            variant: "destructive"
-          });
-        }
-      } catch (error) {
-        console.error('Error during fingerprint scan:', error);
-        setFingerprintStatus('error');
-        toast({
-          title: "Scan failed",
-          description: "An error occurred during fingerprint scanning.",
-          variant: "destructive"
-        });
-      } finally {
-        setFingerprintScanActive(false);
+  // Enhanced QR code detection using jsQR library
+  const detectQRCodeWithJsQR = (canvas: HTMLCanvasElement): string | null => {
+    try {
+      if (!window.jsQR) {
+        return null;
       }
-    }, 3000);
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: "dontInvert",
+      });
+      
+      if (code) {
+        return code.data;
+      }
+      
+      return null;
+    } catch (error: any) {
+      addDebugInfo(`jsQR detection error: ${error.message}`);
+      return null;
+    }
   };
 
-  const resetFingerprintScan = () => {
-    setFingerprintStatus('idle');
-    setFingerprintScanActive(false);
+  // QR scanning helpers
+  useEffect(() => {
+    if (!qrScanActive) return;
+    const video = videoRef.current;
+    const stream = mediaStreamRef.current;
+    if (!video || !stream) return;
+
+    addDebugInfo('Setting up video stream');
+
+    // Attach stream to video and ensure inline autoplay
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+
+    const onLoaded = () => {
+      addDebugInfo(`Video loaded: ${video.videoWidth}x${video.videoHeight}`);
+      video.play().catch((err) => {
+        addDebugInfo(`Video play error: ${err.message}`);
+      });
+    };
+    
+    const onError = (err: any) => {
+      addDebugInfo(`Video error: ${err.message || err}`);
+    };
+
+    video.addEventListener('loadedmetadata', onLoaded);
+    video.addEventListener('error', onError);
+
+    const startDetect = () => {
+      addDebugInfo('Starting QR detection');
+      
+      // Prepare detector and canvas
+      if (barcodeDetectorSupported && !detectorRef.current) {
+        try {
+          detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] });
+          addDebugInfo('BarcodeDetector initialized');
+        } catch (err: any) {
+          addDebugInfo(`BarcodeDetector init error: ${err.message}`);
+        }
+      }
+      
+      if (!canvasRef.current) {
+        canvasRef.current = document.createElement('canvas');
+        addDebugInfo('Canvas created');
+      }
+
+      // Poll frames with duplicate prevention
+      scanTimerRef.current = window.setInterval(async () => {
+        try {
+          // Skip if already processing a QR code
+          if (isProcessingQR) {
+            return;
+          }
+
+          if (!videoRef.current || !canvasRef.current) return;
+
+          const vw = videoRef.current.videoWidth;
+          const vh = videoRef.current.videoHeight;
+          if (!vw || !vh) return; // wait until video has dimensions
+
+          // Draw the current frame to an offscreen canvas at native resolution
+          const canvas = canvasRef.current;
+          if (canvas.width !== vw || canvas.height !== vh) {
+            canvas.width = vw;
+            canvas.height = vh;
+            addDebugInfo(`Canvas resized to ${vw}x${vh}`);
+          }
+          
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(videoRef.current, 0, 0, vw, vh);
+
+          let detectedValue: string | null = null;
+
+          // Try BarcodeDetector first
+          if (detectorRef.current) {
+            try {
+              const barcodes = await detectorRef.current.detect(canvas);
+              if (barcodes && barcodes.length > 0) {
+                detectedValue = barcodes[0].rawValue || '';
+              }
+            } catch (detectError: any) {
+              // Silent fail for detection errors
+            }
+          }
+
+          // Try jsQR fallback if BarcodeDetector failed or not available
+          if (!detectedValue && jsQRLoaded) {
+            detectedValue = detectQRCodeWithJsQR(canvas);
+          }
+
+          // Additional processing attempts with different image processing
+          if (!detectedValue && jsQRLoaded && window.jsQR) {
+            try {
+              // Try with inverted colors
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const code = window.jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: "attemptBoth",
+              });
+              
+              if (code) {
+                detectedValue = code.data;
+              }
+            } catch (inversionError: any) {
+              // Silent fail for inversion attempts
+            }
+          }
+
+          if (detectedValue && detectedValue.trim()) {
+            const currentTime = Date.now();
+            const trimmedValue = detectedValue.trim();
+            
+            // Prevent duplicate processing of the same QR code within 3 seconds
+            if (trimmedValue === lastProcessedQR && (currentTime - lastProcessedTimeRef.current) < 3000) {
+              addDebugInfo('Duplicate QR code detected, skipping');
+              return;
+            }
+
+            // Set processing flag to prevent multiple simultaneous processing
+            setIsProcessingQR(true);
+            setLastProcessedQR(trimmedValue);
+            lastProcessedTimeRef.current = currentTime;
+            
+            addDebugInfo(`QR Code detected: ${trimmedValue.substring(0, 100)}`);
+            
+            try {
+              await handleQrResult(trimmedValue);
+            } finally {
+              // Always reset processing flag after handling
+              setTimeout(() => {
+                setIsProcessingQR(false);
+              }, 1000); // 1 second cooldown
+            }
+            
+            stopQrScan();
+          }
+        } catch (frameError: any) {
+          addDebugInfo(`Frame processing error: ${frameError.message}`);
+        }
+      }, 100); // 100ms intervals
+    };
+
+    // Start when mounted
+    const rAF = requestAnimationFrame(startDetect);
+
+    return () => {
+      video.removeEventListener('loadedmetadata', onLoaded);
+      video.removeEventListener('error', onError);
+      cancelAnimationFrame(rAF);
+    };
+  }, [qrScanActive, barcodeDetectorSupported, jsQRLoaded, isProcessingQR, lastProcessedQR]);
+
+  const stopQrScan = () => {
+    addDebugInfo('Stopping QR scan');
+    setQrScanActive(false);
+    setIsProcessingQR(false);
+    setLastProcessedQR('');
+    lastProcessedTimeRef.current = 0;
+    
+    if (scanTimerRef.current) {
+      window.clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    detectorRef.current = null;
+    canvasRef.current = null;
+    setQrStatus('idle');
   };
 
-  const formatTime = (timeString: string) => {
-    return new Date(timeString).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
+  // Helper: get camera stream with fallbacks and higher ideal resolution
+  const getCameraStream = async (): Promise<MediaStream> => {
+    addDebugInfo('Requesting camera access');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920, min: 640 },
+          height: { ideal: 1080, min: 480 },
+          frameRate: { ideal: 30, min: 15 }
+        },
+        audio: false,
+      });
+      addDebugInfo('Camera access granted (environment)');
+      return stream;
+    } catch (envError) {
+      addDebugInfo(`Environment camera failed: ${envError}`);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            width: { ideal: 1920, min: 640 }, 
+            height: { ideal: 1080, min: 480 },
+            frameRate: { ideal: 30, min: 15 }
+          },
+          audio: false,
+        });
+        addDebugInfo('Camera access granted (any)');
+        return stream;
+      } catch (anyError) {
+        addDebugInfo(`Any camera failed: ${anyError}`);
+        throw anyError;
+      }
+    }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US');
+  const startQrScan = async () => {
+    try {
+      setQrStatus('scanning');
+      setDebugInfo([]);
+      setIsProcessingQR(false);
+      setLastProcessedQR('');
+      lastProcessedTimeRef.current = 0;
+      
+      addDebugInfo('Starting QR scan process');
+      addDebugInfo(`Detection methods available: BarcodeDetector=${barcodeDetectorSupported}, jsQR=${jsQRLoaded}`);
+      
+      const stream = await getCameraStream();
+      if (!stream || stream.getVideoTracks().length === 0) {
+        throw new Error('No video tracks available');
+      }
+      
+      const videoTrack = stream.getVideoTracks()[0];
+      const settings = videoTrack.getSettings();
+      addDebugInfo(`Video track: ${settings.width}x${settings.height} @ ${settings.frameRate}fps`);
+      
+      mediaStreamRef.current = stream;
+      setQrScanActive(true);
+    } catch (e: any) {
+      addDebugInfo(`Camera error: ${e.message}`);
+      setQrStatus('error');
+      toast({
+        title: 'Camera error',
+        description: e?.message || 'Could not access the camera. Please check permissions and try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleQrResult = async (value: string) => {
+    try {
+      const code = value.trim();
+      const nowIso = new Date().toISOString();
+      const dateStr = nowIso.split('T')[0];
+
+      addDebugInfo(`Processing QR code: ${code.substring(0, 50)}...`);
+
+      // First, try to parse as JSON (new format from registration)
+      let qrData: any = null;
+      try {
+        qrData = JSON.parse(code);
+        addDebugInfo(`Parsed as JSON: ${JSON.stringify(qrData).substring(0, 100)}`);
+      } catch (parseError) {
+        addDebugInfo('QR code is not JSON, trying other methods');
+      }
+
+      // Handle new JSON format from registration
+      if (qrData && qrData.userId) {
+        addDebugInfo(`Processing new JSON format with userId: ${qrData.userId}`);
+        
+        // Look up user by ID
+        const { data: userMatch, error: userErr } = await supabase
+          .from('users')
+          .select('id, first_name, last_name, email, package_id, packages(name)')
+          .eq('id', qrData.userId)
+          .maybeSingle();
+
+        if (userErr) {
+          addDebugInfo(`User lookup error: ${userErr.message}`);
+          throw new Error(`Database error: ${userErr.message}`);
+        }
+
+        if (userMatch) {
+          addDebugInfo(`Found user: ${userMatch.first_name} ${userMatch.last_name}`);
+          
+          // Insert into client_checkins
+          const checkInData = {
+            user_id: userMatch.id,
+            checkin_time: nowIso,
+            checkin_date: dateStr,
+          };
+
+          // Try to include additional fields if they exist in the table
+          const extendedCheckInData = {
+            ...checkInData,
+            'QR-CODE USED': true,
+            package_type_at_checkin: userMatch.packages?.name || null,
+          };
+
+          let { error: insertError } = await supabase
+            .from('client_checkins')
+            .insert([extendedCheckInData]);
+
+          // If extended insert fails, try basic insert
+          if (insertError) {
+            addDebugInfo(`Extended insert failed: ${insertError.message}, trying basic insert`);
+            const { error: basicInsertError } = await supabase
+              .from('client_checkins')
+              .insert([checkInData]);
+            
+            if (basicInsertError) {
+              throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
+            }
+          }
+
+          setQrStatus('success');
+          toast({
+            title: 'Check-in successful',
+            description: `${userMatch.first_name} ${userMatch.last_name} has been checked in successfully.`,
+          });
+          fetchCheckIns();
+          return;
+        } else {
+          addDebugInfo(`User not found with ID: ${qrData.userId}`);
+        }
+      }
+
+      // Fallback: Try to match by qr_code_data field in users table
+      const { data: userByQrCode, error: qrCodeErr } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, email, package_id, packages(name), qr_code_data')
+        .eq('qr_code_data', code)
+        .maybeSingle();
+
+      if (qrCodeErr) {
+        addDebugInfo(`qr_code_data lookup error: ${qrCodeErr.message}`);
+      }
+
+      if (userByQrCode) {
+        addDebugInfo(`Found user by qr_code_data: ${userByQrCode.first_name} ${userByQrCode.last_name}`);
+        
+        const checkInData = {
+          user_id: userByQrCode.id,
+          checkin_time: nowIso,
+          checkin_date: dateStr,
+        };
+
+        const extendedCheckInData = {
+          ...checkInData,
+          'QR-CODE USED': true,
+          package_type_at_checkin: userByQrCode.packages?.name || null,
+        };
+
+        let { error: insertError } = await supabase
+          .from('client_checkins')
+          .insert([extendedCheckInData]);
+
+        if (insertError) {
+          const { error: basicInsertError } = await supabase
+            .from('client_checkins')
+            .insert([checkInData]);
+          
+          if (basicInsertError) {
+            throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
+          }
+        }
+
+        setQrStatus('success');
+        toast({
+          title: 'Check-in successful',
+          description: `${userByQrCode.first_name} ${userByQrCode.last_name} has been checked in successfully.`,
+        });
+        fetchCheckIns();
+        return;
+      }
+
+      // Try staff qr_code_data lookup
+      const { data: staffByQrCode, error: staffQrErr } = await supabase
+        .from('staff')
+        .select('id, first_name, last_name, email, role_id, roles(name), qr_code_data')
+        .eq('qr_code_data', code)
+        .maybeSingle();
+
+      if (staffQrErr) {
+        addDebugInfo(`staff qr_code_data lookup error: ${staffQrErr.message}`);
+      }
+
+      if (staffByQrCode) {
+        addDebugInfo(`Found staff by qr_code_data: ${staffByQrCode.first_name} ${staffByQrCode.last_name}`);
+        
+        const { error: staffInsertError } = await supabase
+          .from('staff_checkins')
+          .insert([{
+            staff_id: staffByQrCode.id,
+            checkin_time: nowIso,
+            checkin_date: dateStr,
+          }]);
+
+        if (staffInsertError) {
+          throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
+        }
+
+        setQrStatus('success');
+        toast({
+          title: 'Check-in successful',
+          description: `${staffByQrCode.first_name} ${staffByQrCode.last_name} has been checked in successfully.`,
+        });
+        fetchCheckIns();
+        return;
+      }
+
+      // Legacy fallback: Try to extract ID from various formats
+      const extractIdFromPayload = (payload: string): { id: string; kind: 'user' | 'staff' | 'unknown' } => {
+        try {
+          const obj = JSON.parse(payload);
+          if (obj.userId) return { id: obj.userId, kind: 'user' };
+          if (obj.user_id) return { id: obj.user_id, kind: 'user' };
+          if (obj.staff_id) return { id: obj.staff_id, kind: 'staff' };
+          if (obj.id && obj.type) return { id: obj.id, kind: obj.type === 'staff' ? 'staff' : 'user' };
+        } catch {}
+        
+        // Check if it's a UUID
+        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i;
+        if (uuidRegex.test(payload)) return { id: payload, kind: 'unknown' };
+        
+        return { id: '', kind: 'unknown' };
+      };
+
+      const { id, kind } = extractIdFromPayload(code);
+      if (!id) {
+        addDebugInfo('No valid ID found in QR code');
+        setQrStatus('not_found');
+        toast({
+          title: 'QR code not recognized',
+          description: 'The scanned QR code did not match any user or staff member.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      addDebugInfo(`Extracted ID: ${id}, Kind: ${kind}`);
+
+      let isUser = false;
+      let person: any = null;
+
+      // Try to find user first (unless explicitly marked as staff)
+      if (kind !== 'staff') {
+        const { data: userById } = await supabase
+          .from('users')
+          .select('id, first_name, last_name, email, package_id, packages(name)')
+          .eq('id', id)
+          .maybeSingle();
+        
+        if (userById) {
+          person = userById;
+          isUser = true;
+          addDebugInfo(`Found user by ID: ${person.first_name} ${person.last_name}`);
+        }
+      }
+
+      // If not found as user, try staff
+      if (!person) {
+        const { data: staffById } = await supabase
+          .from('staff')
+          .select('id, first_name, last_name, email, role_id, roles(name)')
+          .eq('id', id)
+          .maybeSingle();
+        
+        if (staffById) {
+          person = staffById;
+          isUser = false;
+          addDebugInfo(`Found staff by ID: ${person.first_name} ${person.last_name}`);
+        }
+      }
+
+      if (!person) {
+        addDebugInfo('Person not found in database');
+        setQrStatus('not_found');
+        toast({
+          title: 'QR code not recognized',
+          description: 'The scanned QR code did not match any user or staff member.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Record check-in
+      if (isUser) {
+        const checkInData = {
+          user_id: person.id,
+          checkin_time: nowIso,
+          checkin_date: dateStr,
+        };
+
+        const extendedCheckInData = {
+          ...checkInData,
+          'QR-CODE USED': true,
+          package_type_at_checkin: person.packages?.name || null,
+        };
+
+        let { error: insertError } = await supabase
+          .from('client_checkins')
+          .insert([extendedCheckInData]);
+
+        if (insertError) {
+          const { error: basicInsertError } = await supabase
+            .from('client_checkins')
+            .insert([checkInData]);
+          
+          if (basicInsertError) {
+            throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
+          }
+        }
+      } else {
+        const { error: staffInsertError } = await supabase
+          .from('staff_checkins')
+          .insert([{
+            staff_id: person.id,
+            checkin_time: nowIso,
+            checkin_date: dateStr,
+          }]);
+
+        if (staffInsertError) {
+          throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
+        }
+      }
+
+      setQrStatus('success');
+      toast({
+        title: 'Check-in successful',
+        description: `${person.first_name} ${person.last_name} has been checked in successfully.`,
+      });
+      fetchCheckIns();
+
+    } catch (err: any) {
+      addDebugInfo(`QR handling error: ${err.message}`);
+      setQrStatus('error');
+      toast({
+        title: 'Check-in error',
+        description: `An error occurred while recording the check-in: ${err.message}`,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleManualQr = async () => {
+    if (!manualQr.trim()) {
+      toast({
+        title: 'Invalid input',
+        description: 'Please enter a QR code value.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    // Prevent duplicate manual processing
+    if (isProcessingQR) {
+      toast({
+        title: 'Processing in progress',
+        description: 'Please wait for the current check-in to complete.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsProcessingQR(true);
+    try {
+      await handleQrResult(manualQr.trim());
+    } finally {
+      setTimeout(() => {
+        setIsProcessingQR(false);
+      }, 1000);
+    }
+    setManualQr('');
+  };
+
+  const exportData = () => {
+    const allData = [
+      ...filteredClientCheckIns.map(item => ({
+        type: 'Client',
+        name: `${item.users.first_name} ${item.users.last_name}`,
+        email: item.users.email,
+        package: item.users.packages?.name || 'N/A',
+        checkin_time: item.checkin_time,
+        checkin_date: item.checkin_date,
+        checkout_time: item.checkout_time || 'N/A'
+      })),
+      ...filteredStaffCheckIns.map(item => ({
+        type: 'Staff',
+        name: `${item.staff.first_name} ${item.staff.last_name}`,
+        email: item.staff.email,
+        role: item.staff.roles?.name || 'N/A',
+        checkin_time: item.checkin_time,
+        checkin_date: item.checkin_date,
+        checkout_time: item.checkout_time || 'N/A'
+      }))
+    ];
+
+    const csvContent = [
+      ['Type', 'Name', 'Email', 'Package/Role', 'Check-in Time', 'Check-in Date', 'Check-out Time'],
+      ...allData.map(row => [
+        row.type,
+        row.name,
+        row.email,
+        row.type === 'Client' ? (row as any).package : (row as any).role,
+        row.checkin_time,
+        row.checkin_date,
+        row.checkout_time
+      ])
+    ].map(row => row.join(',')).join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `checkins_${dateFilter}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   if (isLoading) {
     return (
       <div className="animate-fade-in">
-        <h2 className="text-3xl font-bold tracking-tight mb-6">Check-Ins</h2>
-        <div className="text-center py-8">Loading check-ins...</div>
+        <h2 className="text-3xl font-bold tracking-tight mb-6">Check-ins</h2>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading check-ins...</p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="animate-fade-in">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-3xl font-bold tracking-tight">Check-Ins</h2>
-      </div>
+      <h2 className="text-3xl font-bold tracking-tight mb-6">Check-ins</h2>
       
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
-        <TabsList>
-          <TabsTrigger value="clients" className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Client Check-Ins
-          </TabsTrigger>
-          <TabsTrigger value="staff" className="flex items-center gap-2">
-            <UserCheck className="h-4 w-4" />
-            Staff Check-Ins
-          </TabsTrigger>
-          <TabsTrigger value="scan">
-            <Fingerprint className="h-4 w-4 mr-2" />
-            Fingerprint Scan
-          </TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="clients" className="space-y-4">
-          <div className="flex flex-col md:flex-row items-center gap-4">
-            <div className="relative w-full md:w-96">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                type="search"
-                placeholder="Search by name or email..."
-                className="pl-9"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            
-            <Select value={dateFilter} onValueChange={setDateFilter}>
-              <SelectTrigger className="w-full md:w-40">
-                <SelectValue placeholder="Filter by date" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="yesterday">Yesterday</SelectItem>
-                <SelectItem value="all">All Dates</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            <Button variant="outline" className="ml-auto">
-              <Download className="mr-2 h-4 w-4" /> Export
-            </Button>
-          </div>
-          
-          <Card>
-            <CardHeader className="p-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-xl">Client Check-In Records</CardTitle>
-                <CardDescription>
-                  {filteredClientCheckIns.length} records found
-                </CardDescription>
+      <div className="grid gap-6">
+        {/* QR Scanner Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5" />
+              QR Code Scanner
+              <div className="flex gap-1">
+                {barcodeDetectorSupported && (
+                  <Badge variant="outline" className="text-xs">BarcodeDetector</Badge>
+                )}
+                {jsQRLoaded && (
+                  <Badge variant="outline" className="text-xs">jsQR</Badge>
+                )}
+                {isProcessingQR && (
+                  <Badge variant="destructive" className="text-xs">Processing...</Badge>
+                )}
               </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="border rounded-md">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Check-In Time</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Package</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredClientCheckIns.length > 0 ? (
-                      filteredClientCheckIns.map((checkIn) => (
+            </CardTitle>
+            <CardDescription>
+              Scan QR codes to check in clients and staff members
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {!qrScanActive ? (
+                <div className="flex gap-4">
+                  <Button 
+                    onClick={startQrScan} 
+                    className="flex items-center gap-2"
+                    disabled={isProcessingQR}
+                  >
+                    <QrCode className="h-4 w-4" />
+                    Start Camera Scan
+                  </Button>
+                  <div className="flex gap-2 flex-1">
+                    <Input
+                      placeholder="Or enter QR code manually..."
+                      value={manualQr}
+                      onChange={(e) => setManualQr(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleManualQr()}
+                      disabled={isProcessingQR}
+                    />
+                    <Button 
+                      onClick={handleManualQr} 
+                      variant="outline"
+                      disabled={isProcessingQR}
+                    >
+                      {isProcessingQR ? 'Processing...' : 'Submit'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="relative bg-black rounded-lg overflow-hidden">
+                    <video
+                      ref={videoRef}
+                      className="w-full h-64 object-cover"
+                      playsInline
+                      muted
+                      autoPlay
+                    />
+                    <div className="absolute inset-0 border-2 border-white/50 rounded-lg pointer-events-none">
+                      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-primary rounded-lg"></div>
+                    </div>
+                    {isProcessingQR && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <div className="bg-white p-4 rounded-lg flex items-center gap-2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                          <span className="text-sm">Processing QR code...</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={stopQrScan} variant="outline" disabled={isProcessingQR}>
+                      Stop Scanning
+                    </Button>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      {qrStatus === 'scanning' && !isProcessingQR && (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                          Scanning for QR codes...
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Debug Information */}
+                  {debugInfo.length > 0 && (
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <h4 className="text-sm font-medium mb-2">Debug Info:</h4>
+                      <div className="text-xs space-y-1 max-h-32 overflow-y-auto">
+                        {debugInfo.map((info, index) => (
+                          <div key={index} className="text-gray-600">{info}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {qrStatus === 'success' && (
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-800">
+                  ✓ Check-in recorded successfully!
+                </div>
+              )}
+              
+              {qrStatus === 'error' && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800">
+                  ✗ Error processing QR code. Please try again.
+                </div>
+              )}
+              
+              {qrStatus === 'not_found' && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800">
+                  ⚠ QR code not recognized. Please check the code and try again.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Filters and Search */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                  <Input
+                    placeholder="Search by name or email..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+              </div>
+              <Select value={dateFilter} onValueChange={setDateFilter}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="yesterday">Yesterday</SelectItem>
+                  <SelectItem value="all">All Time</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={roleFilter} onValueChange={setRoleFilter}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Roles</SelectItem>
+                  <SelectItem value="trainer">Trainers</SelectItem>
+                  <SelectItem value="manager">Managers</SelectItem>
+                  <SelectItem value="receptionist">Receptionists</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button onClick={exportData} variant="outline" className="flex items-center gap-2">
+                <Download className="h-4 w-4" />
+                Export
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Check-ins Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="clients" className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Clients ({filteredClientCheckIns.length})
+            </TabsTrigger>
+            <TabsTrigger value="staff" className="flex items-center gap-2">
+              <UserCheck className="h-4 w-4" />
+              Staff ({filteredStaffCheckIns.length})
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="clients">
+            <Card>
+              <CardHeader>
+                <CardTitle>Client Check-ins</CardTitle>
+                <CardDescription>
+                  Recent client check-ins and activity
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {filteredClientCheckIns.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No client check-ins found for the selected filters.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Client</TableHead>
+                        <TableHead>Package</TableHead>
+                        <TableHead>Check-in Time</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredClientCheckIns.map((checkIn) => (
                         <TableRow key={checkIn.id}>
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
+                          <TableCell>
+                            <div className="flex items-center gap-3">
                               <Avatar className="h-8 w-8">
-                                <AvatarFallback className="bg-fitness-primary text-white text-xs">
+                                <AvatarFallback>
                                   {checkIn.users.first_name[0]}{checkIn.users.last_name[0]}
                                 </AvatarFallback>
                               </Avatar>
                               <div>
-                                <p>{checkIn.users.first_name} {checkIn.users.last_name}</p>
-                                <p className="text-sm text-gray-500">{checkIn.users.email}</p>
+                                <div className="font-medium">
+                                  {checkIn.users.first_name} {checkIn.users.last_name}
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  {checkIn.users.email}
+                                </div>
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell>{formatTime(checkIn.checkin_time)}</TableCell>
-                          <TableCell>{formatDate(checkIn.checkin_date)}</TableCell>
                           <TableCell>
                             <Badge variant="secondary">
                               {checkIn.users.packages?.name || 'No Package'}
                             </Badge>
                           </TableCell>
                           <TableCell>
+                            {new Date(checkIn.checkin_time).toLocaleTimeString()}
+                          </TableCell>
+                          <TableCell>
+                            {new Date(checkIn.checkin_date).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
                             <Badge variant={checkIn.checkout_time ? "outline" : "default"}>
-                              {checkIn.checkout_time ? 'Checked Out' : 'Active'}
+                              {checkIn.checkout_time ? 'Checked Out' : 'Checked In'}
                             </Badge>
                           </TableCell>
                         </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          No client check-in records found
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-        <TabsContent value="staff" className="space-y-4">
-          <div className="flex flex-col md:flex-row items-center gap-4">
-            <div className="relative w-full md:w-96">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                type="search"
-                placeholder="Search by name or email..."
-                className="pl-9"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-full md:w-40">
-                <SelectValue placeholder="Filter by role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Roles</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="trainer">Trainer</SelectItem>
-                <SelectItem value="receptionist">Receptionist</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            <Select value={dateFilter} onValueChange={setDateFilter}>
-              <SelectTrigger className="w-full md:w-40">
-                <SelectValue placeholder="Filter by date" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="yesterday">Yesterday</SelectItem>
-                <SelectItem value="all">All Dates</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            <Button variant="outline" className="ml-auto">
-              <Download className="mr-2 h-4 w-4" /> Export
-            </Button>
-          </div>
-          
-          <Card>
-            <CardHeader className="p-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-xl">Staff Check-In Records</CardTitle>
+          <TabsContent value="staff">
+            <Card>
+              <CardHeader>
+                <CardTitle>Staff Check-ins</CardTitle>
                 <CardDescription>
-                  {filteredStaffCheckIns.length} records found
+                  Recent staff check-ins and activity
                 </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="border rounded-md">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Staff Member</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Check-In Time</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredStaffCheckIns.length > 0 ? (
-                      filteredStaffCheckIns.map((checkIn) => (
+              </CardHeader>
+              <CardContent>
+                {filteredStaffCheckIns.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No staff check-ins found for the selected filters.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Staff Member</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Check-in Time</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredStaffCheckIns.map((checkIn) => (
                         <TableRow key={checkIn.id}>
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
+                          <TableCell>
+                            <div className="flex items-center gap-3">
                               <Avatar className="h-8 w-8">
-                                <AvatarFallback className="bg-fitness-primary text-white text-xs">
+                                <AvatarFallback>
                                   {checkIn.staff.first_name[0]}{checkIn.staff.last_name[0]}
                                 </AvatarFallback>
                               </Avatar>
                               <div>
-                                <p>{checkIn.staff.first_name} {checkIn.staff.last_name}</p>
-                                <p className="text-sm text-gray-500">{checkIn.staff.email}</p>
+                                <div className="font-medium">
+                                  {checkIn.staff.first_name} {checkIn.staff.last_name}
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  {checkIn.staff.email}
+                                </div>
                               </div>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline">
+                            <Badge variant="secondary">
                               {checkIn.staff.roles?.name || 'No Role'}
                             </Badge>
                           </TableCell>
-                          <TableCell>{formatTime(checkIn.checkin_time)}</TableCell>
-                          <TableCell>{formatDate(checkIn.checkin_date)}</TableCell>
+                          <TableCell>
+                            {new Date(checkIn.checkin_time).toLocaleTimeString()}
+                          </TableCell>
+                          <TableCell>
+                            {new Date(checkIn.checkin_date).toLocaleDateString()}
+                          </TableCell>
                           <TableCell>
                             <Badge variant={checkIn.checkout_time ? "outline" : "default"}>
-                              {checkIn.checkout_time ? 'Checked Out' : 'Active'}
+                              {checkIn.checkout_time ? 'Checked Out' : 'Checked In'}
                             </Badge>
                           </TableCell>
                         </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          No staff check-in records found
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="scan">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Fingerprint className="h-5 w-5" />
-                Fingerprint Check-In
-              </CardTitle>
-              <CardDescription>
-                Use fingerprint scanner to record check-in for enrolled members and staff.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center justify-center space-y-4">
-              <div className="border border-dashed border-gray-300 w-full max-w-md rounded-lg p-8 flex flex-col items-center">
-                {fingerprintScanActive ? (
-                  <div className="relative w-64 h-64 bg-gradient-to-b from-teal-50 to-teal-100 flex items-center justify-center rounded-lg">
-                    <div className="absolute inset-0 border-2 border-teal-400 animate-pulse rounded-lg"></div>
-                    <div className="flex flex-col items-center">
-                      <Fingerprint size={64} className="text-teal-600 animate-pulse" />
-                      <p className="text-sm text-teal-700 mt-2 font-medium">Scanning fingerprint...</p>
-                      <p className="text-xs text-teal-600">Please keep finger on sensor</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="w-64 h-64 bg-gray-50 flex items-center justify-center rounded-lg border-2 border-gray-200">
-                    {fingerprintStatus === 'success' ? (
-                      <div className="flex flex-col items-center text-green-600">
-                        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-3">
-                          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                        <p className="text-sm font-medium">Check-in successful!</p>
-                      </div>
-                    ) : fingerprintStatus === 'error' ? (
-                      <div className="flex flex-col items-center text-red-600">
-                        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-3">
-                          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </div>
-                        <p className="text-sm font-medium">Scan failed</p>
-                      </div>
-                    ) : fingerprintStatus === 'not_found' ? (
-                      <div className="flex flex-col items-center text-orange-600">
-                        <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mb-3">
-                          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                          </svg>
-                        </div>
-                        <p className="text-sm font-medium">Fingerprint not found</p>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center text-gray-400">
-                        <Fingerprint size={64} />
-                        <p className="text-sm mt-2">Touch sensor to scan</p>
-                      </div>
-                    )}
-                  </div>
+                      ))}
+                    </TableBody>
+                  </Table>
                 )}
-                
-                <div className="flex gap-2 mt-4">
-                  <Button 
-                    onClick={handleFingerprintScan} 
-                    disabled={fingerprintScanActive}
-                    className="bg-teal-600 hover:bg-teal-700 text-white"
-                  >
-                    {fingerprintScanActive ? 'Scanning...' : 'Start Fingerprint Scan'}
-                  </Button>
-                  
-                  {(fingerprintStatus === 'success' || fingerprintStatus === 'error' || fingerprintStatus === 'not_found') && (
-                    <Button 
-                      onClick={resetFingerprintScan}
-                      variant="outline"
-                    >
-                      Scan Another
-                    </Button>
-                  )}
-                </div>
-              </div>
-              
-              <div className="text-center max-w-md">
-                <p className="text-sm text-gray-600 mb-2">
-                  <strong>Instructions:</strong>
-                </p>
-                <ul className="text-xs text-gray-500 space-y-1">
-                  <li>• Ensure your finger is clean and dry</li>
-                  <li>• Place finger firmly on the scanner</li>
-                  <li>• Hold still until scan completes</li>
-                  <li>• Contact admin if your fingerprint isn't enrolled</li>
-                </ul>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }
+

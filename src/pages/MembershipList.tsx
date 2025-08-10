@@ -366,58 +366,71 @@ const handleUnfreeze = async (member: MembershipInfo) => {
 };
 
 
-  const handleUpgrade = (member: MembershipInfo) => {
-    setUpgradeMember(member);
-    setSelectedPackage("");
-    setUpgradeDialog(true);
-    setOpenDropdown(null);
-    fetchPackages();
-  };
+// keep your existing handleUpgrade or replace with this exact one
+const handleUpgrade = (member: MembershipInfo) => {
+  setUpgradeMember(member);
+  setSelectedPackage("");
+  setUpgradeDialog(true);
+  setOpenDropdown(null);
+  fetchPackages();
+};
 
-  const handleUpgradeSubmit = async () => {
-    if (!upgradeMember || !selectedPackage) {
+const handleUpgradeSubmit = async () => {
+  if (!upgradeMember || !selectedPackage) {
+    toast({
+      title: "Select a package",
+      description: "Please select a package to upgrade to.",
+      variant: "destructive",
+    });
+    return;
+  }
+
+  setProcessingAction(`upgrade-${upgradeMember.user_id}`);
+
+  try {
+    // NOTE: parameter names must match the PostgreSQL function signature
+    const { data, error } = await supabase.rpc("upgrade_membership", {
+      p_user_id: upgradeMember.user_id,
+      p_new_package_id: selectedPackage,
+    });
+
+    if (error) {
       toast({
-        title: "Select a package",
-        description: "Please select a package to upgrade to.",
-        variant: "destructive"
+        title: "Upgrade failed",
+        description: error.message,
+        variant: "destructive",
       });
       return;
     }
 
-    setProcessingAction(`upgrade-${upgradeMember.user_id}`);
-    
-    try {
-      const { error } = await supabase.rpc('upgrade_membership', {
-        user_id: upgradeMember.user_id,
-        new_package_id: selectedPackage
-      });
+    // rpc that RETURNS TABLE will usually return an array of rows
+    const result = Array.isArray(data) && data.length > 0 ? data[0] : data;
 
-      if (error) {
-        toast({
-          title: "Upgrade failed",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Package upgraded",
-          description: `${upgradeMember.full_name}'s package has been upgraded successfully.`
-        });
-        setUpgradeDialog(false);
-        setSelectedPackage("");
-        setUpgradeMember(null);
-        fetchMembershipData();
-      }
-    } catch (error: any) {
-      toast({
-        title: "Upgrade failed",
-        description: `Unexpected error: ${error?.message || 'Unknown error'}`,
-        variant: "destructive"
-      });
-    } finally {
-      setProcessingAction(null);
-    }
-  };
+    // Show success toast — include returned values if available
+    toast({
+      title: "Package upgraded",
+      description: result
+        ? `${upgradeMember.full_name}'s package upgraded. New expiry: ${new Date(result.new_expiry_date).toLocaleDateString()}.`
+        : `${upgradeMember.full_name}'s package has been upgraded successfully.`,
+    });
+
+    setUpgradeDialog(false);
+    setSelectedPackage("");
+    setUpgradeMember(null);
+
+    // refresh list to reflect updated expiry/status/days_left
+    await fetchMembershipData();
+  } catch (err: any) {
+    toast({
+      title: "Upgrade failed",
+      description: `Unexpected error: ${err?.message ?? "Unknown error"}`,
+      variant: "destructive",
+    });
+  } finally {
+    setProcessingAction(null);
+  }
+};
+
 
   // New coaching handlers
   const handleCoaching = (member: MembershipInfo) => {
