@@ -1,510 +1,495 @@
-// src/components/SMSSender.tsx
-import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
-import { Label } from './ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { useToast } from '../hooks/use-toast';
-import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { Info, XCircle, CheckCircle, Users, UserCheck, Phone } from 'lucide-react';
-import { Badge } from './ui/badge';
+// src/components/EnhancedSMSSender.tsx
+import React, { useState, useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Loader2, Send, Users, User, MessageSquare, Wand2 } from 'lucide-react'
+import { smsService, SendManualSMSRequest } from '../services/smsService'
+import { supabase } from '@/supabaseClient'
+import { UserSelector } from '@/components/UserSelector'
+
+interface NotificationTemplate {
+  id: string
+  name: string
+  title: string
+  body: string
+  variables: string[]
+  template_type: string
+}
 
 interface User {
-id: string;
-first_name: string;
-last_name: string;
-full_name: string;
-phone: string;
-email: string;
-status: string;
+  id: string
+  name: string
+  email: string
+  phone: string
+  membership_type?: string
+  membership_expiry?: string
+  created_at: string
 }
 
-interface Staff {
-id: string;
-first_name: string;
-last_name: string;
-full_name: string;
-phone: string;
-email: string;
-role_id: string;
-is_active: boolean;
+interface GymInfo {
+  name: string
+  address: string
+  phone: string
+  email: string
 }
 
-interface PersonalizedMessage {
-id: number;
-phone: string;
-message: string;
-user_id?: string;
-}
+export const EnhancedSMSSender: React.FC = () => {
+  const [activeTab, setActiveTab] = useState('template')
+  const [isLoading, setIsLoading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [templates, setTemplates] = useState<NotificationTemplate[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('')
+  const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({})
+  const [selectedUsers, setSelectedUsers] = useState<User[]>([])
+  const [gymInfo, setGymInfo] = useState<GymInfo>({
+    name: 'ATL Fitness',
+    address: 'Your Gym Address',
+    phone: 'Your Gym Phone',
+    email: 'info@atlfitness.com'
+  })
+  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-export function SMSSender() {
-const { toast } = useToast();
-const [selectedUser, setSelectedUser] = useState<User | null>(null);
-const [singleMessage, setSingleMessage] = useState('');
-const [bulkRecipientType, setBulkRecipientType] = useState('');
-const [bulkMessage, setBulkMessage] = useState('');
-const [personalizedMessages, setPersonalizedMessages] =
-useState<PersonalizedMessage[]>([{ id: 1, phone: '', message: '' }]);
-const [loading, setLoading] = useState(false);
-const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    loadTemplates()
+    loadGymInfo()
+  }, [])
 
-// Data states
-const [users, setUsers] = useState<User[]>([]);
-const [trainers, setTrainers] = useState<Staff[]>([]);
-const [receptionists, setReceptionists] = useState<Staff[]>([]);
-const [loadingData, setLoadingData] = useState(true);
-const [recipientCounts, setRecipientCounts] = useState({
-members: 0,
-trainers: 0,
-receptionists: 0
-});
+  useEffect(() => {
+    if (selectedTemplate && selectedUsers.length === 1) {
+      autoPopulateVariables()
+    }
+  }, [selectedTemplate, selectedUsers])
 
-useEffect(() => {
-loadUsersAndStaff();
-}, []);
+  const loadTemplates = async () => {
+    const result = await smsService.getNotificationTemplates()
+    if (result.success) {
+      setTemplates(result.data || [])
+    }
+  }
 
-const loadUsersAndStaff = async () => {
-setLoadingData(true);
-try {
-// Load active members
-const { data: membersData, error: membersError } = await supabase
-.from('users_with_membership_info')
-.select('user_id, first_name, last_name, full_name, phone, email, status')
-.eq('status', 'active');
+  const loadGymInfo = async () => {
+    try {
+      // Load gym information from your settings table
+      const { data, error } = await supabase
+        .from('gym_settings') // Adjust table name based on your schema
+        .select('name, address, phone, email')
+        .single()
 
-if (membersError) throw membersError;
+      if (!error && data) {
+        setGymInfo(data)
+      }
+    } catch (error) {
+      console.error('Error loading gym info:', error)
+    }
+  }
 
-// Load staff with roles
-const { data: staffData, error: staffError } = await supabase
-.from('staff')
-.select(`
-id, first_name, last_name, full_name, phone, email, role_id, is_active,
-roles!inner(name)
-`)
-.eq('is_active', true);
+  const autoPopulateVariables = () => {
+    if (!selectedTemplate || selectedUsers.length !== 1) return
 
-if (staffError) throw staffError;
+    const template = templates.find(t => t.id === selectedTemplate)
+    if (!template) return
 
-// Process members data
-const processedMembers = (membersData || []).map(member => ({
-id: member.user_id,
-first_name: member.first_name,
-last_name: member.last_name,
-full_name: member.full_name,
-phone: member.phone,
-email: member.email,
-status: member.status
-}));
+    const user = selectedUsers[0]
+    const newVariables: Record<string, string> = {}
 
-// Filter trainers and receptionists
-const trainersData = (staffData || []).filter(staff =>
-staff.roles?.name?.toLowerCase() === 'trainer'
-);
-const receptionistsData = (staffData || []).filter(staff =>
-staff.roles?.name?.toLowerCase() === 'receptionist'
-);
+    // Auto-populate common variables
+    template.variables.forEach(variable => {
+      switch (variable.toLowerCase()) {
+        case 'name':
+          newVariables[variable] = user.name
+          break
+        case 'email':
+          newVariables[variable] = user.email
+          break
+        case 'phone':
+          newVariables[variable] = user.phone
+          break
+        case 'membership_type':
+          newVariables[variable] = user.membership_type || 'Standard'
+          break
+        case 'membership_expiry':
+          newVariables[variable] = user.membership_expiry ? 
+            new Date(user.membership_expiry).toLocaleDateString() : 'N/A'
+          break
+        case 'gym_name':
+          newVariables[variable] = gymInfo.name
+          break
+        case 'gym_address':
+          newVariables[variable] = gymInfo.address
+          break
+        case 'gym_phone':
+          newVariables[variable] = gymInfo.phone
+          break
+        case 'gym_email':
+          newVariables[variable] = gymInfo.email
+          break
+        case 'member_since':
+          newVariables[variable] = new Date(user.created_at).toLocaleDateString()
+          break
+        default:
+          // Keep existing value or set empty
+          newVariables[variable] = templateVariables[variable] || ''
+      }
+    })
 
-setUsers(processedMembers);
-setTrainers(trainersData);
-setReceptionists(receptionistsData);
+    setTemplateVariables(newVariables)
+  }
 
-setRecipientCounts({
-members: processedMembers.length,
-trainers: trainersData.length,
-receptionists: receptionistsData.length
-});
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setAlert({ type, message })
+    setTimeout(() => setAlert(null), 5000)
+  }
 
-} catch (err: any) {
-console.error('Error loading users and staff:', err);
-setError('Failed to load users and staff data');
-} finally {
-setLoadingData(false);
-}
-};
+  const handleTemplateSMS = async () => {
+    if (!selectedTemplate) {
+      showAlert('error', 'Please select a template')
+      return
+    }
 
-const formatPhoneNumber = (phone: string | null): string => {
-if (!phone) return '';
-const cleanPhone = phone.replace(/\s+/g, '').trim();
-if (cleanPhone.startsWith('+')) {
-return cleanPhone;
-}
-// Add country code for Ethiopia if not present
-if (cleanPhone.startsWith('9') && cleanPhone.length === 9) {
-return `+251${cleanPhone}`;
-}
-if (cleanPhone.startsWith('0') && cleanPhone.length === 10) {
-return `+251${cleanPhone.substring(1)}`;
-}
-return cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
-};
+    if (selectedUsers.length === 0) {
+      showAlert('error', 'Please select at least one user')
+      return
+    }
 
-const getBulkRecipients = (): string[] => {
-switch (bulkRecipientType) {
-case 'members':
-return users
-.filter(user => user.phone)
-.map(user => formatPhoneNumber(user.phone));
-case 'trainers':
-return trainers
-.filter(trainer => trainer.phone)
-.map(trainer => formatPhoneNumber(trainer.phone));
-case 'receptionists':
-return receptionists
-.filter(receptionist => receptionist.phone)
-.map(receptionist => formatPhoneNumber(receptionist.phone));
-default:
-return [];
-}
-};
+    const template = templates.find(t => t.id === selectedTemplate)
+    if (!template) {
+      showAlert('error', 'Selected template not found')
+      return
+    }
 
-const sendSms = async (type: string, payload: any) => {
-setLoading(true);
-setError(null);
-try {
-const { data, error: functionError } = await supabase.functions.invoke('send-sms', {
-body: JSON.stringify({ type, data: payload }),
-headers: { 'Content-Type': 'application/json' },
-});
+    // Check if all required variables are filled
+    const missingVariables = template.variables.filter(variable => !templateVariables[variable]?.trim())
+    if (missingVariables.length > 0) {
+      showAlert('error', `Please fill in all variables: ${missingVariables.join(', ')}`)
+      return
+    }
 
-if (functionError) {
-throw new Error(functionError.message);
-}
-if (data.error) {
-throw new Error(data.error);
-}
+    setIsLoading(true)
 
-toast({
-title: 'SMS Sent Successfully',
-description: `Message ID: ${data.notification_id || data.campaign_id || 'N/A'}`,
-});
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        showAlert('error', 'You must be logged in to send SMS')
+        return
+      }
 
-// Clear form fields after successful send
-setSelectedUser(null);
-setSingleMessage('');
-setBulkRecipientType('');
-setBulkMessage('');
-setPersonalizedMessages([{ id: 1, phone: '', message: '' }]);
-} catch (err: any) {
-console.error('Error sending SMS:', err);
-setError(err.message || 'Failed to send SMS. Please try again.');
-toast({
-title: 'Failed to Send SMS',
-description: err.message || 'An unexpected error occurred.',
-variant: "destructive",
-});
-} finally {
-setLoading(false);
-}
-};
+      // Send SMS to each selected user
+      const results = await Promise.all(
+        selectedUsers.map(async (selectedUser) => {
+          // Replace template variables with user-specific data
+          let messageBody = template.body
+          
+          // Create user-specific variables
+          const userSpecificVariables = { ...templateVariables }
+          
+          // Override with user-specific data if sending to multiple users
+          if (selectedUsers.length > 1) {
+            template.variables.forEach(variable => {
+              switch (variable.toLowerCase()) {
+                case 'name':
+                  userSpecificVariables[variable] = selectedUser.name
+                  break
+                case 'email':
+                  userSpecificVariables[variable] = selectedUser.email
+                  break
+                case 'phone':
+                  userSpecificVariables[variable] = selectedUser.phone
+                  break
+                case 'membership_type':
+                  userSpecificVariables[variable] = selectedUser.membership_type || 'Standard'
+                  break
+                case 'membership_expiry':
+                  userSpecificVariables[variable] = selectedUser.membership_expiry ? 
+                    new Date(selectedUser.membership_expiry).toLocaleDateString() : 'N/A'
+                  break
+                case 'member_since':
+                  userSpecificVariables[variable] = new Date(selectedUser.created_at).toLocaleDateString()
+                  break
+              }
+            })
+          }
 
-const handleSendSingleSms = () => {
-if (!selectedUser || !singleMessage) {
-setError('Please select a recipient and enter a message.');
-return;
-}
+          // Replace all variables in the message
+          template.variables.forEach(variable => {
+            const value = userSpecificVariables[variable] || ''
+            messageBody = messageBody.replace(new RegExp(`{${variable}}`, 'g'), value)
+          })
 
-const formattedPhone = formatPhoneNumber(selectedUser.phone);
-if (!formattedPhone) {
-setError('Selected user does not have a valid phone number.');
-return;
-}
+          const request: SendManualSMSRequest = {
+            recipients: [selectedUser.phone],
+            message: messageBody,
+            sender_id: user.id,
+          }
 
-setError(null);
-sendSms('send_manual_sms', {
-recipients: [formattedPhone],
-message: singleMessage,
-sender_id: 'admin'
-});
-};
+          return await smsService.sendManualSMS(request)
+        })
+      )
 
-const handleSendBulkSms = () => {
-if (!bulkRecipientType || !bulkMessage) {
-setError('Please select recipient type and enter a message.');
-return;
-}
+      const successCount = results.filter(r => r.success).length
+      const failCount = results.length - successCount
 
-const recipients = getBulkRecipients();
-if (recipients.length === 0) {
-setError(`No valid phone numbers found for ${bulkRecipientType}.`);
-return;
-}
+      if (successCount > 0) {
+        showAlert('success', `Template SMS sent successfully to ${successCount} user(s)${failCount > 0 ? `, ${failCount} failed` : ''}`)
+        if (successCount === results.length) {
+          // Reset form only if all messages were successful
+          setSelectedUsers([])
+          setTemplateVariables({})
+        }
+      } else {
+        showAlert('error', 'Failed to send SMS to all users')
+      }
+    } catch (error) {
+      showAlert('error', 'An unexpected error occurred')
+      console.error('Template SMS error:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
-setError(null);
-sendSms('send_manual_sms', {
-recipients,
-message: bulkMessage,
-sender_id: 'admin'
-});
-};
+  const handleManualSMS = async () => {
+    if (!message.trim()) {
+      showAlert('error', 'Please enter a message')
+      return
+    }
 
-const handleAddPersonalizedMessage = () => {
-setPersonalizedMessages([...personalizedMessages, { id:
-personalizedMessages.length + 1, phone: '', message: '' }]);
-};
-const handleRemovePersonalizedMessage = (id: number) => {
-setPersonalizedMessages(personalizedMessages.filter(msg => msg.id !==
-id));
-};
-const handlePersonalizedMessageChange = (id: number, field: keyof
-PersonalizedMessage, value: string) => {
-setPersonalizedMessages(personalizedMessages.map(msg =>
-msg.id === id ? { ...msg, [field]: value } : msg
-));
-};
-const handleSendPersonalizedSms = () => {
-const validMessages = personalizedMessages.filter(msg => msg.phone &&
-msg.message);
-if (validMessages.length === 0) {
-setError('At least one personalized message with a recipient andmessage is required.');
-return;
-}
-setError(null);
-sendSms('send_personalized_bulk_sms', { messages: validMessages,
-sender_id: 'your_admin_id' }); // Replace 'your_admin_id'
-};
-return (
-<div className="max-w-4xl mx-auto p-6 space-y-6">
-<h1 className="text-3xl font-bold text-gray-900">SMS Notification
-Center</h1>
-<p className="text-gray-600">Send SMS notifications to gym members and staff</p>
-{error && (
-<Alert variant="destructive">
-<XCircle className="h-4 w-4" />
-<AlertTitle>Error</AlertTitle>
-<AlertDescription>{error}</AlertDescription>
-</Alert>
-)}
+    if (selectedUsers.length === 0) {
+      showAlert('error', 'Please select at least one user')
+      return
+    }
 
-{loadingData && (
-<Alert>
-<Info className="h-4 w-4" />
-<AlertDescription>Loading users and staff data...</AlertDescription>
-</Alert>
-)}
+    setIsLoading(true)
 
-<Tabs defaultValue="single">
-<TabsList className="grid w-full grid-cols-3">
-<TabsTrigger value="single">Single SMS</TabsTrigger>
-<TabsTrigger value="bulk">Bulk SMS</TabsTrigger>
-<TabsTrigger value="personalized">Personalized</TabsTrigger>
-</TabsList>
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        showAlert('error', 'You must be logged in to send SMS')
+        return
+      }
 
-<TabsContent value="single">
-<Card>
-<CardHeader>
-<CardTitle>Send Single SMS</CardTitle>
-<CardDescription>Send an SMS to a single member</CardDescription>
-</CardHeader>
-<CardContent className="space-y-4">
-<div className="space-y-2">
-<Label htmlFor="single-recipient">Select Recipient</Label>
-<Select
-value={selectedUser?.id || ''}
-onValueChange={(value) => {
-const user = users.find(u => u.id === value);
-setSelectedUser(user || null);
-}}
->
-<SelectTrigger>
-<SelectValue placeholder="Search and select a member..." />
-</SelectTrigger>
-<SelectContent>
-{users.map((user) => (
-<SelectItem key={user.id} value={user.id}>
-<div className="flex items-center justify-between w-full">
-<span>{user.full_name}</span>
-<div className="flex items-center gap-2 ml-2">
-<Badge variant="outline" className="text-xs">
-{user.email}
-</Badge>
-{user.phone && (
-<Phone className="h-3 w-3 text-gray-400" />
-)}
-</div>
-</div>
-</SelectItem>
-))}
-</SelectContent>
-</Select>
+      const recipients = selectedUsers.map(u => u.phone)
+      const request: SendManualSMSRequest = {
+        recipients,
+        message: message.trim(),
+        sender_id: user.id,
+      }
 
-{selectedUser && (
-<div className="mt-2 p-3 bg-gray-50 rounded border">
-<div className="flex items-center justify-between">
-<div>
-<p className="font-medium">{selectedUser.full_name}</p>
-<p className="text-sm text-gray-600">{selectedUser.email}</p>
-</div>
-<div className="text-right">
-<p className="text-sm font-mono">
-{formatPhoneNumber(selectedUser.phone) || 'No phone number'}
-</p>
-<Badge variant={selectedUser.phone ? 'default' : 'destructive'}>
-{selectedUser.phone ? 'Valid' : 'No Phone'}
-</Badge>
-</div>
-</div>
-</div>
-)}
-</div>
+      const result = await smsService.sendManualSMS(request)
 
-<div className="space-y-2">
-<Label htmlFor="single-message">Message</Label>
-<Textarea
-id="single-message"
-placeholder="Enter your message here..."
-value={singleMessage}
-onChange={(e) => setSingleMessage(e.target.value)}
-/>
-<p className="text-sm text-gray-500">Characters: {singleMessage.length}/160</p>
-</div>
+      if (result.success) {
+        showAlert('success', `SMS sent successfully to ${recipients.length} user(s)`)
+        setMessage('')
+        setSelectedUsers([])
+      } else {
+        showAlert('error', result.error || 'Failed to send SMS')
+      }
+    } catch (error) {
+      showAlert('error', 'An unexpected error occurred')
+      console.error('Manual SMS error:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
-<Button
-onClick={handleSendSingleSms}
-disabled={loading || !selectedUser || !selectedUser.phone}
->
-{loading ? 'Sending...' : 'Send SMS'}
-</Button>
-</CardContent>
-</Card>
-</TabsContent>
-<TabsContent value="bulk">
-<Card>
-<CardHeader>
-<CardTitle>Send Bulk SMS</CardTitle>
-<CardDescription>Send the same message to multiple recipients</CardDescription>
-</CardHeader>
-<CardContent className="space-y-4">
-<div className="space-y-2">
-<Label htmlFor="bulk-recipients">Select Recipients</Label>
-<Select value={bulkRecipientType} onValueChange={setBulkRecipientType}>
-<SelectTrigger>
-<SelectValue placeholder="Choose recipient group..." />
-</SelectTrigger>
-<SelectContent>
-<SelectItem value="members">
-<div className="flex items-center justify-between w-full">
-<div className="flex items-center gap-2">
-<Users className="h-4 w-4" />
-<span>All Active Members</span>
-</div>
-<Badge variant="secondary">{recipientCounts.members}</Badge>
-</div>
-</SelectItem>
-<SelectItem value="trainers">
-<div className="flex items-center justify-between w-full">
-<div className="flex items-center gap-2">
-<UserCheck className="h-4 w-4" />
-<span>All Trainers</span>
-</div>
-<Badge variant="secondary">{recipientCounts.trainers}</Badge>
-</div>
-</SelectItem>
-<SelectItem value="receptionists">
-<div className="flex items-center justify-between w-full">
-<div className="flex items-center gap-2">
-<UserCheck className="h-4 w-4" />
-<span>All Receptionists</span>
-</div>
-<Badge variant="secondary">{recipientCounts.receptionists}</Badge>
-</div>
-</SelectItem>
-</SelectContent>
-</Select>
+  const getPreviewMessage = (): string => {
+    if (!selectedTemplate) return ''
 
-{bulkRecipientType && (
-<div className="mt-2 p-3 bg-blue-50 rounded border">
-<p className="text-sm text-blue-800">
-<strong>{getBulkRecipients().length}</strong> recipients will receive this message
-{bulkRecipientType === 'members' && ' (active members only)'}
-{bulkRecipientType === 'trainers' && ' (active trainers only)'}
-{bulkRecipientType === 'receptionists' && ' (active receptionists only)'}
-</p>
-</div>
-)}
-</div>
+    const template = templates.find(t => t.id === selectedTemplate)
+    if (!template) return ''
 
-<div className="space-y-2">
-<Label htmlFor="bulk-message">Message</Label>
-<Textarea
-id="bulk-message"
-placeholder="Enter your message here..."
-value={bulkMessage}
-onChange={(e) => setBulkMessage(e.target.value)}
-/>
-<p className="text-sm text-gray-500">Characters: {bulkMessage.length}/160</p>
-</div>
+    let preview = template.body
+    template.variables.forEach(variable => {
+      const value = templateVariables[variable] || `{${variable}}`
+      preview = preview.replace(new RegExp(`{${variable}}`, 'g'), value)
+    })
 
-<Button
-onClick={handleSendBulkSms}
-disabled={loading || !bulkRecipientType || getBulkRecipients().length === 0}
->
-{loading ? 'Sending...' : `Send to ${getBulkRecipients().length} Recipients`}
-</Button>
-</CardContent>
-</Card>
-</TabsContent>
-<TabsContent value="personalized">
-<Card>
-<CardHeader>
-<CardTitle>Send Personalized SMS</CardTitle>
-<CardDescription>Send different messages to different recipients</CardDescription>
-</CardHeader>
-<CardContent className="space-y-4">
-{personalizedMessages.map((msg, index) => (
-<div key={msg.id} className="border p-4 rounded-md space-y-3
-relative">
-<h3 className="text-lg font-semibold">Message {index + 1}
-</h3>
-<div className="grid grid-cols-2 gap-4">
-<div className="space-y-2">
-<Label htmlFor={`personalized-phone-${msg.id}`}>Phone
-Number</Label>
-<Input
-id={`personalized-phone-${msg.id}`}
-placeholder="+251912345678"
-value={msg.phone}
-onChange={(e) =>
-handlePersonalizedMessageChange(msg.id, 'phone', e.target.value)}
-/>
-</div>
-<div className="space-y-2">
-<Label htmlFor={`personalizedmessage-${
-msg.id}`}>Message</Label>
-<Textarea
-id={`personalized-message-${msg.id}`}
-placeholder="Enter personalized message..."
-value={msg.message}
-onChange={(e) =>
-handlePersonalizedMessageChange(msg.id, 'message', e.target.value)}
-/>
-</div>
-</div>
-{personalizedMessages.length > 1 && (
-<Button
-variant="destructive"
-size="sm"
-className="absolute top-4 right-4"
-onClick={() => handleRemovePersonalizedMessage(msg.id)}
->
-Remove
-</Button>
-)}
-</div>
-))}
-<Button variant="outline" onClick={handleAddPersonalizedMessage}>
-Add Another Message
-</Button>
-<Button onClick={handleSendPersonalizedSms} disabled={loading}>
-{loading ? 'Sending...' : 'Send Personalized SMS'}
-</Button>
-</CardContent>
-</Card>
-</TabsContent>
-</Tabs>
-</div>
-);
+    return preview
+  }
+
+  return (
+    <div className="w-full max-w-4xl mx-auto p-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="h-5 w-5" />
+            Enhanced SMS Notification Center
+          </CardTitle>
+          <CardDescription>
+            Send SMS notifications with automatic template variable population
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {alert && (
+            <Alert className={`mb-4 ${alert.type === 'error' ? 'border-red-500' : 'border-green-500'}`}>
+              <AlertDescription className={alert.type === 'error' ? 'text-red-700' : 'text-green-700'}>
+                {alert.message}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="template" className="flex items-center gap-2">
+                <Wand2 className="h-4 w-4" />
+                Template SMS
+              </TabsTrigger>
+              <TabsTrigger value="manual" className="flex items-center gap-2">
+                <Send className="h-4 w-4" />
+                Manual SMS
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="template" className="space-y-4">
+              <div className="space-y-2">
+                <Label>Select Users</Label>
+                <UserSelector
+                  mode="multiple"
+                  selectedUsers={selectedUsers}
+                  onUserSelect={(user) => setSelectedUsers([user])}
+                  onUsersSelect={setSelectedUsers}
+                />
+                {selectedUsers.length > 0 && (
+                  <p className="text-sm text-gray-500">
+                    {selectedUsers.length} user(s) selected
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="template-select">Select Template</Label>
+                <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a notification template" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((template) => (
+                      <SelectItem key={template.id} value={template.id}>
+                        <div className="flex items-center gap-2">
+                          <span>{template.name}</span>
+                          <Badge variant="outline">{template.template_type}</Badge>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedTemplate && (
+                <>
+                  {selectedUsers.length === 1 && (
+                    <div className="p-3 bg-blue-50 rounded-md border border-blue-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Wand2 className="h-4 w-4 text-blue-600" />
+                        <span className="text-sm font-medium text-blue-800">Auto-populated for {selectedUsers[0].name}</span>
+                      </div>
+                      <p className="text-xs text-blue-600">
+                        Template variables have been automatically filled with user data. You can modify them below if needed.
+                      </p>
+                    </div>
+                  )}
+
+                  {templates.find(t => t.id === selectedTemplate)?.variables.map((variable) => (
+                    <div key={variable} className="space-y-2">
+                      <Label htmlFor={`var-${variable}`}>
+                        {variable}
+                        {selectedUsers.length === 1 && templateVariables[variable] && (
+                          <Badge variant="secondary" className="ml-2 text-xs">auto-filled</Badge>
+                        )}
+                      </Label>
+                      <Input
+                        id={`var-${variable}`}
+                        placeholder={`Enter ${variable}`}
+                        value={templateVariables[variable] || ''}
+                        onChange={(e) => setTemplateVariables(prev => ({
+                          ...prev,
+                          [variable]: e.target.value
+                        }))}
+                      />
+                    </div>
+                  ))}
+
+                  <div className="space-y-2">
+                    <Label>Message Preview</Label>
+                    <div className="p-3 bg-gray-50 rounded-md border">
+                      <p className="text-sm whitespace-pre-wrap">
+                        {getPreviewMessage() || 'Select template and fill variables to see preview'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button 
+                    onClick={handleTemplateSMS} 
+                    disabled={isLoading || !selectedTemplate || selectedUsers.length === 0}
+                    className="w-full"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="mr-2 h-4 w-4" />
+                        Send Template SMS to {selectedUsers.length} User(s)
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="manual" className="space-y-4">
+              <div className="space-y-2">
+                <Label>Select Users</Label>
+                <UserSelector
+                  mode="multiple"
+                  selectedUsers={selectedUsers}
+                  onUserSelect={(user) => setSelectedUsers([user])}
+                  onUsersSelect={setSelectedUsers}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="manual-message">Message</Label>
+                <Textarea
+                  id="manual-message"
+                  placeholder="Type your message here..."
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  rows={4}
+                />
+                <p className="text-sm text-gray-500">
+                  {message.length}/160 characters
+                </p>
+              </div>
+
+              <Button 
+                onClick={handleManualSMS} 
+                disabled={isLoading || !message.trim() || selectedUsers.length === 0}
+                className="w-full"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    Send Manual SMS to {selectedUsers.length} User(s)
+                  </>
+                )}
+              </Button>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }

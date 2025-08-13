@@ -1,391 +1,275 @@
-// supabase/functions/send-sms/index.ts
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0";
-// Initialize Supabase client with service role key for secure writes
-const supabaseAdmin = createClient(
-Deno.env.get("SUPABASE_URL") ?? "",
-Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-{ auth: { persistSession: false } }
+import { createClient } from "@supabase/supabase-js";
+import AfroMessage from "@afromessage/afromessage-node";
+// Initialize Supabase client
+const supabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
-// AfroMessage API configuration
-const AFROMESSAGE_API_TOKEN = Deno.env.get("AFROMESSAGE_API_TOKEN");
-const AFROMESSAGE_IDENTIFIER_ID = Deno.env.get("AFROMESSAGE_IDENTIFIER_ID");
-const AFROMESSAGE_SENDER_NAME = Deno.env.get("AFROMESSAGE_SENDER_NAME");
-const AFROMESSAGE_API_BASE_URL = "https://api.afromessage.com/api";
-// Helper function to send SMS via AfroMessage
-async function sendSmsViaAfroMessage(
-to: string | { to: string; message: string }[],
-message: string | null,
-callbackUrl: string,
-isBulk: boolean = false,
-campaignName?: string
-) {
-const headers = {
-Authorization: `Bearer ${AFROMESSAGE_API_TOKEN}`,
-"Content-Type": "application/json",
-};
-let payload: any;
-let url: string;
-if (isBulk) {
-  url = `${AFROMESSAGE_API_BASE_URL}/bulk_send`;
-payload = {
-to: Array.isArray(to) ? to.map(m => m.to).join(",") : to, // For bulk,comma-separated string
-message: message, // For bulk, message is for all recipients
-from: AFROMESSAGE_IDENTIFIER_ID,
-sender: AFROMESSAGE_SENDER_NAME,
-campaign: campaignName || `Bulk SMS - ${new Date().toISOString()}`,
-createCallback: callbackUrl,
-statusCallback: callbackUrl,
-};
-if (Array.isArray(to)) {
-// Personalized bulk
-url = `${AFROMESSAGE_API_BASE_URL}/personalized_bulk_send`;
-payload = {
-messages: to, // Array of {to, message} objects
-from: AFROMESSAGE_IDENTIFIER_ID,
-sender: AFROMESSAGE_SENDER_NAME,
-campaign: campaignName || `Personalized Bulk SMS - ${new
-Date().toISOString()}`,
-createCallback: callbackUrl,
-statusCallback: callbackUrl,
-};
-}
-} else {
-url = `${AFROMESSAGE_API_BASE_URL}/send`;
-payload = {
-from: AFROMESSAGE_IDENTIFIER_ID,
-sender: AFROMESSAGE_SENDER_NAME,
-to: to,
-message: message,
-callback: callbackUrl,
-};
-}
-try {
-const response = await fetch(url, {
-method: "POST",
-headers: headers,
-body: JSON.stringify(payload),
+// Initialize AfroMessage client
+const afromessage = new AfroMessage({
+  apiKey: Deno.env.get("AFROMESSAGE_API_TOKEN")!,
+  identifierId: Deno.env.get("AFROMESSAGE_IDENTIFIER_ID")!,
+  baseUrl: Deno.env.get("AFROMESSAGE_API_BASE_URL") ||
+    "https://api.afromessage.com/api",
 });
-const data = await response.json();
-if (!response.ok) {
-console.error("AfroMessage API error:", data);
-return { success: false, error: data.message || "AfroMessage API error" };
-}
-console.log("AfroMessage API response:", data);
-return { success: true, data: data };
-} catch (error) {
-console.error("Error sending SMS via AfroMessage:", error);
-return { success: false, error: error.message };
-}
-}
 serve(async (req) => {
-try {
-// Only allow POST requests
-if (req.method !== "POST") {
-return new Response("Method Not Allowed", { status: 405 });
+  try {
+    // Handle CORS preflight requests
+    if (req.method === "OPTIONS") {
+      return new Response("ok", {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "authorization, x-client-info,
+apikey, content- type",
+},
+});
 }
 const { type, data } = await req.json();
-if (!type) {
-return new Response(
-JSON.stringify({ error: "Missing 'type' in request body" }),
-{ status: 400, headers: { "Content-Type": "application/json" } }
+if (type === "send_manual_sms") {
+  const { recipients, message, sender_id, notification_id } = data;
+  if (!recipients || !message || !sender_id) {
+    return new Response(
+      JSON.stringify({ error: "Missing required fields: recipients,message,sender_id" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const senderName = Deno.env.get("AFROMESSAGE_SENDER_NAME") ||
+    "Whale";
+  // Log notification to database before sending SMS
+  const { data: notificationData, error: notificationError } = await supabase
+    .from("notifications")
+    .insert({
+      id: notification_id, // Use provided ID or let DB generate
+      title: "Manual SMS",
+      body: message,
+      recipient_type: "member", // Assuming manual SMS is for members
+      recipient_phone: recipients[0], // For single recipient
+      sent_by_admin_id: sender_id,
+      trigger_source: "manual",
+      status: "pending",
+      sms_status: "pending",
+      channels: ["sms"],
+    })
+    .select();
+  if (notificationError) {
+    console.error("Error inserting notification:", notificationError);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to log notification", details:
+          notificationError.message
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const notificationRecord = notificationData[0];
+  // Send SMS using AfroMessage Node.js library
+  const smsResponse = await afromessage.sms.send({
+    to: recipients,
+    from: senderName,
+    message: message,
+    // Optional: Pass notification_id as a custom parameter for webhook
+    correlation
+custom_parameters: { notification_id: notificationRecord.id },
+  });
+  if (smsResponse.status === "success") {
+    // Update notification status in DB
+    await supabase
+      .from("notifications")
+      .update({
+        sms_status: "sent", sent_at: new Date().toISOString(),
+        sms_provider_id: smsResponse.data.message_id
+      })
+      .eq("id", notificationRecord.id);
+    // Log delivery attempt
+    await supabase.from("notification_delivery_logs").insert({
+      notification_id: notificationRecord.id,
+      channel: "sms",
+      status: "sent",
+      provider_response: smsResponse.data,
+    });
+    return new Response(JSON.stringify({
+      success: true, data:
+        smsResponse.data
+    }), 
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
+      },
+      status: 200,
+    });
+  } else {
+    // Handle AfroMessage API error
+    console.error("AfroMessage SMS send error:", smsResponse.error);
+    // Update notification status to failed
+    await supabase
+      .from("notifications")
+      .update({
+        sms_status: "failed", status: "failed", error_message:
+          smsResponse.error.message
+      })
+      .eq("id", notificationRecord.id);
+    // Log failed delivery attempt
+    await supabase.from("notification_delivery_logs").insert({
+      notification_id: notificationRecord.id,
+      channel: "sms",
+      status: "failed",
+      provider_response: smsResponse.error,
+      error_message: smsResponse.error.message,
+    });
+    return new Response(
+      JSON.stringify({
+        success: false, error: smsResponse.error.message
+      }),
+      {
+        status: 500, headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*"
+        }
+      }
+    );
+  }
+} else if (type === "send_welcome_sms") {
+  const { recipient_phone, recipient_name, username, password, gym_name,
+    gym_address, gym_phone, recipient_id } = data;
+  if (!recipient_phone || !recipient_name || !username || !password) {
+    return new Response(
+      JSON.stringify({
+        error: "Missing required fields for welcome SMS"
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const senderName = Deno.env.get("AFROMESSAGE_SENDER_NAME") ||
+    "YourGymName";
+  // Fetch welcome template
+  const { data: templateData, error: templateError } = await supabase
+    .from("notification_templates")
+    .select("body, title")
+    .eq("name", "welcome_user")
+    .single();
+  if (templateError || !templateData) {
+    console.error("Error fetching welcome template:", templateError);
+    return new Response(
+      JSON.stringify({
+        error: "Welcome template not found or error
+fetching" }),
+{ status: 500, headers: { "Content-Type": "application/json" } }
 );
-}
-let result: any;
-switch (type) {
-case "send_welcome_message":
-result = await handleSendWelcomeMessage(data);
-break;
-case "send_manual_sms":
-result = await handleSendManualSms(data);
-break;
-case "send_personalized_bulk_sms":
-result = await handleSendPersonalizedBulkSms(data);
-break;
-default:
-return new Response(
-JSON.stringify({ error: "Unknown message type" }),
-{ status: 400, headers: { "Content-Type": "application/json" } }
-);
-}
-if (result.success) {
-return new Response(JSON.stringify(result), {
-status: 200,
-headers: { "Content-Type": "application/json" },
-});
+  }
+  let messageBody = templateData.body;
+  messageBody = messageBody.replace(/{name}/g, recipient_name);
+  messageBody = messageBody.replace(/{username}/g, username);
+  messageBody = messageBody.replace(/{password}/g, password);
+  messageBody = messageBody.replace(/{gym_name}/g, gym_name || "Your Gym");
+  messageBody = messageBody.replace(/{gym_address}/g, gym_address || "Our Location");
+  messageBody = messageBody.replace(/{gym_phone}/g, gym_phone || "Our Phone");
+// Log notification to database before sending SMS
+const { data: notificationData, error: notificationError } = await
+    supabase
+      .from("notifications")
+      .insert({
+        template_id: templateData.id, // Assuming templateData has an ID
+        title: templateData.title,
+        body: messageBody,
+        recipient_type: "member",
+        recipient_id: recipient_id,
+        recipient_phone: recipient_phone,
+        trigger_source: "system_auto",
+        trigger_event: "user_registration",
+        status: "pending",
+        sms_status: "pending",
+        channels: ["sms"],
+      })
+      .select();
+  if (notificationError) {
+    console.error("Error inserting welcome notification:",
+      notificationError);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to log welcome notification",
+        details: notificationError.message
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const notificationRecord = notificationData[0];
+  // Send SMS using AfroMessage Node.js library
+  const smsResponse = await afromessage.sms.send({
+    to: [recipient_phone],
+    from: senderName,
+    message: messageBody,
+    custom_parameters: { notification_id: notificationRecord.id },
+  });
+  if (smsResponse.status === "success") {
+    // Update notification status in DB
+    await supabase
+      .from("notifications")
+      .update({
+        sms_status: "sent", sent_at: new Date().toISOString(),
+        sms_provider_id: smsResponse.data.message_id
+      })
+      .eq("id", notificationRecord.id);
+    // Log delivery attempt
+    await supabase.from("notification_delivery_logs").insert({
+      notification_id: notificationRecord.id,
+      channel: "sms",
+      status: "sent",
+      provider_response: smsResponse.data,
+    });
+    return new Response(JSON.stringify({
+      success: true, data:
+        smsResponse.data
+    }), {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
+      },
+      status: 200,
+    });
+  } else {
+    // Handle AfroMessage API error
+    console.error("AfroMessage welcome SMS send error:",
+      smsResponse.error);
+    // Update notification status to failed
+    await supabase
+      .from("notifications")
+      .update({
+        sms_status: "failed", status: "failed", error_message:
+          smsResponse.error.message
+      })
+      .eq("id", notificationRecord.id);
+    // Log failed delivery attempt
+    await supabase.from("notification_delivery_logs").insert({
+      notification_id: notificationRecord.id,
+      channel: "sms",
+      status: "failed",
+      provider_response: smsResponse.error,
+      error_message: smsResponse.error.message,
+    });
+    return new Response(
+      JSON.stringify({
+        success: false, error: smsResponse.error.message
+      }),
+      {
+        status: 500, headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*"
+        }
+      }
+    );
+  }
 } else {
-return new Response(JSON.stringify(result), {
-status: 400,
-headers: { "Content-Type": "application/json" },
-});
+  return new Response(JSON.stringify({ error: "Invalid request type" }),
+    {
+      status: 400, headers: { "Content-Type": "application/json" }
+    });
 }
 } catch (error) {
-console.error("Error in send-sms function:", error);
-return new Response(JSON.stringify({ error: error.message }), {
-status: 500,
-headers: { "Content-Type": "application/json" },
-});
+  console.error("Function execution error:", error);
+  return new Response(JSON.stringify({ error: error.message }), {
+    status: 500, headers: { "Content-Type": "application/json" }
+  });
 }
 });
-// --- Handlers for different SMS types ---
-async function handleSendWelcomeMessage(data: any) {
-const { user_id, user_data } = data;
-if (!user_id || !user_data || !user_data.phone || !user_data.name ||
-!user_data.username || !user_data.password) {
-return { success: false, error: "Missing required user data for welcome message" };
-}
-// Fetch welcome template
-const { data: template, error: templateError } = await supabaseAdmin
-.from("notification_templates")
-.select("*")
-.eq("name", "welcome_user")
-.single();
-if (templateError || !template) {
-console.error("Error fetching welcome template:",
-templateError?.message);
-return { success: false, error: "Welcome template not found or database error" };
-}
-let messageBody = template.body;
-// Replace placeholders
-for (const key in user_data) {
-messageBody = messageBody.replace(new RegExp(`{${key}}`, "g"),
-user_data[key]);
-}
-// Create notification record
-const { data: notification, error: notificationError } = await
-supabaseAdmin
-.from("notifications")
-.insert({
-template_id: template.id,
-title: template.title,
-body: messageBody,
-recipient_type: "user",
-recipient_id: user_id,
-recipient_phone: user_data.phone,
-trigger_source: "system_auto",
-trigger_event: "user_registration",
-channels: ["sms"],
-status: "pending",
-scheduled_at: new Date().toISOString(),
-metadata: { user_data: user_data },
-})
-.select()
-.single();
-if (notificationError || !notification) {
-console.error("Error creating notification record:",
-notificationError?.message);
-return { success: false, error: "Failed to create notification record" };
-}
-// Send SMS via AfroMessage
-const webhookUrl =
-`${Deno.env.get("SUPABASE_URL")}/functions/v1/afromessage-webhook`;
-const smsResult = await sendSmsViaAfroMessage(
-user_data.phone,
-messageBody,
-webhookUrl
-);
-// Update notification status based on AfroMessage response
-const updateData: any = {
-sms_status: smsResult.success ? "sent" : "failed",
-status: smsResult.success ? "sent" : "failed",
-sent_at: new Date().toISOString(),
-};
-if (smsResult.success) {
-updateData.sms_provider_id = smsResult.data.response.message_id;
-}
-const { error: updateError } = await supabaseAdmin
-.from("notifications")
-.update(updateData)
-.eq("id", notification.id);
-if (updateError) {
-console.error("Error updating notification status:",
-updateError.message);
-}
-// Create delivery log
-const { error: logError } = await supabaseAdmin
-.from("notification_delivery_logs")
-.insert({
-notification_id: notification.id,
-channel: "sms",
-status: smsResult.success ? "sent" : "failed",
-provider_response: smsResult.data || smsResult.error,
-error_message: smsResult.success ? null : smsResult.error,
-attempt_number: 1,
-});
-if (logError) {
-console.error("Error creating delivery log:", logError.message);
-}
-return { success: smsResult.success, notification_id: notification.id,
-message: smsResult.success ? "SMS sent successfully" : smsResult.error };
-}
-async function handleSendManualSms(data: any) {
-const { recipients, message, sender_id, template_id } = data;
-if (!recipients || !Array.isArray(recipients) || recipients.length === 0
-|| !message || !sender_id) {
-return { success: false, error: "Missing required fields for manual SMS"
-};
-}
-const webhookUrl =
-`${Deno.env.get("SUPABASE_URL")}/functions/v1/afromessage-webhook`;
-if (recipients.length === 1) {
-// Single SMS
-const recipientPhone = recipients[0];
-// Create notification record
-const { data: notification, error: notificationError } = await
-supabaseAdmin
-.from("notifications")
-.insert({
-template_id: template_id,
-title: "Manual SMS",
-body: message,
-recipient_type: "user", // Assuming manual sends are to users
-recipient_phone: recipientPhone,
-sent_by_admin_id: sender_id,
-trigger_source: "manual",
-channels: ["sms"],
-status: "pending",
-scheduled_at: new Date().toISOString(),
-})
-.select()
-.single();
-if (notificationError || !notification) {
-console.error("Error creating notification record:",
-notificationError?.message);
-return { success: false, error: "Failed to create notification record"
-};
-}
-const smsResult = await sendSmsViaAfroMessage(
-recipientPhone,
-message,
-webhookUrl
-);
-const updateData: any = {
-sms_status: smsResult.success ? "sent" : "failed",
-status: smsResult.success ? "sent" : "failed",
-sent_at: new Date().toISOString(),
-};
-if (smsResult.success) {
-updateData.sms_provider_id = smsResult.data.response.message_id;
-}
-const { error: updateError } = await supabaseAdmin
-.from("notifications")
-.update(updateData)
-.eq("id", notification.id);
-if (updateError) {
-console.error("Error updating notification status:",
-updateError.message);
-}
-const { error: logError } = await supabaseAdmin
-.from("notification_delivery_logs")
-.insert({
-notification_id: notification.id,
-channel: "sms",
-status: smsResult.success ? "sent" : "failed",
-provider_response: smsResult.data || smsResult.error,
-error_message: smsResult.success ? null : smsResult.error,
-attempt_number: 1,
-});
-if (logError) {
-console.error("Error creating delivery log:", logError.message);
-}
-return { success: smsResult.success, notification_id: notification.id,
-message: smsResult.success ? "SMS sent successfully" : smsResult.error };
-} else {
-// Bulk SMS (same message to multiple recipients)
-const campaignName = `Manual Bulk SMS - ${new Date().toISOString()}`;
-const smsResult = await sendSmsViaAfroMessage(
-recipients.join(","), // AfroMessage bulk_send expects comma-separated numbers
-message,
-webhookUrl,
-true, // isBulk
-campaignName
-);
-if (!smsResult.success) {
-return { success: false, error: smsResult.error };
-}
-// Create individual notification records for each recipient
-const notificationsToInsert = recipients.map((phone_number: string) => ({
-template_id: template_id,
-title: "Bulk Manual SMS",
-body: message,
-recipient_type: "user",
-recipient_phone: phone_number,
-sent_by_admin_id: sender_id,
-trigger_source: "manual",
-channels: ["sms"],
-status: "sent", // Initial status after sending to AfroMessage
-sms_status: "sent",
-sms_provider_id: smsResult.data.response.campaign_id, // Use campaign ID for bulk
-scheduled_at: new Date().toISOString(),
-sent_at: new Date().toISOString(),
-metadata: { campaign_name: campaignName },
-}));
-const { data: insertedNotifications, error: insertError } = await
-supabaseAdmin
-.from("notifications")
-.insert(notificationsToInsert)
-.select();
-if (insertError) {
-console.error("Error creating bulk notification records:",
-insertError.message);
-return { success: false, error: "Failed to create bulk notification records" };
-}
-return { success: true, campaign_id:
-smsResult.data.response.campaign_id, notifications_created:
-insertedNotifications?.length };
-}
-}
-async function handleSendPersonalizedBulkSms(data: any) {
-const { messages, sender_id, template_id } = data;
-if (!messages || !Array.isArray(messages) || messages.length === 0 ||
-!sender_id) {
-return { success: false, error: "Missing required fields forpersonalized bulk SMS" };
-}
-const webhookUrl =
-`${Deno.env.get("SUPABASE_URL")}/functions/v1/afromessage-webhook`;
-const campaignName = `Personalized Bulk SMS - ${new Date().toISOString()}`;
-// AfroMessage personalized bulk send expects an array of objects with 'to' and 'message'
-const afromessageMessages = messages.map((msg: any) => ({
-to: msg.phone,
-message: msg.message,
-}));
-const smsResult = await sendSmsViaAfroMessage(
-afromessageMessages, // Pass array of messages
-null, // message is not used for personalized bulk
-webhookUrl,
-true, // isBulk
-);
-if (!smsResult.success) {
-return { success: false, error: smsResult.error };
-}
-// Create individual notification records for each personalized message
-const notificationsToInsert = messages.map((msg: any) => ({
-template_id: template_id,
-title: "Personalized Bulk SMS",
-body: msg.message,
-recipient_type: "user",
-recipient_id: msg.user_id, // Optional user_id if available
-recipient_phone: msg.phone,
-sent_by_admin_id: sender_id,
-trigger_source: "manual",
-channels: ["sms"],
-status: "sent",
-sms_status: "sent",
-sms_provider_id: smsResult.data.response.campaign_id, // Use campaign ID for bulk
-scheduled_at: new Date().toISOString(),
-sent_at: new Date().toISOString(),
-metadata: { campaign_name: campaignName },
-}));
-const { data: insertedNotifications, error: insertError } = await
-supabaseAdmin
-.from("notifications")
-.insert(notificationsToInsert)
-.select();
-if (insertError) {
-console.error("Error creating personalized bulk notification records:",
-insertError.message);
-return { success: false, error: "Failed to create personalized bulk notification records" };
-}
-return { success: true, campaign_id: smsResult.data.response.campaign_id,
-notifications_created: insertedNotifications?.length };
-}
