@@ -1,597 +1,489 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Alert, AlertDescription } from './ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import {
-  History,
-  Search,
-  Filter,
-  RefreshCw,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Send,
-  Eye,
-  Calendar,
-  Phone,
-  MessageSquare
-} from 'lucide-react';
+// src/components/NotificationHistory.tsx
+import React, { useState, useEffect } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+// Remove Dialog import
+// import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { RefreshCw, Search, Eye, MessageSquare, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { smsService } from '../services/smsService'
+import { supabase } from '@/supabaseClient'
 
 interface Notification {
-  id: string;
-  template_id?: string;
-  title: string;
-  body: string;
-  recipient_type: string;
-  recipient_id?: string;
-  recipient_phone: string;
-  sent_by_admin_id?: string;
-  trigger_source: string;
-  trigger_event?: string;
-  channels?: string[];
-  status: 'pending' | 'sent' | 'delivered' | 'failed' | 'cancelled';
-  sms_status?: string;
-  sms_provider_id?: string;
-  scheduled_at?: string;
-  sent_at?: string;
-  delivered_at?: string;
-  metadata?: any;
-  created_at?: string;
-  updated_at?: string;
+  id: string
+  template_id?: string
+  title: string
+  body: string
+  recipient_type: 'user' | 'staff' | 'member'
+  recipient_id?: string
+  recipient_phone: string
+  sent_by_admin_id?: string
+  trigger_source: 'manual' | 'system_auto' | 'scheduled'
+  trigger_event?: string
+  channels: string[]
+  status: 'pending' | 'sent' | 'delivered' | 'failed' | 'cancelled'
+  sms_status?: 'pending' | 'sent' | 'delivered' | 'failed'
+  sms_provider_id?: string
+  scheduled_at?: string
+  sent_at?: string
+  delivered_at?: string
+  error_message?: string
+  metadata: Record<string, any>
+  created_at: string
+  updated_at: string
 }
 
-export function NotificationHistory() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState({
-    status: 'all',
-    recipient_type: 'all',
-    limit: 50,
-    offset: 0
-  });
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null);
+interface DeliveryLog {
+  id: string
+  notification_id: string
+  channel: string
+  status: string
+  provider_response: Record<string, any> | null
+  error_message?: string
+  attempt_number: number
+  metadata: Record<string, any>
+  created_at: string
+}
+
+export const NotificationHistory: React.FC = () => {
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [filteredNotifications, setFilteredNotifications] = useState<Notification[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
+  const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null)
+  const [deliveryLogs, setDeliveryLogs] = useState<DeliveryLog[]>([])
+  const [isLogDialogOpen, setIsLogDialogOpen] = useState(false)
 
   useEffect(() => {
-    loadNotifications();
-  }, [filters]);
-
-  useEffect(() => {
-    // Setup realtime subscription with better error handling
-    let channel: any = null;
+    loadNotifications()
     
-    try {
-      channel = supabase
-        .channel('notifications-changes')
-        .on('postgres_changes', 
-          { 
-            event: '*', 
-            schema: 'public', 
-            table: 'notifications' 
-          },
-          (payload) => {
-            console.log('Realtime change received:', payload);
-            if (payload.eventType === 'INSERT') {
-              setNotifications((prev) => [payload.new as Notification, ...prev]);
-            } else if (payload.eventType === 'UPDATE') {
-              setNotifications((prev) =>
-                prev.map((notif) => (notif.id === payload.new.id ? payload.new as Notification : notif))
-              );
-            } else if (payload.eventType === 'DELETE') {
-              setNotifications((prev) =>
-                prev.filter((notif) => notif.id !== payload.old.id)
-              );
-            }
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log('Successfully subscribed to notifications changes');
-          } else if (status === 'CHANNEL_ERROR') {
-            console.warn('Failed to subscribe to notifications changes');
-          }
-        });
-    } catch (err) {
-      console.warn('Realtime subscription failed:', err);
-    }
+    // Set up real-time subscription for notifications
+    const notificationSubscription = supabase
+      .channel('notifications_changes')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'notifications' },
+        (payload) => {
+          console.log('Notification change received:', payload)
+          loadNotifications() // Reload notifications when changes occur
+        }
+      )
+      .subscribe()
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, []);
+      notificationSubscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    filterNotifications()
+  }, [notifications, searchTerm, statusFilter, sourceFilter])
 
   const loadNotifications = async () => {
-    setLoading(true);
-    setError(null);
-    
+    setIsLoading(true)
     try {
-      let query = supabase
-        .from('notifications')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (filters.status && filters.status !== 'all') {
-        query = query.eq('status', filters.status);
+      const result = await smsService.getNotifications(100, 0)
+      if (result.success) {
+        setNotifications(result.data || [])
       }
-      
-      if (filters.recipient_type && filters.recipient_type !== 'all') {
-        query = query.eq('recipient_type', filters.recipient_type);
-      }
-
-      query = query.range(filters.offset, filters.offset + filters.limit - 1);
-
-      const { data, error: fetchError } = await query;
-
-      if (fetchError) {
-        throw new Error(fetchError.message);
-      }
-      
-      console.log('Loaded notifications:', data);
-      setNotifications(data || []);
-    } catch (err: any) {
-      console.error('Error loading notifications:', err);
-      setError(err.message);
+    } catch (error) {
+      console.error('Error loading notifications:', error)
     } finally {
-      setLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
-  const handleRefresh = () => {
-    loadNotifications();
-  };
+  const filterNotifications = () => {
+    let filtered = notifications
 
-  const handleFilterChange = (key: string, value: string | number) => {
-    setFilters(prev => ({
-      ...prev,
-      [key]: value,
-      offset: 0
-    }));
-  };
+    // Apply search filter
+    if (searchTerm) {
+      filtered = filtered.filter(notification =>
+        notification.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        notification.body.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        notification.recipient_phone.includes(searchTerm)
+      )
+    }
 
-  const getStatusBadge = (status: string, smsStatus?: string) => {
-    const statusConfig = {
-      'pending': { color: 'bg-yellow-100 text-yellow-800', icon: Clock },
-      'sent': { color: 'bg-blue-100 text-blue-800', icon: Send },
-      'delivered': { color: 'bg-green-100 text-green-800', icon: CheckCircle },
-      'failed': { color: 'bg-red-100 text-red-800', icon: XCircle }
-    };
+    // Apply status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(notification => notification.status === statusFilter)
+    }
 
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig['pending'];
-    const Icon = config.icon;
+    // Apply source filter
+    if (sourceFilter !== 'all') {
+      filtered = filtered.filter(notification => notification.trigger_source === sourceFilter)
+    }
+
+    setFilteredNotifications(filtered)
+  }
+
+  const loadDeliveryLogs = async (notificationId: string) => {
+    try {
+      const result = await smsService.getDeliveryLogs(notificationId)
+      if (result.success) {
+        setDeliveryLogs(result.data || [])
+      }
+    } catch (error) {
+      console.error('Error loading delivery logs:', error)
+    }
+  }
+
+  const handleViewDetails = async (notification: Notification) => {
+    setSelectedNotification(notification)
+    await loadDeliveryLogs(notification.id)
+    setIsLogDialogOpen(true)
+  }
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'delivered':
+        return <CheckCircle className="h-4 w-4 text-green-500" />
+      case 'sent':
+        return <Clock className="h-4 w-4 text-blue-500" />
+      case 'failed':
+        return <XCircle className="h-4 w-4 text-red-500" />
+      case 'pending':
+        return <AlertCircle className="h-4 w-4 text-yellow-500" />
+      default:
+        return <AlertCircle className="h-4 w-4 text-gray-500" />
+    }
+  }
+
+  const getStatusBadge = (status: string) => {
+    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+      delivered: 'default',
+      sent: 'secondary',
+      failed: 'destructive',
+      pending: 'outline',
+      cancelled: 'outline'
+    }
 
     return (
-      <Badge className={`${config.color} flex items-center gap-1`}>
-        <Icon className="h-3 w-3" />
-        {smsStatus || status}
+      <Badge variant={variants[status] || 'outline'} className="flex items-center gap-1">
+        {getStatusIcon(status)}
+        {status.charAt(0).toUpperCase() + status.slice(1)}
       </Badge>
-    );
-  };
+    )
+  }
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleString();
-  };
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleString()
+  }
 
-  const formatPhone = (phone?: string) => {
-    if (!phone) return 'N/A';
-    // Format phone number for better readability
-    return phone.replace(/(\+\d{3})(\d{3})(\d{3})(\d{3})/, '$1 $2 $3 $4');
-  };
+  const getSourceBadge = (source: string) => {
+    const colors: Record<string, string> = {
+      manual: 'bg-blue-100 text-blue-800',
+      system_auto: 'bg-green-100 text-green-800',
+      scheduled: 'bg-purple-100 text-purple-800'
+    }
 
-  const filteredNotifications = notifications.filter(notification => {
-    if (!searchTerm) return true;
-    
-    const searchLower = searchTerm.toLowerCase();
     return (
-      notification.title?.toLowerCase().includes(searchLower) ||
-      notification.body?.toLowerCase().includes(searchLower) ||
-      notification.recipient_phone?.includes(searchTerm) ||
-      notification.status?.toLowerCase().includes(searchLower) ||
-      notification.sms_status?.toLowerCase().includes(searchLower)
-    );
-  });
-
-  const viewNotificationDetails = (notification: Notification) => {
-    setSelectedNotification(notification);
-  };
+      <Badge variant="outline" className={colors[source] || 'bg-gray-100 text-gray-800'}>
+        {source.replace('_', ' ').toUpperCase()}
+      </Badge>
+    )
+  }
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="w-full max-w-6xl mx-auto p-6">
+      <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-            <History className="h-8 w-8" />
-            Notification History
-          </h1>
-          <p className="text-gray-600 mt-1">Track and monitor SMS notification delivery</p>
+          <CardTitle className="flex items-center gap-2">
+          <MessageSquare className="h-5 w-5" />
+          Notification History
+          </CardTitle>
+          <CardDescription>
+          View and monitor all SMS notifications sent from your system
+          </CardDescription>
         </div>
-        <Button onClick={handleRefresh} disabled={loading} variant="outline">
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+        <Button onClick={loadNotifications} disabled={isLoading} variant="outline">
+          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
-      </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {/* Filters */}
+        <div className="flex gap-4 mb-6">
+        <div className="flex-1">
+          <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search by title, message, or phone..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+          </div>
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-48">
+          <SelectValue placeholder="Filter by status" />
+          </SelectTrigger>
+          <SelectContent>
+          <SelectItem value="all">All Status</SelectItem>
+          <SelectItem value="pending">Pending</SelectItem>
+          <SelectItem value="sent">Sent</SelectItem>
+          <SelectItem value="delivered">Delivered</SelectItem>
+          <SelectItem value="failed">Failed</SelectItem>
+          <SelectItem value="cancelled">Cancelled</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sourceFilter} onValueChange={setSourceFilter}>
+          <SelectTrigger className="w-48">
+          <SelectValue placeholder="Filter by source" />
+          </SelectTrigger>
+          <SelectContent>
+          <SelectItem value="all">All Sources</SelectItem>
+          <SelectItem value="manual">Manual</SelectItem>
+          <SelectItem value="system_auto">System Auto</SelectItem>
+          <SelectItem value="scheduled">Scheduled</SelectItem>
+          </SelectContent>
+        </Select>
+        </div>
 
-      {error && (
-        <Alert className="border-red-500 bg-red-50">
-          <XCircle className="h-4 w-4 text-red-600" />
-          <AlertDescription className="text-red-800">
-            {error}
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="ml-2" 
-              onClick={handleRefresh}
-            >
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <Tabs defaultValue="list" className="w-full">
-        <TabsList>
-          <TabsTrigger value="list">Notification List</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="list" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Filter className="h-5 w-5" />
-                Filters & Search
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="search">Search</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <Input
-                      id="search"
-                      placeholder="Search notifications..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10"
-                    />
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="status-filter">Status</Label>
-                  <Select value={filters.status} onValueChange={(value) => handleFilterChange('status', value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All statuses" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All statuses</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="sent">Sent</SelectItem>
-                      <SelectItem value="delivered">Delivered</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="recipient-type-filter">Recipient Type</Label>
-                  <Select value={filters.recipient_type} onValueChange={(value) => handleFilterChange('recipient_type', value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All types</SelectItem>
-                      <SelectItem value="user">User</SelectItem>
-                      <SelectItem value="staff">Staff</SelectItem>
-                      <SelectItem value="member">Member</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="limit-filter">Results per page</Label>
-                  <Select value={filters.limit.toString()} onValueChange={(value) => handleFilterChange('limit', parseInt(value))}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="25">25</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Notifications</CardTitle>
-              <CardDescription>
-                Showing {filteredNotifications.length} of {notifications.length} notifications
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-8">
-                  <RefreshCw className="h-6 w-6 animate-spin mr-2" />
-                  Loading notifications...
-                </div>
-              ) : notifications.length === 0 && !loading ? (
-                <div className="text-center py-8 text-gray-500">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <p className="text-lg font-medium">No notifications found</p>
-                  <p className="text-sm">No SMS notifications have been sent yet</p>
-                  <Button 
-                    variant="outline" 
-                    className="mt-4" 
-                    onClick={handleRefresh}
-                  >
-                    Refresh
-                  </Button>
-                </div>
-              ) : filteredNotifications.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <p>No notifications match your search criteria</p>
-                  <p className="text-sm">Try adjusting your filters or search terms</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Title</TableHead>
-                        <TableHead>Recipient</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Created</TableHead>
-                        <TableHead>Sent</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredNotifications.map((notification) => (
-                        <TableRow key={notification.id}>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">{notification.title}</div>
-                              <div className="text-sm text-gray-500 truncate max-w-xs">
-                                {notification.body}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Phone className="h-4 w-4 text-gray-400" />
-                              <span className="font-mono text-sm">
-                                {formatPhone(notification.recipient_phone)}
-                              </span>
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              {notification.recipient_type}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {notification.trigger_source}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {getStatusBadge(notification.status, notification.sms_status)}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Calendar className="h-4 w-4 text-gray-400" />
-                              {formatDate(notification.created_at)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Calendar className="h-4 w-4 text-gray-400" />
-                              {formatDate(notification.sent_at)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => viewNotificationDetails(notification)}
-                            >
-                              <Eye className="h-4 w-4 mr-1" />
-                              View
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Pagination */}
-          {filteredNotifications.length > 0 && (
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-500">
-                Showing {filters.offset + 1} to {Math.min(filters.offset + filters.limit, filteredNotifications.length)} of {notifications.length} results
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={filters.offset === 0}
-                  onClick={() => handleFilterChange('offset', Math.max(0, filters.offset - filters.limit))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={filters.offset + filters.limit >= notifications.length}
-                  onClick={() => handleFilterChange('offset', filters.offset + filters.limit)}
-                >
-                  Next
-                </Button>
-              </div>
+        {/* Statistics */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <Card>
+          <CardContent className="p-4">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-blue-500" />
+            <div>
+            <p className="text-sm font-medium">Total</p>
+            <p className="text-2xl font-bold">{notifications.length}</p>
             </div>
-          )}
-        </TabsContent>
+          </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            <div>
+            <p className="text-sm font-medium">Delivered</p>
+            <p className="text-2xl font-bold">
+              {notifications.filter(n => n.status === 'delivered').length}
+            </p>
+            </div>
+          </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-blue-500" />
+            <div>
+            <p className="text-sm font-medium">Pending</p>
+            <p className="text-2xl font-bold">
+              {notifications.filter(n => n.status === 'pending').length}
+            </p>
+            </div>
+          </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+          <div className="flex items-center gap-2">
+            <XCircle className="h-4 w-4 text-red-500" />
+            <div>
+            <p className="text-sm font-medium">Failed</p>
+            <p className="text-2xl font-bold">
+              {notifications.filter(n => n.status === 'failed').length}
+            </p>
+            </div>
+          </div>
+          </CardContent>
+        </Card>
+        </div>
 
-        <TabsContent value="analytics">
-          <Card>
-            <CardHeader>
-              <CardTitle>Notification Analytics</CardTitle>
-              <CardDescription>Overview of notification performance</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-blue-50 p-4 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Send className="h-5 w-5 text-blue-600" />
-                    <span className="text-sm font-medium text-blue-600">Total Sent</span>
-                  </div>
-                  <div className="text-2xl font-bold text-blue-900 mt-1">
-                    {notifications.filter(n => n.status === 'sent' || n.status === 'delivered').length}
-                  </div>
-                </div>
-                
-                <div className="bg-green-50 p-4 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle className="h-5 w-5 text-green-600" />
-                    <span className="text-sm font-medium text-green-600">Delivered</span>
-                  </div>
-                  <div className="text-2xl font-bold text-green-900 mt-1">
-                    {notifications.filter(n => n.status === 'delivered').length}
-                  </div>
-                </div>
-                
-                <div className="bg-yellow-50 p-4 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-5 w-5 text-yellow-600" />
-                    <span className="text-sm font-medium text-yellow-600">Pending</span>
-                  </div>
-                  <div className="text-2xl font-bold text-yellow-900 mt-1">
-                    {notifications.filter(n => n.status === 'pending').length}
-                  </div>
-                </div>
-                
-                <div className="bg-red-50 p-4 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <XCircle className="h-5 w-5 text-red-600" />
-                    <span className="text-sm font-medium text-red-600">Failed</span>
-                  </div>
-                  <div className="text-2xl font-bold text-red-900 mt-1">
-                    {notifications.filter(n => n.status === 'failed').length}
-                  </div>
-                </div>
+        {/* Notifications Table */}
+        <div className="border rounded-lg overflow-x-auto">
+        <Table className="min-w-[800px]">
+          <TableHeader>
+          <TableRow>
+            <TableHead>Title</TableHead>
+            <TableHead>Recipient</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Source</TableHead>
+            <TableHead>Sent At</TableHead>
+            <TableHead>Actions</TableHead>
+          </TableRow>
+          </TableHeader>
+          <TableBody>
+          {isLoading ? (
+            <TableRow>
+            <TableCell colSpan={6} className="text-center py-8">
+              Loading notifications...
+            </TableCell>
+            </TableRow>
+          ) : filteredNotifications.length === 0 ? (
+            <TableRow>
+            <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+              No notifications found
+            </TableCell>
+            </TableRow>
+          ) : (
+            filteredNotifications.map((notification) => (
+            <TableRow key={notification.id}>
+              <TableCell>
+              <div>
+                <p className="font-medium">{notification.title}</p>
+                <p className="text-sm text-gray-500 truncate max-w-xs">
+                {notification.body}
+                </p>
               </div>
-              
-              <div className="mt-6">
-                <h3 className="text-lg font-semibold mb-3">Delivery Rate</h3>
-                <div className="bg-gray-200 rounded-full h-4">
-                  <div 
-                    className="bg-green-500 h-4 rounded-full transition-all duration-300"
-                    style={{
-                      width: `${notifications.length > 0 ? 
-                        (notifications.filter(n => n.status === 'delivered').length / notifications.length) * 100 : 0}%`
-                    }}
-                  ></div>
-                </div>
-                <div className="text-sm text-gray-600 mt-1">
-                  {notifications.length > 0 ? 
-                    Math.round((notifications.filter(n => n.status === 'delivered').length / notifications.length) * 100) : 0}% 
-                  delivery rate
-                </div>
+              </TableCell>
+              <TableCell>
+              <div>
+                <p className="font-medium">{notification.recipient_phone}</p>
+                <p className="text-sm text-gray-500">
+                {notification.recipient_type}
+                </p>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Notification Details Modal */}
-      {selectedNotification && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-            <CardHeader>
-              <CardTitle>Notification Details</CardTitle>
+              </TableCell>
+              <TableCell>
+              {getStatusBadge(notification.status)}
+              </TableCell>
+              <TableCell>
+              {getSourceBadge(notification.trigger_source)}
+              </TableCell>
+              <TableCell>
+              {notification.sent_at ? formatDate(notification.sent_at) : 'Not sent'}
+              </TableCell>
+              <TableCell>
               <Button
                 variant="outline"
                 size="sm"
-                className="absolute top-4 right-4"
-                onClick={() => setSelectedNotification(null)}
+                onClick={() => handleViewDetails(notification)}
               >
+                <Eye className="h-4 w-4 mr-1" />
+                Details
+              </Button>
+              </TableCell>
+            </TableRow>
+            ))
+          )}
+          </TableBody>
+        </Table>
+        </div>
+      </CardContent>
+      </Card>
+
+      {/* Notification Details Modal (replaces Dialog) */}
+      {isLogDialogOpen && selectedNotification && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={() => setIsLogDialogOpen(false)}
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="notif-details-title"
+        >
+          <div
+            className="relative bg-white rounded-lg shadow-lg max-w-5xl w-[95vw] sm:w-[90vw] max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b px-5 py-4 flex items-start justify-between">
+              <div>
+                <h2 id="notif-details-title" className="text-lg font-semibold">Notification Details</h2>
+                <p className="text-sm text-gray-500">Detailed information and delivery logs for this notification</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setIsLogDialogOpen(false)} aria-label="Close">
                 ×
               </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Title</Label>
-                  <p className="font-medium">{selectedNotification.title}</p>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-6">
+              {/* Notification Info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Basic Information</h4>
+                  <div className="space-y-1 text-sm">
+                    <p><strong>Title:</strong> {selectedNotification.title}</p>
+                    <p><strong>Recipient:</strong> {selectedNotification.recipient_phone}</p>
+                    <p><strong>Type:</strong> {selectedNotification.recipient_type}</p>
+                    {/* Replace <p> wrapping a Badge (div) with a div container */}
+                    <div className="flex items-center gap-2">
+                      <strong>Status:</strong>
+                      {getStatusBadge(selectedNotification.status)}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <strong>Source:</strong>
+                      {getSourceBadge(selectedNotification.trigger_source)}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Status</Label>
-                  <div className="mt-1">
-                    {getStatusBadge(selectedNotification.status, selectedNotification.sms_status)}
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Timestamps</h4>
+                  <div className="space-y-1 text-sm">
+                    <p><strong>Created:</strong> {formatDate(selectedNotification.created_at)}</p>
+                    <p><strong>Sent:</strong> {selectedNotification.sent_at ? formatDate(selectedNotification.sent_at) : 'Not sent'}</p>
+                    <p><strong>Delivered:</strong> {selectedNotification.delivered_at ? formatDate(selectedNotification.delivered_at) : 'Not delivered'}</p>
+                    {selectedNotification.error_message && (
+                      <p><strong>Error:</strong> <span className="text-red-600">{selectedNotification.error_message}</span></p>
+                    )}
                   </div>
                 </div>
               </div>
-              
-              <div>
-                <Label className="text-sm font-medium text-gray-500">Message</Label>
-                <p className="mt-1 p-3 bg-gray-50 rounded border">{selectedNotification.body}</p>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Recipient Phone</Label>
-                  <p className="font-mono">{formatPhone(selectedNotification.recipient_phone)}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Provider Message ID</Label>
-                  <p className="font-mono text-sm">{selectedNotification.sms_provider_id || 'N/A'}</p>
+
+              {/* Message Content (horizontal scroll only here) */}
+              <div className="space-y-2 overflow-x-auto">
+                <h4 className="font-semibold">Message Content</h4>
+                <div className="p-3 bg-gray-50 rounded-md border">
+                  <p className="text-sm whitespace-pre-wrap break-words">{selectedNotification.body}</p>
                 </div>
               </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Sent At</Label>
-                  <p>{formatDate(selectedNotification.sent_at)}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Delivered At</Label>
-                  <p>{formatDate(selectedNotification.delivered_at)}</p>
-                </div>
+
+              {/* Delivery Logs (horizontal scroll only here) */}
+              <div className="space-y-2">
+                <h4 className="font-semibold">Delivery Logs</h4>
+                <ScrollArea className="h-64 border rounded-md overflow-x-auto">
+                  <div className="p-4 space-y-3 min-w-[600px]">
+                    {deliveryLogs.length === 0 ? (
+                      <p className="text-sm text-gray-500">No delivery logs available</p>
+                    ) : (
+                      deliveryLogs.map((log) => (
+                        <div key={log.id} className="border-l-4 border-l-blue-500 pl-4 py-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            {getStatusIcon(log.status)}
+                            <span className="font-medium text-sm">{log.status.toUpperCase()}</span>
+                            <span className="text-xs text-gray-500">Attempt #{log.attempt_number}</span>
+                            <span className="text-xs text-gray-500">{formatDate(log.created_at)}</span>
+                          </div>
+                          {log.error_message && (
+                            <p className="text-sm text-red-600 mb-2 break-words">{log.error_message}</p>
+                          )}
+                          {log.provider_response && (
+                            <details className="text-xs">
+                              <summary className="cursor-pointer text-gray-600 hover:text-gray-800">
+                                Provider Response
+                              </summary>
+                              <div className="overflow-x-auto">
+                                <pre className="mt-2 p-2 bg-gray-100 rounded text-xs min-w-[400px] max-w-full whitespace-pre">
+{JSON.stringify(log.provider_response, null, 2)}
+                                </pre>
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
               </div>
-              
-              {selectedNotification.metadata && (
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Metadata</Label>
-                  <pre className="mt-1 p-3 bg-gray-50 rounded border text-xs overflow-x-auto">
-                    {JSON.stringify(selectedNotification.metadata, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
     </div>
-  );
+  )
 }
-

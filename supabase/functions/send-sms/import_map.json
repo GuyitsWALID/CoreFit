@@ -1,6 +1,7 @@
 {
-"imports": {
-"@supabase/supabase-js": "npm:@supabase/supabase-js@^2.0.0",
-"@afromessage/afromessage-node": "npm:@afromessage/afromessagenode@^1.0.0"
-}
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.38.4",
+    "afromessage": "https://esm.sh/afromessage@1.0.9",
+    "https://deno.land/std@0.177.0/http/server.ts": "https://deno.land/std@0.177.0/http/server.ts"
+  }
 }

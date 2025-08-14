@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { SMSSender } from '@/components/SMSSender';
+import { EnhancedSMSSender } from '@/components/EnhancedSMSSender';
 import { NotificationHistory } from '@/components/NotificationHistory';
 import { Send, History, BarChart3, Settings, AlertCircle, CheckCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/supabaseClient';
 import { Textarea } from '@/components/ui/textarea';
+import { NotificationAnalytics } from '@/components/NotificationAnalytics';
 
 export default function Notifications() {
   const [activeTab, setActiveTab] = useState('send');
@@ -257,7 +258,7 @@ export default function Notifications() {
           </TabsList>
 
           <TabsContent value="send">
-            <SMSSender />
+            <EnhancedSMSSender />
           </TabsContent>
 
           <TabsContent value="history">
@@ -265,46 +266,12 @@ export default function Notifications() {
           </TabsContent>
 
           <TabsContent value="analytics">
-            <Card>
-              <CardHeader>
-                <CardTitle>SMS Analytics Dashboard</CardTitle>
-                <CardDescription>
-                  Comprehensive analytics and reporting for your SMS notifications
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                  <div className="text-center p-6 bg-blue-50 rounded-lg">
-                    <div className="text-3xl font-bold text-blue-600 mb-2">1,234</div>
-                    <div className="text-sm text-gray-600">Total Messages Sent</div>
-                  </div>
-                  <div className="text-center p-6 bg-green-50 rounded-lg">
-                    <div className="text-3xl font-bold text-green-600 mb-2">98.5%</div>
-                    <div className="text-sm text-gray-600">Delivery Rate</div>
-                  </div>
-                  <div className="text-center p-6 bg-purple-50 rounded-lg">
-                    <div className="text-3xl font-bold text-purple-600 mb-2">$45.67</div>
-                    <div className="text-sm text-gray-600">Total Cost</div>
-                  </div>
-                </div>
-                
-                <div className="text-center py-12">
-                  <BarChart3 className="h-16 w-16 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Advanced Analytics</h3>
-                  <p className="text-gray-600 mb-4">
-                    Detailed analytics including delivery rates, cost analysis, and performance metrics
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    This feature will include charts showing delivery trends, cost per message, 
-                    peak sending times, and recipient engagement metrics.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Replace static analytics with the new component */}
+            <NotificationAnalytics />
           </TabsContent>
 
           <TabsContent value="settings">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-6">
               {/* Notification Templates Card */}
               <Card>
                 <CardHeader>
@@ -350,33 +317,7 @@ export default function Notifications() {
                   </div>
                 </CardContent>
               </Card>
-              {/* System Health Card (keep for non-technical overview) */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>System Health</CardTitle>
-                  <CardDescription>
-                    Monitor system status and performance
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="text-center p-3 bg-gray-50 rounded">
-                        <div className="text-2xl font-bold text-gray-900">99.9%</div>
-                        <div className="text-sm text-gray-600">Uptime</div>
-                      </div>
-                      <div className="text-center p-3 bg-gray-50 rounded">
-                        <div className="text-2xl font-bold text-gray-900"> 2s</div>
-                        <div className="text-sm text-gray-600">Avg Response</div>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      <p>Last health check: Just now</p>
-                      <p>All systems operational</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              
             </div>
             {/* Template Modal */}
             {templateModal.open && (
