@@ -555,64 +555,105 @@ export default function CheckIns() {
         addDebugInfo('QR code is not JSON, trying other methods');
       }
 
-      // Handle new JSON format from registration
-      if (qrData && qrData.userId) {
-        addDebugInfo(`Processing new JSON format with userId: ${qrData.userId}`);
-        
-        // Look up user by ID
-        const { data: userMatch, error: userErr } = await supabase
-          .from('users')
-          .select('id, first_name, last_name, email, package_id, packages(name)')
-          .eq('id', qrData.userId)
-          .maybeSingle();
-
-        if (userErr) {
-          addDebugInfo(`User lookup error: ${userErr.message}`);
-          throw new Error(`Database error: ${userErr.message}`);
-        }
-
-        if (userMatch) {
-          addDebugInfo(`Found user: ${userMatch.first_name} ${userMatch.last_name}`);
+      // Handle new JSON format from registration for users OR staff
+      if (qrData && (qrData.userId || qrData.staffId)) {
+        if (qrData.userId) {
+          // Existing user JSON flow
+          addDebugInfo(`Processing new JSON format with userId: ${qrData.userId}`);
           
-          // Insert into client_checkins
-          const checkInData = {
-            user_id: userMatch.id,
-            checkin_time: nowIso,
-            checkin_date: dateStr,
-          };
+          // Look up user by ID
+          const { data: userMatch, error: userErr } = await supabase
+            .from('users')
+            .select('id, first_name, last_name, email, package_id, packages(name)')
+            .eq('id', qrData.userId)
+            .maybeSingle();
 
-          // Try to include additional fields if they exist in the table
-          const extendedCheckInData = {
-            ...checkInData,
-            'QR-CODE USED': true,
-            package_type_at_checkin: userMatch.packages?.name || null,
-          };
-
-          let { error: insertError } = await supabase
-            .from('client_checkins')
-            .insert([extendedCheckInData]);
-
-          // If extended insert fails, try basic insert
-          if (insertError) {
-            addDebugInfo(`Extended insert failed: ${insertError.message}, trying basic insert`);
-            const { error: basicInsertError } = await supabase
-              .from('client_checkins')
-              .insert([checkInData]);
-            
-            if (basicInsertError) {
-              throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
-            }
+          if (userErr) {
+            addDebugInfo(`User lookup error: ${userErr.message}`);
+            throw new Error(`Database error: ${userErr.message}`);
           }
 
-          setQrStatus('success');
-          toast({
-            title: 'Check-in successful',
-            description: `${userMatch.first_name} ${userMatch.last_name} has been checked in successfully.`,
-          });
-          fetchCheckIns();
-          return;
-        } else {
-          addDebugInfo(`User not found with ID: ${qrData.userId}`);
+          if (userMatch) {
+            addDebugInfo(`Found user: ${userMatch.first_name} ${userMatch.last_name}`);
+            
+            // Insert into client_checkins
+            const checkInData = {
+              user_id: userMatch.id,
+              checkin_time: nowIso,
+              checkin_date: dateStr,
+            };
+
+            // Try to include additional fields if they exist in the table
+            const extendedCheckInData = {
+              ...checkInData,
+              'QR-CODE USED': true,
+              package_type_at_checkin: userMatch.packages?.name || null,
+            };
+
+            let { error: insertError } = await supabase
+              .from('client_checkins')
+              .insert([extendedCheckInData]);
+
+            // If extended insert fails, try basic insert
+            if (insertError) {
+              addDebugInfo(`Extended insert failed: ${insertError.message}, trying basic insert`);
+              const { error: basicInsertError } = await supabase
+                .from('client_checkins')
+                .insert([checkInData]);
+            
+              if (basicInsertError) {
+                throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
+              }
+            }
+
+            setQrStatus('success');
+            toast({
+              title: 'Check-in successful',
+              description: `${userMatch.first_name} ${userMatch.last_name} has been checked in successfully.`,
+            });
+            fetchCheckIns();
+            return;
+          } else {
+            addDebugInfo(`User not found with ID: ${qrData.userId}`);
+          }
+        } else if (qrData.staffId) {
+          // New: handle staff JSON directly
+          const { data: staffMatch, error: staffErr } = await supabase
+            .from('staff')
+            .select('id, first_name, last_name, email, role_id, roles(name)')
+            .eq('id', qrData.staffId)
+            .maybeSingle();
+
+          if (staffErr) {
+            addDebugInfo(`Staff lookup error: ${staffErr.message}`);
+            throw new Error(`Database error: ${staffErr.message}`);
+          }
+
+          if (staffMatch) {
+            addDebugInfo(`Found staff: ${staffMatch.first_name} ${staffMatch.last_name}`);
+
+            const { error: staffInsertError } = await supabase
+              .from('staff_checkins')
+              .insert([{
+                staff_id: staffMatch.id,
+                checkin_time: nowIso,
+                checkin_date: dateStr,
+              }]);
+
+            if (staffInsertError) {
+              throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
+            }
+
+            setQrStatus('success');
+            toast({
+              title: 'Check-in successful',
+              description: `${staffMatch.first_name} ${staffMatch.last_name} has been checked in successfully.`,
+            });
+            fetchCheckIns();
+            return;
+          } else {
+            addDebugInfo(`Staff not found with ID: ${qrData.staffId}`);
+          }
         }
       }
 
@@ -665,20 +706,19 @@ export default function CheckIns() {
         return;
       }
 
-      // Try staff qr_code_data lookup
+      // Try staff qr_code lookup (use staff.qr_code instead of qr_code_data)
       const { data: staffByQrCode, error: staffQrErr } = await supabase
         .from('staff')
-        .select('id, first_name, last_name, email, role_id, roles(name), qr_code_data')
-        .eq('qr_code_data', code)
+        .select('id, first_name, last_name, email, role_id, roles(name), qr_code')
+        .eq('qr_code', code)
         .maybeSingle();
 
       if (staffQrErr) {
-        addDebugInfo(`staff qr_code_data lookup error: ${staffQrErr.message}`);
+        addDebugInfo(`staff qr_code lookup error: ${staffQrErr.message}`);
       }
 
       if (staffByQrCode) {
-        addDebugInfo(`Found staff by qr_code_data: ${staffByQrCode.first_name} ${staffByQrCode.last_name}`);
-        
+        addDebugInfo(`Found staff by qr_code: ${staffByQrCode.first_name} ${staffByQrCode.last_name}`);
         const { error: staffInsertError } = await supabase
           .from('staff_checkins')
           .insert([{
@@ -706,6 +746,7 @@ export default function CheckIns() {
           const obj = JSON.parse(payload);
           if (obj.userId) return { id: obj.userId, kind: 'user' };
           if (obj.user_id) return { id: obj.user_id, kind: 'user' };
+          if (obj.staffId) return { id: obj.staffId, kind: 'staff' }; // accept camelCase
           if (obj.staff_id) return { id: obj.staff_id, kind: 'staff' };
           if (obj.id && obj.type) return { id: obj.id, kind: obj.type === 'staff' ? 'staff' : 'user' };
         } catch {}

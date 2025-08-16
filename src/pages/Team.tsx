@@ -129,8 +129,14 @@ export default function TeamManagement() {
   const [qrInfo, setQrInfo] = useState<QRInfo | null>(null);
   const qrContainerRef = useRef<HTMLDivElement>(null);
 
-  // Helper: create a unique QR payload for a staff record
-  const buildStaffQr = (id: string) => `staff:${id}`;
+  // Helper: create a JSON QR payload for a staff record to match scanner format
+  const buildStaffQr = (m: TeamMember) =>
+    JSON.stringify({
+      staffId: m.id,
+      firstName: m.first_name,
+      lastName: m.last_name,
+      roleId: m.role_id || null,
+    });
 
   // Ensure missing QR codes are generated for a list of members
   const ensureQrCodes = async (members: TeamMember[]) => {
@@ -139,10 +145,9 @@ export default function TeamManagement() {
     try {
       await Promise.all(
         missing.map(m =>
-          supabase.from('staff').update({ qr_code: buildStaffQr(m.id) }).eq('id', m.id)
+          supabase.from('staff').update({ qr_code: buildStaffQr(m) }).eq('id', m.id)
         )
       );
-      // Refresh to reflect newly assigned codes
       await fetchTeamMembers();
     } catch (e: any) {
       toast({ title: 'QR assign failed', description: e?.message || 'Could not assign QR codes', variant: 'destructive' });
@@ -186,7 +191,7 @@ export default function TeamManagement() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'staff' }, async (payload) => {
         const row = payload.new as TeamMember;
         try {
-          const value = row.qr_code || buildStaffQr(row.id);
+          const value = row.qr_code || buildStaffQr(row);
           if (!row.qr_code) {
             await supabase.from('staff').update({ qr_code: value }).eq('id', row.id);
           }
@@ -242,7 +247,7 @@ export default function TeamManagement() {
   // Open QR modal for a specific member, generating qr_code if missing
   const openQrForMember = async (member: TeamMember) => {
     try {
-      let value = member.qr_code || buildStaffQr(member.id);
+      let value = member.qr_code || buildStaffQr(member);
       if (!member.qr_code) {
         const { error } = await supabase.from('staff').update({ qr_code: value }).eq('id', member.id);
         if (error) throw error;
