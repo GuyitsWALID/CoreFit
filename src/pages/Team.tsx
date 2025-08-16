@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -51,6 +51,13 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import MemberFormModal from "@/components/Modals/MemberFormModal";
+// Add QR code renderer
+import QRCode from 'react-qr-code';
+// Add phone input component
+import PhoneInput from 'react-phone-input-2';
+import 'react-phone-input-2/lib/style.css';
+// Add QrCode icon
+import { QrCode } from 'lucide-react';
 
 interface Role {
   id: string;
@@ -75,7 +82,17 @@ interface TeamMember {
     id: string;
     name: string;
   };
+  qr_code?: string; // add qr code field from schema
 }
+
+// Optional minimal QR info state
+type QRInfo = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  qr_code: string;
+};
 
 const formSchema = z.object({
   first_name: z.string().min(2),
@@ -109,6 +126,29 @@ export default function TeamManagement() {
   const [confirmActiveDialog, setConfirmActiveDialog] = useState(false);
   const [pendingActiveMember, setPendingActiveMember] = useState<TeamMember | null>(null);
 
+  const [qrInfo, setQrInfo] = useState<QRInfo | null>(null);
+  const qrContainerRef = useRef<HTMLDivElement>(null);
+
+  // Helper: create a unique QR payload for a staff record
+  const buildStaffQr = (id: string) => `staff:${id}`;
+
+  // Ensure missing QR codes are generated for a list of members
+  const ensureQrCodes = async (members: TeamMember[]) => {
+    const missing = members.filter(m => !m.qr_code);
+    if (missing.length === 0) return;
+    try {
+      await Promise.all(
+        missing.map(m =>
+          supabase.from('staff').update({ qr_code: buildStaffQr(m.id) }).eq('id', m.id)
+        )
+      );
+      // Refresh to reflect newly assigned codes
+      await fetchTeamMembers();
+    } catch (e: any) {
+      toast({ title: 'QR assign failed', description: e?.message || 'Could not assign QR codes', variant: 'destructive' });
+    }
+  };
+
   // --- data fetching ---
   const fetchTeamMembers = async () => {
     setIsLoading(true);
@@ -121,7 +161,10 @@ export default function TeamManagement() {
     if (error) {
       toast({ title: 'Load failed', description: error.message, variant: 'destructive' });
     } else {
-      setTeamMembers(data || []);
+      const list = (data || []) as TeamMember[];
+      setTeamMembers(list);
+      // Backfill QR codes if missing
+      await ensureQrCodes(list);
     }
     setIsLoading(false);
   };
@@ -134,6 +177,37 @@ export default function TeamManagement() {
   useEffect(() => {
     fetchTeamMembers();
     fetchRoles();
+  }, []);
+
+  // Realtime: when a new staff row is inserted, assign qr_code if missing and show QR modal
+  useEffect(() => {
+    const channel = supabase
+      .channel('staff-insert-qr')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'staff' }, async (payload) => {
+        const row = payload.new as TeamMember;
+        try {
+          const value = row.qr_code || buildStaffQr(row.id);
+          if (!row.qr_code) {
+            await supabase.from('staff').update({ qr_code: value }).eq('id', row.id);
+          }
+          await fetchTeamMembers();
+          setQrInfo({
+            id: row.id,
+            first_name: row.first_name,
+            last_name: row.last_name,
+            email: row.email,
+            qr_code: value,
+          });
+          toast({ title: 'QR code generated', description: `QR for ${row.first_name} ${row.last_name} is ready` });
+        } catch (e: any) {
+          toast({ title: 'QR generation failed', description: e?.message || 'Could not set QR', variant: 'destructive' });
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // --- actions ---
@@ -163,6 +237,28 @@ export default function TeamManagement() {
   const handleEdit = (member: TeamMember) => {
     setEditMember(member);
     setEditDialogOpen(true);
+  };
+
+  // Open QR modal for a specific member, generating qr_code if missing
+  const openQrForMember = async (member: TeamMember) => {
+    try {
+      let value = member.qr_code || buildStaffQr(member.id);
+      if (!member.qr_code) {
+        const { error } = await supabase.from('staff').update({ qr_code: value }).eq('id', member.id);
+        if (error) throw error;
+        // refresh local list so member now has qr_code
+        await fetchTeamMembers();
+      }
+      setQrInfo({
+        id: member.id,
+        first_name: member.first_name,
+        last_name: member.last_name,
+        email: member.email,
+        qr_code: value,
+      });
+    } catch (e: any) {
+      toast({ title: 'QR not available', description: e?.message || 'Failed to load QR', variant: 'destructive' });
+    }
   };
 
   // --- filtering & rendering ---
@@ -202,9 +298,14 @@ export default function TeamManagement() {
         </div>
       </CardContent>
       <CardFooter>
-        <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
-          <Edit className="mr-1 h-4 w-4" /> Edit
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
+            <Edit className="mr-1 h-4 w-4" /> Edit
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => openQrForMember(member)}>
+            <QrCode className="mr-1 h-4 w-4" /> QR
+          </Button>
+        </div>
       </CardFooter>
     </Card>
   );
@@ -235,12 +336,65 @@ export default function TeamManagement() {
         </div>
       </TableCell>
       <TableCell>
-        <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
-          <Edit className="h-4 w-4" />
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
+            <Edit className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => openQrForMember(member)} aria-label="Show QR">
+            <QrCode className="h-4 w-4" />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );
+
+  // Helpers: download QR as SVG/PNG
+  const downloadSVG = () => {
+    const svg = qrContainerRef.current?.querySelector('svg');
+    if (!svg || !qrInfo) return;
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svg);
+    const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${qrInfo.first_name}-${qrInfo.last_name}-qr.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadPNG = () => {
+    const svg = qrContainerRef.current?.querySelector('svg');
+    if (!svg || !qrInfo) return;
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svg);
+    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    const size = 768; // export resolution
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      // white background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(img, 0, 0, size, size);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const pngUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = pngUrl;
+        a.download = `${qrInfo.first_name}-${qrInfo.last_name}-qr.png`;
+        a.click();
+        URL.revokeObjectURL(pngUrl);
+        URL.revokeObjectURL(url);
+      });
+    };
+    img.src = url;
+  };
 
   // --- loading state ---
   if (isLoading) {
@@ -337,8 +491,51 @@ export default function TeamManagement() {
         }}
         memberToEdit={editMember}
         roles={roles}
-        onSave={fetchTeamMembers}
+        onSave={async () => {
+          await fetchTeamMembers();
+          // QR dialog is handled by realtime insert listener
+        }}
       />
+
+      {/* New: QR code modal after creating a member */}
+      <Dialog open={!!qrInfo} onOpenChange={(o) => !o && setQrInfo(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Staff QR Code</DialogTitle>
+            <DialogDescription>
+              QR code generated for {qrInfo?.first_name} {qrInfo?.last_name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-md border p-4 bg-white" ref={qrContainerRef}>
+              <div className="flex flex-col items-center gap-3">
+                <QRCode
+                  value={qrInfo?.qr_code || ''}
+                  size={240}
+                  bgColor="#FFFFFF"
+                  fgColor="#111827"
+                  level="M"
+                />
+                <div className="text-xs text-gray-600 break-all">
+                  {qrInfo?.qr_code}
+                </div>
+              </div>
+            </div>
+            <div className="text-sm">
+              <div><span className="text-gray-500">Name:</span> {qrInfo?.first_name} {qrInfo?.last_name}</div>
+              <div><span className="text-gray-500">Email:</span> {qrInfo?.email}</div>
+              <div><span className="text-gray-500">Staff ID:</span> {qrInfo?.id}</div>
+            </div>
+          </div>
+          <DialogFooter className="flex items-center justify-between gap-2">
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={downloadSVG}>Download SVG</Button>
+              <Button onClick={downloadPNG}>Download PNG</Button>
+            </div>
+            <Button variant="secondary" onClick={() => setQrInfo(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

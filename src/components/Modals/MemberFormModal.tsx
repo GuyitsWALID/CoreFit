@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
+import PhoneInput from 'react-phone-input-2';
+import 'react-phone-input-2/lib/style.css';
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -309,7 +311,21 @@ export default function MemberFormModal({
                 <FormItem>
                   <FormLabel>Phone</FormLabel>
                   <FormControl>
-                    <Input placeholder="+251912345678" {...field} />
+                    <Controller
+                      control={form.control}
+                      name="phone"
+                      render={({ field: ctrl }) => (
+                        <PhoneInput
+                          country="et" // change to your default country
+                          value={(ctrl.value as string) || ''}
+                          onChange={(val) => ctrl.onChange(val.startsWith('+') ? val : `+${val}`)}
+                          inputProps={{ name: 'phone', required: true }}
+                          inputClass="w-full !h-10 !text-sm"
+                          buttonClass="!h-10"
+                          containerClass="w-full"
+                        />
+                      )}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
