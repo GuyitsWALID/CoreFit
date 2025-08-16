@@ -538,6 +538,27 @@ export default function CheckIns() {
     }
   };
 
+  // Prevent duplicate DB inserts within a short window
+  const DEDUP_WINDOW_SEC = 60;
+  const alreadyCheckedInRecently = async (type: 'user' | 'staff', id: string, seconds = DEDUP_WINDOW_SEC) => {
+    const sinceISO = new Date(Date.now() - seconds * 1000).toISOString();
+    const table = type === 'user' ? 'client_checkins' : 'staff_checkins';
+    const idCol = type === 'user' ? 'user_id' : 'staff_id';
+    const { data, error } = await supabase
+      .from(table)
+      .select('id')
+      .eq(idCol, id)
+      .gte('checkin_time', sinceISO)
+      .limit(1);
+
+    if (error) {
+      // If error happens, don't block; just log
+      addDebugInfo(`dedupe check error (${type}): ${error.message}`);
+      return false;
+    }
+    return Array.isArray(data) && data.length > 0;
+  };
+
   const handleQrResult = async (value: string) => {
     try {
       const code = value.trim();
@@ -574,6 +595,17 @@ export default function CheckIns() {
           }
 
           if (userMatch) {
+            // Dedupe guard
+            if (await alreadyCheckedInRecently('user', userMatch.id)) {
+              addDebugInfo('Duplicate user check-in prevented by time window');
+              toast({
+                title: 'Already checked in',
+                description: `${userMatch.first_name} ${userMatch.last_name} just checked in. Try again later.`,
+              });
+              setQrStatus('success');
+              return;
+            }
+
             addDebugInfo(`Found user: ${userMatch.first_name} ${userMatch.last_name}`);
             
             // Insert into client_checkins
@@ -630,6 +662,17 @@ export default function CheckIns() {
           }
 
           if (staffMatch) {
+            // Dedupe guard
+            if (await alreadyCheckedInRecently('staff', staffMatch.id)) {
+              addDebugInfo('Duplicate staff check-in prevented by time window');
+              toast({
+                title: 'Already checked in',
+                description: `${staffMatch.first_name} ${staffMatch.last_name} just checked in. Try again later.`,
+              });
+              setQrStatus('success');
+              return;
+            }
+
             addDebugInfo(`Found staff: ${staffMatch.first_name} ${staffMatch.last_name}`);
 
             const { error: staffInsertError } = await supabase
@@ -669,8 +712,17 @@ export default function CheckIns() {
       }
 
       if (userByQrCode) {
-        addDebugInfo(`Found user by qr_code_data: ${userByQrCode.first_name} ${userByQrCode.last_name}`);
-        
+        // Dedupe guard
+        if (await alreadyCheckedInRecently('user', userByQrCode.id)) {
+          addDebugInfo('Duplicate user check-in prevented by time window (qr_code_data path)');
+          toast({
+            title: 'Already checked in',
+            description: `${userByQrCode.first_name} ${userByQrCode.last_name} just checked in. Try again later.`,
+          });
+          setQrStatus('success');
+          return;
+        }
+
         const checkInData = {
           user_id: userByQrCode.id,
           checkin_time: nowIso,
@@ -706,7 +758,7 @@ export default function CheckIns() {
         return;
       }
 
-      // Try staff qr_code lookup (use staff.qr_code instead of qr_code_data)
+      // Try staff qr_code lookup (use staff.qr_code)
       const { data: staffByQrCode, error: staffQrErr } = await supabase
         .from('staff')
         .select('id, first_name, last_name, email, role_id, roles(name), qr_code')
@@ -718,7 +770,17 @@ export default function CheckIns() {
       }
 
       if (staffByQrCode) {
-        addDebugInfo(`Found staff by qr_code: ${staffByQrCode.first_name} ${staffByQrCode.last_name}`);
+        // Dedupe guard
+        if (await alreadyCheckedInRecently('staff', staffByQrCode.id)) {
+          addDebugInfo('Duplicate staff check-in prevented by time window (qr_code path)');
+          toast({
+            title: 'Already checked in',
+            description: `${staffByQrCode.first_name} ${staffByQrCode.last_name} just checked in. Try again later.`,
+          });
+          setQrStatus('success');
+          return;
+        }
+
         const { error: staffInsertError } = await supabase
           .from('staff_checkins')
           .insert([{
@@ -726,7 +788,6 @@ export default function CheckIns() {
             checkin_time: nowIso,
             checkin_date: dateStr,
           }]);
-
         if (staffInsertError) {
           throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
         }
@@ -740,7 +801,7 @@ export default function CheckIns() {
         return;
       }
 
-      // Legacy fallback: Try to extract ID from various formats
+      // Legacy fallback: extract ID and try user/staff by ID
       const extractIdFromPayload = (payload: string): { id: string; kind: 'user' | 'staff' | 'unknown' } => {
         try {
           const obj = JSON.parse(payload);
@@ -775,7 +836,6 @@ export default function CheckIns() {
       let isUser = false;
       let person: any = null;
 
-      // Try to find user first (unless explicitly marked as staff)
       if (kind !== 'staff') {
         const { data: userById } = await supabase
           .from('users')
@@ -790,7 +850,6 @@ export default function CheckIns() {
         }
       }
 
-      // If not found as user, try staff
       if (!person) {
         const { data: staffById } = await supabase
           .from('staff')
@@ -816,8 +875,18 @@ export default function CheckIns() {
         return;
       }
 
-      // Record check-in
+      // Final insert with dedupe guard
       if (isUser) {
+        if (await alreadyCheckedInRecently('user', person.id)) {
+          addDebugInfo('Duplicate user check-in prevented by time window (fallback path)');
+          toast({
+            title: 'Already checked in',
+            description: `${person.first_name} ${person.last_name} just checked in. Try again later.`,
+          });
+          setQrStatus('success');
+          return;
+        }
+
         const checkInData = {
           user_id: person.id,
           checkin_time: nowIso,
@@ -838,23 +907,23 @@ export default function CheckIns() {
           const { error: basicInsertError } = await supabase
             .from('client_checkins')
             .insert([checkInData]);
-          
-          if (basicInsertError) {
-            throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
-          }
+          if (basicInsertError) throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
         }
       } else {
+        if (await alreadyCheckedInRecently('staff', person.id)) {
+          addDebugInfo('Duplicate staff check-in prevented by time window (fallback path)');
+          toast({
+            title: 'Already checked in',
+            description: `${person.first_name} ${person.last_name} just checked in. Try again later.`,
+          });
+          setQrStatus('success');
+          return;
+        }
+
         const { error: staffInsertError } = await supabase
           .from('staff_checkins')
-          .insert([{
-            staff_id: person.id,
-            checkin_time: nowIso,
-            checkin_date: dateStr,
-          }]);
-
-        if (staffInsertError) {
-          throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
-        }
+          .insert([{ staff_id: person.id, checkin_time: nowIso, checkin_date: dateStr }]);
+        if (staffInsertError) throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
       }
 
       setQrStatus('success');

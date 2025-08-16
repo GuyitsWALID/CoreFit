@@ -41,6 +41,10 @@ export default function Dashboard() {
   type RecentCI = { id: string; name: string; time: string; package?: string | null };
   const [recentCheckIns, setRecentCheckIns] = useState<RecentCI[]>([]);
   const [loadingRecent, setLoadingRecent] = useState<boolean>(false);
+  // Staff recent check-ins state and filter
+  const [recentStaffCheckIns, setRecentStaffCheckIns] = useState<Array<{ id: string; name: string; time: string; role?: string | null }>>([]);
+  const [loadingRecentStaff, setLoadingRecentStaff] = useState<boolean>(false);
+  const [recentFilter, setRecentFilter] = useState<'clients' | 'staff'>('clients');
 
   // Templates and Notify Modal
   const [templates, setTemplates] = useState<Array<{ id: string; name: string; title: string; body: string }>>([]);
@@ -64,6 +68,8 @@ export default function Dashboard() {
     loadRevenues();
     loadExpiringSoon();
     loadRecentCheckIns();
+    // Load staff recent check-ins as well
+    loadRecentStaffCheckIns();
     loadTemplates();
   }, []);
 
@@ -302,6 +308,31 @@ export default function Dashboard() {
     }
   };
 
+  // Load recent staff check-ins (today)
+  const loadRecentStaffCheckIns = async () => {
+    setLoadingRecentStaff(true);
+    try {
+      const { data, error } = await supabase
+        .from('staff_checkins')
+        .select('id, checkin_time, staff(first_name, last_name, roles(name))')
+        .eq('checkin_date', todayStr)
+        .order('checkin_time', { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      const mapped = (data || []).map((row: any) => ({
+        id: row.id,
+        name: `${row.staff?.first_name ?? ''} ${row.staff?.last_name ?? ''}`.trim() || 'Unknown',
+        time: new Date(row.checkin_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        role: row.staff?.roles?.name || null,
+      }));
+      setRecentStaffCheckIns(mapped);
+    } catch {
+      setRecentStaffCheckIns([]);
+    } finally {
+      setLoadingRecentStaff(false);
+    }
+  };
+
   // Load SMS templates
   const loadTemplates = async () => {
     try {
@@ -526,26 +557,57 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Recent check-ins */}
+        {/* Recent check-ins - add Clients/Staff filter */}
         <Card>
-          <CardHeader>
-            <CardTitle>Recent Check-Ins (Today)</CardTitle>
-            <CardDescription>Last 10 client check-ins</CardDescription>
+          <CardHeader className="flex flex-row justify-between">
+            <div>
+              <CardTitle>Recent Check-Ins (Today)</CardTitle>
+              <CardDescription>
+                Last 10 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
+              </CardDescription>
+            </div>
+            <Select value={recentFilter} onValueChange={(v: 'clients' | 'staff') => setRecentFilter(v)}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="clients">Clients</SelectItem>
+                <SelectItem value="staff">Staff</SelectItem>
+              </SelectContent>
+            </Select>
           </CardHeader>
           <CardContent>
-            {loadingRecent ? (
+            {recentFilter === 'clients' ? (
+              loadingRecent ? (
+                <div className="text-sm text-gray-500 py-6">Loading...</div>
+              ) : recentCheckIns.length === 0 ? (
+                <div className="text-sm text-gray-500 py-6">No client check-ins recorded today</div>
+              ) : (
+                <div className="space-y-3">
+                  {recentCheckIns.map((ci) => (
+                    <div key={ci.id} className="flex items-center justify-between p-2 border rounded-md bg-sky-50">
+                      <div>
+                        <div className="font-medium text-sky-900">{ci.name}</div>
+                        <div className="text-xs text-sky-700">{ci.package || 'No Package'}</div>
+                      </div>
+                      <div className="text-sm text-sky-800">{ci.time}</div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : loadingRecentStaff ? (
               <div className="text-sm text-gray-500 py-6">Loading...</div>
-            ) : recentCheckIns.length === 0 ? (
-              <div className="text-sm text-gray-500 py-6">No check-ins recorded today</div>
+            ) : recentStaffCheckIns.length === 0 ? (
+              <div className="text-sm text-gray-500 py-6">No staff check-ins recorded today</div>
             ) : (
               <div className="space-y-3">
-                {recentCheckIns.map((ci) => (
-                  <div key={ci.id} className="flex items-center justify-between p-2 border rounded-md bg-sky-50">
+                {recentStaffCheckIns.map((ci) => (
+                  <div key={ci.id} className="flex items-center justify-between p-2 border rounded-md bg-violet-50">
                     <div>
-                      <div className="font-medium text-sky-900">{ci.name}</div>
-                      <div className="text-xs text-sky-700">{ci.package || 'No Package'}</div>
+                      <div className="font-medium text-violet-900">{ci.name}</div>
+                      <div className="text-xs text-violet-700">{ci.role || 'No Role'}</div>
                     </div>
-                    <div className="text-sm text-sky-800">{ci.time}</div>
+                    <div className="text-sm text-violet-800">{ci.time}</div>
                   </div>
                 ))}
               </div>
@@ -554,7 +616,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Member Growth chart - moved to the end after Recent Check-Ins */}
+      {/* Member Growth chart */}
       <Card>
         <CardHeader className="flex items-start justify-between gap-4">
           <div className="text-left">
