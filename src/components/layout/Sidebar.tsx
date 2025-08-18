@@ -10,7 +10,8 @@ import {
   ClipboardList,
   Package,
   Bell,
-  Settings
+  Settings,
+  ChartArea
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -34,16 +35,6 @@ const navItems: NavItem[] = [
     icon: User,
   },
   {
-    label: "Team",
-    href: "/team",
-    icon: Users,
-  },
-  {
-    label: "Trainer",
-    href: "/trainers",
-    icon: Dumbbell,
-  },
-  {
     label: "Check-ins",
     href: "/check-ins",
     icon: ClipboardList,
@@ -59,9 +50,19 @@ const navItems: NavItem[] = [
     icon: Users,
   },
   {
+    label: "Team",
+    href: "/team",
+    icon: Users,
+  },
+  {
+    label: "Trainer",
+    href: "/trainers",
+    icon: Dumbbell,
+  },
+  {
     label: "Reports",
     href: "/reports",
-    icon: ClipboardList,
+    icon: ChartArea,
   },
   
   {

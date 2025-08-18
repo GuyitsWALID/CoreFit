@@ -307,9 +307,9 @@ export default function MembershipList() {
   setOpenDropdown(null);
 
   try {
-    const { error } = await supabase.rpc('renew_function', {
-      user_id:    member.user_id,
-      package_id: member.package_id,
+    const { error } = await supabase.rpc('renew_membership', {
+      p_package_id: member.package_id,
+      p_user_id:    member.user_id,
     });
 
     if (error) {

@@ -317,7 +317,7 @@ export default function Dashboard() {
         .select('id, checkin_time, staff(first_name, last_name, roles(name))')
         .eq('checkin_date', todayStr)
         .order('checkin_time', { ascending: false })
-        .limit(10);
+        .limit(5);
       if (error) throw error;
       const mapped = (data || []).map((row: any) => ({
         id: row.id,
@@ -447,7 +447,7 @@ export default function Dashboard() {
 
       {/* Stat cards - clickable, add subtle color accents */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div onClick={() => navigate('/membership-list')} className="cursor-pointer transition hover:-translate-y-0.5">
+        <div onClick={() => navigate('/expiring-memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
           <div className="rounded-lg bg-blue-50 p-0.5">
             <StatCard
               title="Total Members"
@@ -460,14 +460,15 @@ export default function Dashboard() {
         <div onClick={() => navigate('/check-ins')} className="cursor-pointer transition hover:-translate-y-0.5">
           <div className="rounded-lg bg-emerald-50 p-0.5">
             <StatCard
-              title="Today's Check-Ins"
+              title="Today's Client Check-Ins"
               value={String(todayCheckIns)}
               icon={Calendar}
               trend={{ value: '', positive: true }}
             />
           </div>
+          
         </div>
-        <div onClick={() => navigate('/membership-list')} className="cursor-pointer transition hover:-translate-y-0.5">
+        <div onClick={() => navigate('/expiring-memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
           <div className="rounded-lg bg-purple-50 p-0.5">
             <StatCard
               title="Active Memberships"
@@ -527,7 +528,7 @@ export default function Dashboard() {
               <CardTitle>Memberships Expiring Soon</CardTitle>
               <CardDescription>Members expiring within 10 days</CardDescription>
             </div>
-            <Button variant="outline" onClick={() => navigate('/membership-list')}>
+            <Button variant="outline" onClick={() => navigate('/expiring-memberships')}>
               View All
             </Button>
           </CardHeader>
@@ -563,7 +564,7 @@ export default function Dashboard() {
             <div>
               <CardTitle>Recent Check-Ins (Today)</CardTitle>
               <CardDescription>
-                Last 10 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
+                Last 5 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
               </CardDescription>
             </div>
             <Select value={recentFilter} onValueChange={(v: 'clients' | 'staff') => setRecentFilter(v)}>
@@ -686,13 +687,13 @@ export default function Dashboard() {
 
                 {/* X labels (small, normal, limited to avoid overlap) */}
                 {xTickIdxs.map((i) => (
-                  <text key={i} x={xAt(i)} y={chartH - 8} textAnchor="middle" fontSize="9" fill="#4b5563">
+                  <text key={i} x={xAt(i)} y={chartH - 8} textAnchor="middle" fontSize="7" fill="#4b5563">
                     {formatXLabel(growthPoints[i].raw, growthRange)}
                   </text>
                 ))}
 
                 {/* Axis labels */}
-                <text x={pad.left + innerW / 2} y={8} textAnchor="middle" fontSize="10" fill="#374151">
+                <text x={pad.left + innerW / 2} y={8} textAnchor="middle" fontSize="8" fill="#292d33">
                   Date
                 </text>
                 <text
