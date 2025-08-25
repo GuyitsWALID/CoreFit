@@ -58,6 +58,7 @@ import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
 // Add QrCode icon
 import { QrCode } from 'lucide-react';
+import { callSendWelcomeSmsFunction } from "@/utils/sendWelcomeViaEdge";
 
 interface Role {
   id: string;
@@ -265,6 +266,53 @@ export default function TeamManagement() {
       toast({ title: 'QR not available', description: e?.message || 'Failed to load QR', variant: 'destructive' });
     }
   };
+
+  // --- send welcome SMS via Edge Function ---
+  async function sendWelcomeSmsAndNotify(member: TeamMember, password: string) {
+    const payload = {
+      type: "send_welcome_sms",
+      data: {
+        recipient_phone: member.phone,
+        recipient_name: `${member.first_name} ${member.last_name}`,
+        username: member.email,
+        password: password,
+        gym_name: "ATL Fitness Hub",
+        gym_address: "Your gym address here",
+        gym_phone: "+251-XXX-XXX-XXXX",
+        recipient_id: member.id,
+      },
+    };
+
+    toast({
+      title: "Sending welcome SMS",
+      description: `Attempting to send SMS to ${member.phone}...`,
+    });
+
+    // Use the same function as RegisterClient
+    const fnUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+      ? `${import.meta.env.VITE_SUPABASE_FUNCTIONS_URL}/send-sms`
+      : "/functions/v1/send-sms";
+
+    const result = await callSendWelcomeSmsFunction(fnUrl, payload);
+
+    if (result.ok) {
+      toast({
+        title: "Welcome SMS sent",
+        description: `Welcome SMS was sent successfully to ${member.phone}`,
+      });
+    } else {
+      console.error("send-sms function error:", result);
+      toast({
+        title: "SMS failed",
+        description: `Welcome SMS could not be sent.`,
+        variant: "destructive",
+      });
+    }
+  }
+
+  // Example usage: call sendWelcomeSmsAndNotify after adding a new staff member
+  // You should call this after successful staff registration, e.g.:
+  // await sendWelcomeSmsAndNotify(newMember, password);
 
   // --- filtering & rendering ---
   const filteredMembers = teamMembers.filter(member => {

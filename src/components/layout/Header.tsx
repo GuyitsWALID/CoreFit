@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Bell, User } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import {
@@ -31,55 +31,80 @@ function ConfirmLogoutModal({ open, onConfirm, onCancel }: { open: boolean, onCo
 
 export function Header() {
   const [userProfile, setUserProfile] = useState<{ full_name: string, role: string } | null>(null);
-  const [notifications, setNotifications] = useState<{ id: string, title: string, body: string }[]>([]);
+  const [notifications, setNotifications] = useState<{ id: string, title: string, body: string, read?: boolean }[]>([]);
   const [logoutModal, setLogoutModal] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [lastViewedAt, setLastViewedAt] = useState<number>(() => Date.now());
+  const notifIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const fetchProfileAndNotifications = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+  // Fetch notifications and profile
+  const fetchProfileAndNotifications = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
 
-      // Fetch staff profile with role name
-      let { data, error } = await supabase
+    // Fetch staff profile with role name
+    let { data, error } = await supabase
+      .from('staff')
+      .select('full_name, role:roles(name)')
+      .eq('id', user.id)
+      .single();
+
+    if (error && user.email) {
+      const { data: emailData } = await supabase
         .from('staff')
         .select('full_name, role:roles(name)')
-        .eq('id', user.id)
+        .eq('email', user.email)
         .single();
+      data = emailData;
+    }
 
-      if (error && user.email) {
-        const { data: emailData } = await supabase
-          .from('staff')
-          .select('full_name, role:roles(name)')
-          .eq('email', user.email)
-          .single();
-        data = emailData;
-      }
+    let roleName: string | undefined;
+    if (Array.isArray(data?.role)) {
+      roleName = data.role[0]?.name;
+    } else {
+      roleName = data?.role?.name;
+    }
 
-      let roleName: string | undefined;
-      if (Array.isArray(data?.role)) {
-        roleName = data.role[0]?.name;
-      } else {
-        roleName = data?.role?.name;
-      }
+    setUserProfile({
+      full_name: data?.full_name || "User",
+      role: roleName || "Staff"
+    });
 
-      setUserProfile({
-        full_name: data?.full_name || "User",
-        role: roleName || "Staff"
-      });
+    // Fetch 3 most recent notifications for this user (add created_at)
+    const { data: notifData } = await supabase
+      .from('notifications')
+      .select('id, title, body, created_at')
+      .order('created_at', { ascending: false })
+      .limit(3);
 
-      // Fetch 3 most recent notifications for this user (customize as needed)
-      const { data: notifData } = await supabase
-        .from('notifications')
-        .select('id, title, body')
-        .order('created_at', { ascending: false })
-        .limit(3);
+    setNotifications(notifData || []);
+    // Unread: notifications newer than lastViewedAt
+    setUnreadCount(
+      (notifData || []).filter((n: any) =>
+        n.created_at && new Date(n.created_at).getTime() > lastViewedAt
+      ).length
+    );
+  };
 
-      setNotifications(notifData || []);
-    };
-
+  useEffect(() => {
     fetchProfileAndNotifications();
-  }, []);
+    // Poll notifications every 15 seconds
+    notifIntervalRef.current = setInterval(fetchProfileAndNotifications, 15000);
+    return () => {
+      if (notifIntervalRef.current) clearInterval(notifIntervalRef.current);
+    };
+  }, [lastViewedAt]);
+
+  // When dropdown is opened, mark all as "viewed" (but do not clear notifications)
+  const handleNotifOpenChange = (open: boolean) => {
+    setNotifOpen(open);
+    if (open) {
+      setLastViewedAt(Date.now());
+      setUnreadCount(0);
+    }
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -98,13 +123,13 @@ export function Header() {
         </div>
         
         <div className="flex items-center gap-4">
-          <DropdownMenu>
+          <DropdownMenu open={notifOpen} onOpenChange={handleNotifOpenChange}>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="relative">
                 <Bell size={18} />
-                {notifications.length > 0 && (
+                {unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {notifications.length}
+                    {unreadCount}
                   </span>
                 )}
               </Button>
@@ -159,3 +184,4 @@ export function Header() {
     </>
   );
 }
+  

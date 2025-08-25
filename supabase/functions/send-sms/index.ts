@@ -2,7 +2,7 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "@supabase/supabase-js";
-import AfroMessage from "afromessage";
+import AfroMessage from "https://esm.sh/afromessage@1.0.9";
 
 console.log("Function cold start: Initializing..." );
 
@@ -156,8 +156,9 @@ serve(async (req) => {
       const { data: templateData, error: templateError } = await supabase
         .from("notification_templates")
         .select("body, title, id")
-        .eq("name", "welcome_user")
-        .single();
+        .eq("template_key", "welcome_user")  // ✅ correct column
+        .eq("is_active", true)               // ✅ only active template
+        .maybeSingle(); 
 
       if (templateError || !templateData) {
         console.error("Error fetching welcome template:", templateError);

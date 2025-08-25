@@ -6,7 +6,7 @@
 },
 "imports": {
 "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.0.0",
-"@afromessage/afromessage-node": "npm:@afromessage/afromessagenode@^1.0.0",
+"@afromessage/afromessage-node": "npm:@afromessage/afromessagenode@^1.0.9",
 "node:": "node:"
 }
 }
