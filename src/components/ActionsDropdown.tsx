@@ -11,6 +11,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/supabaseClient";
 import DeactivateModal from "./Modals/DeactivateModal";
+import UserDetailModal from "./Modals/UserDetailModal";
 import type { MembershipInfo } from "@/types/memberships";
 import { on } from "process";
 
@@ -45,6 +46,7 @@ export default function ActionsDropdown({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const isOpen = openDropdown === member.user_id;
   const [deactOpen, setDeactOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   // Toggle dropdown
   const handleToggle = (e: React.MouseEvent) => {
@@ -137,7 +139,6 @@ export default function ActionsDropdown({
 
   return (
     <div className="relative" ref={dropdownRef}>
-      
       {isOpen && (
         <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
           {/* Freeze/Unfreeze/ExtendFreeze */}
@@ -215,6 +216,14 @@ export default function ActionsDropdown({
           </button>
 
           <div className="border-t border-gray-100 my-1" />
+          {/*Detail*/}
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50"
+            onClick={handleAction(() => setDetailOpen(true))}
+          >
+            <MoreHorizontal className="h-4 w-4" /> View Details
+          </button>
 
           {/* Deactivate / Activate */}
           {["active", "expired", "paused"].includes(member.status) && (
@@ -237,12 +246,18 @@ export default function ActionsDropdown({
           )}
         </div>
       )}
-      
+      <UserDetailModal
+        userId={member.user_id}
+        isOpen={detailOpen}
+        onClose={() => setDetailOpen(false)}
+      />
       <DeactivateModal
         isOpen={deactOpen}
         onClose={() => setDeactOpen(false)}
         memberName={member.full_name}
-        onConfirm={(reason) => handleStatusChange('inactive', reason)} currentStatus={"active"}      />
+        onConfirm={(reason) => handleStatusChange('inactive', reason)}
+        currentStatus={"active"}
+      />
     </div>
   );
 }

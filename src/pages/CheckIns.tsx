@@ -1359,4 +1359,3 @@ export default function CheckIns() {
     </div>
   );
 }
-
