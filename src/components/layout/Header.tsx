@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Bell, User } from 'lucide-react';
+import { Bell, User, AlertCircle } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -36,6 +36,9 @@ export function Header() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [lastViewedAt, setLastViewedAt] = useState<number>(() => Date.now());
+  const [expiringSoon, setExpiringSoon] = useState<
+    { user_id: string; full_name: string; email: string; days_left: number }[]
+  >([]);
   const notifIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const navigate = useNavigate();
 
@@ -106,6 +109,19 @@ export function Header() {
     }
   };
 
+  // Fetch expiring soon users for admin/receptionist notification
+  useEffect(() => {
+    async function fetchExpiringSoon() {
+      const { data, error } = await supabase
+        .from('users_with_membership_info')
+        .select('user_id, full_name, email, days_left')
+        .lt('days_left', 10)
+        .order('days_left', { ascending: true });
+      if (!error && Array.isArray(data)) setExpiringSoon(data);
+    }
+    fetchExpiringSoon();
+  }, []);
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setLogoutModal(false);
@@ -121,35 +137,56 @@ export function Header() {
             Welcome back, {userProfile?.full_name || "User"} ({userProfile?.role || "Staff"})
           </p>
         </div>
-        
         <div className="flex items-center gap-4">
-          <DropdownMenu open={notifOpen} onOpenChange={handleNotifOpenChange}>
+          {/* System notification for expiring memberships */}
+          <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="relative">
-                <Bell size={18} />
-                {unreadCount > 0 && (
+                <AlertCircle size={18} />
+                {expiringSoon.length > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {unreadCount}
+                    {expiringSoon.length}
                   </span>
                 )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-80">
-              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+              <DropdownMenuLabel>Expiring Memberships</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {notifications.length === 0 && (
-                <div className="px-4 py-2 text-gray-500 text-sm">No notifications</div>
+              {expiringSoon.length === 0 ? (
+                <div className="px-4 py-2 text-gray-500 text-sm">
+                  No memberships expiring soon.
+                </div>
+              ) : (
+                expiringSoon.map((user) => (
+                  <DropdownMenuItem key={user.user_id} className="py-2 cursor-pointer">
+                    <div className="flex flex-col gap-1">
+                      <span className="font-medium">{user.full_name}</span>
+                      <span className="text-xs text-gray-500">{user.email}</span>
+                      <span className="text-xs text-red-600">
+                        {user.days_left} day{user.days_left === 1 ? '' : 's'} left
+                      </span>
+                    </div>
+                  </DropdownMenuItem>
+                ))
               )}
-              {notifications.map((notif) => (
-                <DropdownMenuItem key={notif.id} className="py-2 cursor-pointer">
-                  <div className="flex flex-col gap-1">
-                    <span className="font-medium">{notif.title}</span>
-                    <span className="text-sm text-gray-500">{notif.body}</span>
-                  </div>
-                </DropdownMenuItem>
-              ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          
+            <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="relative">
+              <Bell size={18} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-80">
+              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <div className="px-4 py-2 text-gray-500 text-sm">
+              This feature is coming soon.
+              </div>
+            </DropdownMenuContent>
+            </DropdownMenu>
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -184,4 +221,3 @@ export function Header() {
     </>
   );
 }
-  
