@@ -51,6 +51,15 @@ export  function MemberCard({
     onFreeze(member);
   };
 
+  // Determine the actual status based on days_left and current status
+  const getEffectiveStatus = () => {
+    if (member.days_left <= 0) {
+      return 'expired';
+    }
+    return member.status;
+  };
+
+  const effectiveStatus = getEffectiveStatus();
 
   return (
     <div className="border rounded-lg px-4 py-4 mb-4 bg-white shadow-sm relative">
@@ -86,15 +95,15 @@ export  function MemberCard({
           
           <div className="text-center">
             <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Days Left</div>
-            <div className={`font-bold text-lg ${member.days_left > 5 ? "text-green-600" : "text-red-600"}`}>
+            <div className={`font-bold text-lg ${member.days_left > 5 ? "text-green-600" : member.days_left > 0 ? "text-yellow-600" : "text-red-600"}`}>
               {member.days_left >= 0 ? `${member.days_left} days` : `${Math.abs(member.days_left)} overdue`}
             </div>
           </div>
           
           <div className="text-center">
             <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Status</div>
-            <span className={`inline-block px-4 py-2 rounded-full text-sm font-semibold ${statusColorMap[member.status] || "bg-gray-100 text-gray-600"}`}>
-              {member.status.charAt(0).toUpperCase() + member.status.slice(1)}
+            <span className={`inline-block px-4 py-2 rounded-full text-sm font-semibold ${statusColorMap[effectiveStatus] || "bg-gray-100 text-gray-600"}`}>
+              {effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1)}
             </span>
           </div>
           

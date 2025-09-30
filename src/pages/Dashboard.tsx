@@ -37,6 +37,10 @@ export default function Dashboard() {
   const [expiringMembers, setExpiringMembers] = useState<ExpiringMember[]>([]);
   const [loadingExpiring, setLoadingExpiring] = useState<boolean>(false);
 
+  // Expired members
+  const [expiredMembers, setExpiredMembers] = useState<ExpiringMember[]>([]);
+  const [loadingExpired, setLoadingExpired] = useState<boolean>(false);
+
   // Recent check-ins
   type RecentCI = { id: string; name: string; time: string; package?: string | null };
   const [recentCheckIns, setRecentCheckIns] = useState<RecentCI[]>([]);
@@ -67,6 +71,7 @@ export default function Dashboard() {
     loadStats();
     loadRevenues();
     loadExpiringSoon();
+    loadExpiredMembers();
     loadRecentCheckIns();
     // Load staff recent check-ins as well
     loadRecentStaffCheckIns();
@@ -283,6 +288,39 @@ export default function Dashboard() {
     }
   };
 
+  // Load expired memberships (based on users table)
+  const loadExpiredMembers = async () => {
+    setLoadingExpired(true);
+    try {
+      const now = new Date();
+      const { data } = await supabase
+        .from('users')
+        .select('id, full_name, phone, membership_expiry, packages(name)')
+        .not('membership_expiry', 'is', null)
+        .lt('membership_expiry', now.toISOString())
+        .order('membership_expiry', { ascending: false });
+      
+      const list = (data || [])
+        .map((u: any) => {
+          const expiry = new Date(u.membership_expiry);
+          const days = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          return {
+            user_id: u.id,
+            full_name: u.full_name,
+            package_name: u.packages?.name || null,
+            days_left: days, // This will be negative for expired
+            phone: u.phone || null,
+          };
+        })
+        .slice(0, 5); // Show only first 5
+      setExpiredMembers(list);
+    } catch {
+      setExpiredMembers([]);
+    } finally {
+      setLoadingExpired(false);
+    }
+  };
+
   // Load recent check-ins
   const loadRecentCheckIns = async () => {
     setLoadingRecent(true);
@@ -347,51 +385,13 @@ export default function Dashboard() {
     }
   };
 
-  // Open notification modal
+  // Open notification modal - Replace with coming soon toast
   const openNotify = (member: ExpiringMember) => {
-    setNotifyTarget(member);
-    setNotifyOpen(true);
-  };
-
-  // Close notification modal
-  const closeNotify = () => {
-    setNotifyOpen(false);
-    setNotifyTarget(null);
-    setSelectedTemplateId(templates[0]?.id || '');
-  };
-
-  // Handle sending notification SMS
-  const handleSendNotify = async () => {
-    if (!notifyTarget?.phone || !selectedTemplateId) {
-      toast({ title: 'Missing info', description: 'Select a template and ensure member has a phone.', variant: 'destructive' });
-      return;
-    }
-    const tpl = templates.find(t => t.id === selectedTemplateId);
-    if (!tpl) return;
-    const msg = tpl.body
-      .replace(/\{full_name\}/gi, notifyTarget.full_name || '')
-      .replace(/\{package\}/gi, notifyTarget.package_name || '')
-      .replace(/\{days_left\}/gi, String(notifyTarget.days_left));
-    setSending(true);
-    try {
-      // Call Supabase Edge Function (adjust name if different)
-      const resp = await fetch('/functions/v1/sms-sender', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: notifyTarget.phone,
-          message: msg,
-          metadata: { reason: 'membership_expiry', user_id: notifyTarget.user_id },
-        }),
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      toast({ title: 'Notification sent', description: `SMS sent to ${notifyTarget.full_name}` });
-      closeNotify();
-    } catch (e: any) {
-      toast({ title: 'Send failed', description: e?.message || 'Could not send SMS', variant: 'destructive' });
-    } finally {
-      setSending(false);
-    }
+    toast({
+      title: "Feature Coming Soon",
+      description: "SMS notifications are currently under development. This feature will be available soon!",
+      variant: "default"
+    });
   };
 
   // Chart dimensions and helpers (restore larger size and reduce left pad)
@@ -519,8 +519,8 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* Expiring soon and Recent check-ins stacked (not side-by-side) */}
-      <div className="space-y-4 mt-2">
+      {/* Expiring soon and Expired members side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2">
         {/* Expiring soon */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
@@ -558,27 +558,65 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Recent check-ins - add Clients/Staff filter */}
+        {/* Expired members */}
         <Card>
-          <CardHeader className="flex flex-row justify-between">
+          <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle>Recent Check-Ins (Today)</CardTitle>
-              <CardDescription>
-                Last 5 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
-              </CardDescription>
+              <CardTitle>Expired Memberships</CardTitle>
+              <CardDescription>Members with expired memberships</CardDescription>
             </div>
-            <Select value={recentFilter} onValueChange={(v: 'clients' | 'staff') => setRecentFilter(v)}>
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="clients">Clients</SelectItem>
-                <SelectItem value="staff">Staff</SelectItem>
-              </SelectContent>
-            </Select>
+            <Button variant="outline" onClick={() => navigate('/expiring-memberships')}>
+              View All
+            </Button>
           </CardHeader>
           <CardContent>
-            {recentFilter === 'clients' ? (
+            {loadingExpired ? (
+              <div className="text-sm text-gray-500 py-6">Loading...</div>
+            ) : expiredMembers.length === 0 ? (
+              <div className="text-sm text-gray-500 py-6">No expired members</div>
+            ) : (
+              <div className="space-y-3">
+                {expiredMembers.map((m) => (
+                  <div key={m.user_id} className="flex items-center justify-between p-3 border rounded-md bg-red-50">
+                    <div>
+                      <div className="font-medium text-red-900">{m.full_name}</div>
+                      <div className="text-xs text-red-700">
+                        <Badge variant="secondary">{m.package_name || 'No Package'}</Badge>
+                        <span className="ml-2">Expired {Math.abs(m.days_left)} day{Math.abs(m.days_left) === 1 ? '' : 's'} ago</span>
+                      </div>
+                    </div>
+                    <Button size="sm" onClick={() => openNotify(m)}>
+                      <Bell className="h-4 w-4 mr-1" /> Notify
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Recent check-ins - now standalone */}
+      <Card>
+        <CardHeader className="flex flex-row justify-between">
+          <div>
+            <CardTitle>Recent Check-Ins (Today)</CardTitle>
+            <CardDescription>
+              Last 5 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
+            </CardDescription>
+          </div>
+          <Select value={recentFilter} onValueChange={(v: 'clients' | 'staff') => setRecentFilter(v)}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="clients">Clients</SelectItem>
+              <SelectItem value="staff">Staff</SelectItem>
+            </SelectContent>
+          </Select>
+        </CardHeader>
+        <CardContent>
+          {recentFilter === 'clients' ? (
               loadingRecent ? (
                 <div className="text-sm text-gray-500 py-6">Loading...</div>
               ) : recentCheckIns.length === 0 ? (
@@ -613,9 +651,8 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Member Growth chart */}
       <Card>
@@ -779,9 +816,13 @@ export default function Dashboard() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+            
 
-      {/* Notify Modal */}
-      {notifyOpen && notifyTarget && (
+      {/* Remove Notify Modal since we're showing coming soon toast */}
+      {/* {notifyOpen && notifyTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
           onClick={closeNotify}
@@ -833,7 +874,6 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      )}
-    </div>
-  );
-}
+      )} */}
+
+ 

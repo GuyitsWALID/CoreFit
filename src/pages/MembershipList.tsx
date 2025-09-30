@@ -200,12 +200,15 @@ export default function MembershipList() {
 }, []);
   
 
-  // Computed values
+  // Computed values - Update all counts to use frontend logic
   const packageTypes = Array.from(new Set(members.map((m) => m.package_name))).sort();
-  const expiringCount = members.filter((m) => m.days_left <= 10 && m.days_left >= 0).length;
-  const expiredCount = members.filter((m) => m.days_left < 0).length;
+  
+  // Use frontend logic for all counts
+  const allMembersCount = members.length;
+  const expiringCount = members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
+  const expiredCount = members.filter((m) => m.days_left <= 0).length;
 
-  // Filtering and sorting logic
+  // Filtering and sorting logic - Update all tab filters to use frontend logic
   const filteredMembers = members.filter((member) => {
     const matchesSearch =
       searchTerm === "" ||
@@ -214,9 +217,12 @@ export default function MembershipList() {
       member.phone.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || member.status.toLowerCase() === statusFilter;
     const matchesPackage = packageFilter === "all" || member.package_name === packageFilter;
+    
     let matchesTab = true;
-    if (activeTab === "expiring") matchesTab = member.days_left <= 10 && member.days_left >= 0;
-    if (activeTab === "expired") matchesTab = member.days_left < 0;
+    if (activeTab === "all") matchesTab = true; // All members
+    if (activeTab === "expiring") matchesTab = member.days_left <= 10 && member.days_left > 0;
+    if (activeTab === "expired") matchesTab = member.days_left <= 0;
+    
     return matchesSearch && matchesStatus && matchesPackage && matchesTab;
   }).sort((a, b) => {
     if (sortOrder === 'asc') {
@@ -279,10 +285,11 @@ export default function MembershipList() {
 
   // Action handlers
   const handleNotify = (member: MembershipInfo) => {
-    setNotifyMember(member);
-    setNotifyDialog(true);
-    setNotifTitle("");
-    setNotifMessage("");
+    toast({
+      title: "Feature Coming Soon",
+      description: "SMS notifications are currently under development. This feature will be available soon!",
+      variant: "default"
+    });
   };
 
   const handleSendNotification = async () => {
@@ -516,7 +523,7 @@ const handleUpgradeSubmit = async () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <StatsCard
             title="All Members"
-            value={members.length}
+            value={allMembersCount}
             description="Total active memberships"
             icon={<Users className="h-4 w-4" />}
           />
@@ -553,7 +560,7 @@ const handleUpgradeSubmit = async () => {
         <MembershipTabs
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          totalMembers={members.length}
+          totalMembers={allMembersCount}
           expiringCount={expiringCount}
           expiredCount={expiredCount}
         />

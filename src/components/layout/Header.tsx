@@ -31,15 +31,12 @@ function ConfirmLogoutModal({ open, onConfirm, onCancel }: { open: boolean, onCo
 
 export function Header() {
   const [userProfile, setUserProfile] = useState<{ full_name: string, role: string } | null>(null);
-  const [notifications, setNotifications] = useState<{ id: string, title: string, body: string, read?: boolean }[]>([]);
   const [logoutModal, setLogoutModal] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [lastViewedAt, setLastViewedAt] = useState<number>(() => Date.now());
   const [expiringSoon, setExpiringSoon] = useState<
     { user_id: string; full_name: string; email: string; days_left: number }[]
   >([]);
-  const notifIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [viewedExpiringIds, setViewedExpiringIds] = useState<Set<string>>(new Set());
+  const expiringIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const navigate = useNavigate();
 
   // Fetch notifications and profile
@@ -74,53 +71,41 @@ export function Header() {
       full_name: data?.full_name || "User",
       role: roleName || "Staff"
     });
-
-    // Fetch 3 most recent notifications for this user (add created_at)
-    const { data: notifData } = await supabase
-      .from('notifications')
-      .select('id, title, body, created_at')
-      .order('created_at', { ascending: false })
-      .limit(3);
-
-    setNotifications(notifData || []);
-    // Unread: notifications newer than lastViewedAt
-    setUnreadCount(
-      (notifData || []).filter((n: any) =>
-        n.created_at && new Date(n.created_at).getTime() > lastViewedAt
-      ).length
-    );
   };
 
   useEffect(() => {
     fetchProfileAndNotifications();
-    // Poll notifications every 15 seconds
-    notifIntervalRef.current = setInterval(fetchProfileAndNotifications, 15000);
+    fetchExpiringSoon();
+    // Poll expiring memberships every 30 seconds
+    expiringIntervalRef.current = setInterval(fetchExpiringSoon, 30000);
     return () => {
-      if (notifIntervalRef.current) clearInterval(notifIntervalRef.current);
+      if (expiringIntervalRef.current) clearInterval(expiringIntervalRef.current);
     };
-  }, [lastViewedAt]);
+  }, []);
 
-  // When dropdown is opened, mark all as "viewed" (but do not clear notifications)
-  const handleNotifOpenChange = (open: boolean) => {
-    setNotifOpen(open);
-    if (open) {
-      setLastViewedAt(Date.now());
-      setUnreadCount(0);
+  // Fetch expiring soon users for admin/receptionist notification
+  const fetchExpiringSoon = async () => {
+    const { data, error } = await supabase
+      .from('users_with_membership_info')
+      .select('user_id, full_name, email, days_left')
+      .lt('days_left', 10)
+      .gte('days_left', 0)
+      .order('days_left', { ascending: true });
+    if (!error && Array.isArray(data)) {
+      setExpiringSoon(data);
     }
   };
 
-  // Fetch expiring soon users for admin/receptionist notification
-  useEffect(() => {
-    async function fetchExpiringSoon() {
-      const { data, error } = await supabase
-        .from('users_with_membership_info')
-        .select('user_id, full_name, email, days_left')
-        .lt('days_left', 10)
-        .order('days_left', { ascending: true });
-      if (!error && Array.isArray(data)) setExpiringSoon(data);
+  // Filter out viewed notifications to show only unread
+  const unreadExpiringSoon = expiringSoon.filter(user => !viewedExpiringIds.has(user.user_id));
+
+  // When dropdown is opened, mark current expiring notifications as viewed
+  const handleExpiringDropdownOpenChange = (open: boolean) => {
+    if (open && unreadExpiringSoon.length > 0) {
+      const currentIds = new Set(unreadExpiringSoon.map(user => user.user_id));
+      setViewedExpiringIds(prev => new Set([...prev, ...currentIds]));
     }
-    fetchExpiringSoon();
-  }, []);
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -139,13 +124,13 @@ export function Header() {
         </div>
         <div className="flex items-center gap-4">
           {/* System notification for expiring memberships */}
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={handleExpiringDropdownOpenChange}>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="relative">
                 <AlertCircle size={18} />
-                {expiringSoon.length > 0 && (
+                {unreadExpiringSoon.length > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {expiringSoon.length}
+                    {unreadExpiringSoon.length}
                   </span>
                 )}
               </Button>
@@ -153,12 +138,12 @@ export function Header() {
             <DropdownMenuContent align="end" className="w-80">
               <DropdownMenuLabel>Expiring Memberships</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {expiringSoon.length === 0 ? (
+              {unreadExpiringSoon.length === 0 ? (
                 <div className="px-4 py-2 text-gray-500 text-sm">
-                  No memberships expiring soon.
+                  No new expiring memberships.
                 </div>
               ) : (
-                expiringSoon.map((user) => (
+                unreadExpiringSoon.map((user) => (
                   <DropdownMenuItem key={user.user_id} className="py-2 cursor-pointer">
                     <div className="flex flex-col gap-1">
                       <span className="font-medium">{user.full_name}</span>
@@ -173,7 +158,7 @@ export function Header() {
             </DropdownMenuContent>
           </DropdownMenu>
           
-            <DropdownMenu>
+          <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" className="relative">
               <Bell size={18} />
@@ -221,3 +206,4 @@ export function Header() {
     </>
   );
 }
+              
