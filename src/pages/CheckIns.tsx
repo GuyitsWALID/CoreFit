@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/supabaseClient';
+import { usePhysicalScanner } from '@/hooks/usePhysicalScanner'; // Import the new hook
 
 interface ClientCheckIn {
   id: string;
@@ -103,6 +104,9 @@ export default function CheckIns() {
   const todayDate = new Date().toISOString().split('T')[0];
   const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
+  // Use the physical scanner hook
+  usePhysicalScanner({ onScan: (value) => handleQrResult(value) });
+
   useEffect(() => {
     fetchCheckIns();
     checkBarcodeDetectorSupport();
@@ -125,7 +129,7 @@ export default function CheckIns() {
       if (!window.jsQR) {
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
-        script.onload = () => {
+        script.onload = ( ) => {
           setJsQRLoaded(true);
           addDebugInfo('jsQR library loaded successfully');
         };
@@ -972,74 +976,18 @@ export default function CheckIns() {
         setIsProcessingQR(false);
       }, 1000);
     }
-    setManualQr('');
   };
-
-  const exportData = () => {
-    const allData = [
-      ...filteredClientCheckIns.map(item => ({
-        type: 'Client',
-        name: `${item.users.first_name} ${item.users.last_name}`,
-        email: item.users.email,
-        package: item.users.packages?.name || 'N/A',
-        checkin_time: item.checkin_time,
-        checkin_date: item.checkin_date,
-        checkout_time: item.checkout_time || 'N/A'
-      })),
-      ...filteredStaffCheckIns.map(item => ({
-        type: 'Staff',
-        name: `${item.staff.first_name} ${item.staff.last_name}`,
-        email: item.staff.email,
-        role: item.staff.roles?.name || 'N/A',
-        checkin_time: item.checkin_time,
-        checkin_date: item.checkin_date,
-        checkout_time: item.checkout_time || 'N/A'
-      }))
-    ];
-
-    const csvContent = [
-      ['Type', 'Name', 'Email', 'Package/Role', 'Check-in Time', 'Check-in Date', 'Check-out Time'],
-      ...allData.map(row => [
-        row.type,
-        row.name,
-        row.email,
-        row.type === 'Client' ? (row as any).package : (row as any).role,
-        row.checkin_time,
-        row.checkin_date,
-        row.checkout_time
-      ])
-    ].map(row => row.join(',')).join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `checkins_${dateFilter}_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-
-  if (isLoading) {
-    return (
-      <div className="animate-fade-in">
-        <h2 className="text-3xl font-bold tracking-tight mb-6">Check-ins</h2>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading check-ins...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="animate-fade-in">
-      <h2 className="text-3xl font-bold tracking-tight mb-6">Check-ins</h2>
-      
-      <div className="grid gap-6">
-        {/* QR Scanner Card */}
-        <Card>
+    <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
+      <div className="flex items-center justify-between space-y-2">
+        <h2 className="text-3xl font-bold tracking-tight">Check-ins</h2>
+        <div className="flex items-center space-x-2">
+          <Button onClick={fetchCheckIns}>Refresh</Button>
+        </div>
+      </div>
+
+      <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <QrCode className="h-5 w-5" />
@@ -1160,202 +1108,140 @@ export default function CheckIns() {
           </CardContent>
         </Card>
 
-        {/* Filters and Search */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-                  <Input
-                    placeholder="Search by name or email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="clients">Clients</TabsTrigger>
+          <TabsTrigger value="staff">Staff</TabsTrigger>
+        </TabsList>
+        <TabsContent value="clients">
+          <Card>
+            <CardHeader>
+              <CardTitle>Client Check-ins</CardTitle>
+              <CardDescription>Today's client check-in history.</CardDescription>
+              <div className="flex items-center gap-2 pt-4">
+                <div className="relative w-full">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Search by name or email..." className="pl-8" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
+                <Select value={dateFilter} onValueChange={setDateFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by date" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="today">Today</SelectItem>
+                    <SelectItem value="yesterday">Yesterday</SelectItem>
+                    <SelectItem value="all">All Time</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline"><Download className="mr-2 h-4 w-4" /> Export</Button>
               </div>
-              <Select value={dateFilter} onValueChange={setDateFilter}>
-                <SelectTrigger className="w-full md:w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="today">Today</SelectItem>
-                  <SelectItem value="yesterday">Yesterday</SelectItem>
-                  <SelectItem value="all">All Time</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
-                <SelectTrigger className="w-full md:w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="trainer">Trainers</SelectItem>
-                  <SelectItem value="manager">Managers</SelectItem>
-                  <SelectItem value="receptionist">Receptionists</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button onClick={exportData} variant="outline" className="flex items-center gap-2">
-                <Download className="h-4 w-4" />
-                Export
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Check-ins Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="clients" className="flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Clients ({filteredClientCheckIns.length})
-            </TabsTrigger>
-            <TabsTrigger value="staff" className="flex items-center gap-2">
-              <UserCheck className="h-4 w-4" />
-              Staff ({filteredStaffCheckIns.length})
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="clients">
-            <Card>
-              <CardHeader>
-                <CardTitle>Client Check-ins</CardTitle>
-                <CardDescription>
-                  Recent client check-ins and activity
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {filteredClientCheckIns.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No client check-ins found for the selected filters.
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Client</TableHead>
-                        <TableHead>Package</TableHead>
-                        <TableHead>Check-in Time</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredClientCheckIns.map((checkIn) => (
-                        <TableRow key={checkIn.id}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-8 w-8">
-                                <AvatarFallback>
-                                  {checkIn.users.first_name[0]}{checkIn.users.last_name[0]}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <div className="font-medium">
-                                  {checkIn.users.first_name} {checkIn.users.last_name}
-                                </div>
-                                <div className="text-sm text-muted-foreground">
-                                  {checkIn.users.email}
-                                </div>
-                              </div>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Member</TableHead>
+                    <TableHead>Package</TableHead>
+                    <TableHead>Check-in Time</TableHead>
+                    <TableHead>Check-out Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow><TableCell colSpan={4} className="text-center">Loading...</TableCell></TableRow>
+                  ) : filteredClientCheckIns.length > 0 ? (
+                    filteredClientCheckIns.map(checkIn => (
+                      <TableRow key={checkIn.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Avatar>
+                              <AvatarImage />
+                              <AvatarFallback>{`${checkIn.users.first_name[0]}${checkIn.users.last_name[0]}`}</AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">{`${checkIn.users.first_name} ${checkIn.users.last_name}`}</p>
+                              <p className="text-sm text-muted-foreground">{checkIn.users.email}</p>
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">
-                              {checkIn.users.packages?.name || 'No Package'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {new Date(checkIn.checkin_time).toLocaleTimeString()}
-                          </TableCell>
-                          <TableCell>
-                            {new Date(checkIn.checkin_date).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={checkIn.checkout_time ? "outline" : "default"}>
-                              {checkIn.checkout_time ? 'Checked Out' : 'Checked In'}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="staff">
-            <Card>
-              <CardHeader>
-                <CardTitle>Staff Check-ins</CardTitle>
-                <CardDescription>
-                  Recent staff check-ins and activity
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {filteredStaffCheckIns.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No staff check-ins found for the selected filters.
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Staff Member</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Check-in Time</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Status</TableHead>
+                          </div>
+                        </TableCell>
+                        <TableCell><Badge>{checkIn.users.packages?.name || 'N/A'}</Badge></TableCell>
+                        <TableCell>{new Date(checkIn.checkin_time).toLocaleTimeString()}</TableCell>
+                        <TableCell>{checkIn.checkout_time ? new Date(checkIn.checkout_time).toLocaleTimeString() : 'N/A'}</TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredStaffCheckIns.map((checkIn) => (
-                        <TableRow key={checkIn.id}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-8 w-8">
-                                <AvatarFallback>
-                                  {checkIn.staff.first_name[0]}{checkIn.staff.last_name[0]}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <div className="font-medium">
-                                  {checkIn.staff.first_name} {checkIn.staff.last_name}
-                                </div>
-                                <div className="text-sm text-muted-foreground">
-                                  {checkIn.staff.email}
-                                </div>
-                              </div>
+                    ))
+                  ) : (
+                    <TableRow><TableCell colSpan={4} className="text-center">No check-ins found.</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="staff">
+          <Card>
+            <CardHeader>
+              <CardTitle>Staff Check-ins</CardTitle>
+              <CardDescription>Today's staff check-in history.</CardDescription>
+              <div className="flex items-center gap-2 pt-4">
+                <div className="relative w-full">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Search by name or email..." className="pl-8" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                </div>
+                <Select value={roleFilter} onValueChange={setRoleFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Roles</SelectItem>
+                    <SelectItem value="trainer">Trainer</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline"><Download className="mr-2 h-4 w-4" /> Export</Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Staff Member</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Check-in Time</TableHead>
+                    <TableHead>Check-out Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow><TableCell colSpan={4} className="text-center">Loading...</TableCell></TableRow>
+                  ) : filteredStaffCheckIns.length > 0 ? (
+                    filteredStaffCheckIns.map(checkIn => (
+                      <TableRow key={checkIn.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Avatar>
+                              <AvatarImage />
+                              <AvatarFallback>{`${checkIn.staff.first_name[0]}${checkIn.staff.last_name[0]}`}</AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">{`${checkIn.staff.first_name} ${checkIn.staff.last_name}`}</p>
+                              <p className="text-sm text-muted-foreground">{checkIn.staff.email}</p>
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">
-                              {checkIn.staff.roles?.name || 'No Role'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {new Date(checkIn.checkin_time).toLocaleTimeString()}
-                          </TableCell>
-                          <TableCell>
-                            {new Date(checkIn.checkin_date).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={checkIn.checkout_time ? "outline" : "default"}>
-                              {checkIn.checkout_time ? 'Checked Out' : 'Checked In'}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </div>
+                          </div>
+                        </TableCell>
+                        <TableCell><Badge>{checkIn.staff.roles?.name || 'N/A'}</Badge></TableCell>
+                        <TableCell>{new Date(checkIn.checkin_time).toLocaleTimeString()}</TableCell>
+                        <TableCell>{checkIn.checkout_time ? new Date(checkIn.checkout_time).toLocaleTimeString() : 'N/A'}</TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow><TableCell colSpan={4} className="text-center">No check-ins found.</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
