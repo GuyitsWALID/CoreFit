@@ -29,7 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Eye, EyeOff, Plus, Edit, Grid3X3, List } from 'lucide-react';
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
 import { Switch } from "@/components/ui/switch";
 import {

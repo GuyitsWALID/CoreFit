@@ -21,7 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 import { Link, useNavigate } from "react-router-dom";
 
 const loginSchema = z.object({

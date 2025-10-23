@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
 const TABS = ["Personal Info", "Notifications", "Account", "Password"];
 

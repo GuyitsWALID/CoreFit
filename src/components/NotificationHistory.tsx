@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { RefreshCw, Search, Eye, MessageSquare, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
 import { smsService } from '../services/smsService'
-import { supabase } from '@/supabaseClient'
+import { supabase } from '@/lib/supabaseClient'
 
 interface Notification {
   id: string

@@ -9,7 +9,7 @@ import {
   SquarePlus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 import DeactivateModal from "./Modals/DeactivateModal";
 import UserDetailModal from "./Modals/UserDetailModal";
 import type { MembershipInfo } from "@/types/memberships";

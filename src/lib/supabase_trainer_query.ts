@@ -1,4 +1,4 @@
-import { supabase } from "@/supabaseClient"; // Adjust import path as needed
+import { supabase } from "@/lib/supabaseClient"; // Adjust import path as needed
 
 // Function to fetch trainers from staff table
 export async function fetchTrainers() {

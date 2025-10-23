@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SimpleModal } from '../SimpleModal';
 import { toast } from '@/hooks/use-toast';
-import { supabase } from '@/supabaseClient';
+import { supabase } from '@/lib/supabaseClient';
 
 export type FreezeMode = 'freeze' | 'extend';
 

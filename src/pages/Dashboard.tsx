@@ -1,19 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Users, Calendar, BadgeCheck, DollarSign, Bell } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
-import { supabase } from '@/supabaseClient';
+import { supabase } from '@/lib/supabaseClient';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useGym } from '@/contexts/GymContext';
+import { DynamicHeader } from '@/components/layout/DynamicHeader';
 
 // Dashboard component
 export default function Dashboard() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { gym, loading: gymLoading } = useGym();
 
   // Stats
   const [totalMembers, setTotalMembers] = useState<number>(0);
@@ -64,19 +66,43 @@ export default function Dashboard() {
   const [growthLoading, setGrowthLoading] = useState(false);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const nf = useMemo(() => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }), []);
+  // Update styling based on gym configuration
+  const dynamicStyles = useMemo(() => {
+    if (!gym) return {
+      primaryColor: '#2563eb',
+      secondaryColor: '#1e40af',
+      accentColor: '#f59e0b',
+      gradientBg: 'linear-gradient(135deg, #2563eb10 0%, #1e40af10 100%)',
+    };
+    
+    const primaryColor = gym.brand_color || '#2563eb';
+    return {
+      primaryColor: primaryColor,
+      secondaryColor: primaryColor, // Use same color since we only have brand_color
+      accentColor: primaryColor,
+      gradientBg: `linear-gradient(135deg, ${primaryColor}10 0%, ${primaryColor}20 100%)`,
+    };
+  }, [gym]);
 
-  // Load initial data
-  useEffect(() => {
-    loadStats();
-    loadRevenues();
-    loadExpiringSoon();
-    loadExpiredMembers();
-    loadRecentCheckIns();
-    // Load staff recent check-ins as well
-    loadRecentStaffCheckIns();
-    loadTemplates();
+  // Custom currency formatter based on gym location (could be extended)
+  const nf = useMemo(() => {
+    // You could determine currency based on gym.address or add currency field to gym config
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
   }, []);
+
+  // Load initial data when gym is available
+  useEffect(() => {
+    if (gym && !gymLoading) {
+      loadStats();
+      loadRevenues();
+      loadExpiringSoon();
+      loadExpiredMembers();
+      loadRecentCheckIns();
+      // Load staff recent check-ins as well
+      loadRecentStaffCheckIns();
+      loadTemplates();
+    }
+  }, [gym, gymLoading]);
 
   useEffect(() => {
     loadGrowthData(growthRange);
@@ -394,7 +420,7 @@ export default function Dashboard() {
     });
   };
 
-  // Chart dimensions and helpers (restore larger size and reduce left pad)
+  // Chart dimensions and helpers
   const chartW = 800;
   const chartH = 260;
   const pad = { top: 20, right: 20, bottom: 30, left: 36 };
@@ -441,182 +467,276 @@ export default function Dashboard() {
   const labelStep = Math.max(1, Math.ceil(growthPoints.length / 8));
   const xTickIdxs = growthPoints.map((_, i) => i).filter(i => i === 0 || i === growthPoints.length - 1 || i % labelStep === 0);
 
+  // Load initial data
+  if (gymLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-32 bg-gray-200 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function getWelcomeMessage(): React.ReactNode {
+    const currentHour = new Date().getHours();
+    let greeting = "Good evening";
+    
+    if (currentHour < 12) {
+      greeting = "Good morning";
+    } else if (currentHour < 17) {
+      greeting = "Good afternoon";
+    }
+    
+    return (
+      <span>
+        {greeting}, welcome to {gym?.name || 'your gym'} dashboard
+      </span>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
-      <h2 className="text-3xl font-bold tracking-tight">Dashboard Overview</h2>
+      <DynamicHeader />
+      
+      <div className="px-4">
+        <h2 
+          className="text-3xl font-bold tracking-tight" 
+          style={{ color: dynamicStyles.primaryColor }}
+        >
+          {getWelcomeMessage()}
+        </h2>
 
-      {/* Stat cards - clickable, add subtle color accents */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div onClick={() => navigate('/expiring-memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
-          <div className="rounded-lg bg-blue-50 p-0.5">
-            <StatCard
-              title="Total Members"
-              value={String(totalMembers)}
-              icon={Users}
-              trend={{ value: '', positive: true }}
-            />
-          </div>
-        </div>
-        <div onClick={() => navigate('/check-ins')} className="cursor-pointer transition hover:-translate-y-0.5">
-          <div className="rounded-lg bg-emerald-50 p-0.5">
-            <StatCard
-              title="Today's Client Check-Ins"
-              value={String(todayCheckIns)}
-              icon={Calendar}
-              trend={{ value: '', positive: true }}
-            />
-          </div>
-          
-        </div>
-        <div onClick={() => navigate('/expiring-memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
-          <div className="rounded-lg bg-purple-50 p-0.5">
-            <StatCard
-              title="Active Memberships"
-              value={String(activeMembers)}
-              icon={BadgeCheck}
-              trend={{ value: '', positive: true }}
-            />
-          </div>
-        </div>
-        <div className="cursor-default transition">
-          <div className="rounded-lg bg-amber-50 p-0.5">
-            <StatCard
-              title="Revenue Today (Packages)"
-              value={nf.format(revenueTodayPackages)}
-              icon={DollarSign}
-              trend={{ value: 'Packages only', positive: true }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Revenue summary with color styling */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Revenue Summary</CardTitle>
-          <CardDescription>
-            Current active totals.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 border rounded-md bg-blue-50">
-              <div className="text-sm text-blue-700">Total Package Revenue</div>
-              <div className="text-2xl font-bold text-blue-900">{nf.format(totalPackageRevenue)}</div>
-            </div>
-            <div className="p-4 border rounded-md bg-emerald-50">
-              <div className="text-sm text-emerald-700">Total 1:1 Coaching Revenue</div>
-              <div className="text-2xl font-bold text-emerald-900">{nf.format(totalCoachingRevenue)}</div>
-            </div>
-            <div className="p-4 border rounded-md bg-purple-50">
-              <div className="text-sm text-purple-700">Combined Revenue</div>
-              <div className="text-2xl font-bold text-purple-900">{nf.format(combinedRevenue)}</div>
+        {/* Stat cards - with dynamic colors */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div onClick={() => navigate('/memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
+            <div 
+              className="rounded-lg p-0.5"
+              style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
+            >
+              <StatCard
+                title="Total Members"
+                value={String(totalMembers)}
+                icon={Users}
+                trend={{ value: '', positive: true }}
+              />
             </div>
           </div>
-          <div className="text-xs text-gray-600 mt-2">
-            Note: Today’s revenue counts package registrations today only (not 1:1). Package price and 1:1 cadence may represent different billing periods.
+          <div onClick={() => navigate('/check-ins')} className="cursor-pointer transition hover:-translate-y-0.5">
+            <div 
+              className="rounded-lg p-0.5"
+              style={{ backgroundColor: `${dynamicStyles.accentColor}10` }}
+            >
+              <StatCard
+                title="Today's Client Check-Ins"
+                value={String(todayCheckIns)}
+                icon={Calendar}
+                trend={{ value: '', positive: true }}
+              />
+            </div>
           </div>
-        </CardContent>
-      </Card>
+          <div onClick={() => navigate('/memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
+            <div 
+              className="rounded-lg p-0.5"
+              style={{ backgroundColor: `${dynamicStyles.secondaryColor}10` }}
+            >
+              <StatCard
+                title="Active Memberships"
+                value={String(activeMembers)}
+                icon={BadgeCheck}
+                trend={{ value: '', positive: true }}
+              />
+            </div>
+          </div>
+          <div className="cursor-default transition">
+            <div 
+              className="rounded-lg p-0.5"
+              style={{ background: dynamicStyles.gradientBg }}
+            >
+              <StatCard
+                title="Revenue Today (Packages)"
+                value={nf.format(revenueTodayPackages)}
+                icon={DollarSign}
+                trend={{ value: 'Packages only', positive: true }}
+              />
+            </div>
+          </div>
+        </div>
 
-      {/* Expiring soon and Expired members side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-2">
-        {/* Expiring soon */}
+        {/* Revenue summary with dynamic colors */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Memberships Expiring Soon</CardTitle>
-              <CardDescription>Members expiring within 10 days</CardDescription>
-            </div>
-            <Button variant="outline" onClick={() => navigate('/expiring-memberships')}>
-              View All
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {loadingExpiring ? (
-              <div className="text-sm text-gray-500 py-6">Loading...</div>
-            ) : expiringMembers.length === 0 ? (
-              <div className="text-sm text-gray-500 py-6">No members expiring soon</div>
-            ) : (
-              <div className="space-y-3">
-                {expiringMembers.map((m) => (
-                  <div key={m.user_id} className="flex items-center justify-between p-3 border rounded-md bg-orange-50">
-                    <div>
-                      <div className="font-medium text-orange-900">{m.full_name}</div>
-                      <div className="text-xs text-orange-700">
-                        <Badge variant="secondary">{m.package_name || 'No Package'}</Badge>
-                        <span className="ml-2">Expires in {m.days_left} day{m.days_left === 1 ? '' : 's'}</span>
-                      </div>
-                    </div>
-                    <Button size="sm" onClick={() => openNotify(m)}>
-                      <Bell className="h-4 w-4 mr-1" /> Notify
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Expired members */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Expired Memberships</CardTitle>
-              <CardDescription>Members with expired memberships</CardDescription>
-            </div>
-            <Button variant="outline" onClick={() => navigate('/expiring-memberships')}>
-              View All
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {loadingExpired ? (
-              <div className="text-sm text-gray-500 py-6">Loading...</div>
-            ) : expiredMembers.length === 0 ? (
-              <div className="text-sm text-gray-500 py-6">No expired members</div>
-            ) : (
-              <div className="space-y-3">
-                {expiredMembers.map((m) => (
-                  <div key={m.user_id} className="flex items-center justify-between p-3 border rounded-md bg-red-50">
-                    <div>
-                      <div className="font-medium text-red-900">{m.full_name}</div>
-                      <div className="text-xs text-red-700">
-                        <Badge variant="secondary">{m.package_name || 'No Package'}</Badge>
-                        <span className="ml-2">Expired {Math.abs(m.days_left)} day{Math.abs(m.days_left) === 1 ? '' : 's'} ago</span>
-                      </div>
-                    </div>
-                    <Button size="sm" onClick={() => openNotify(m)}>
-                      <Bell className="h-4 w-4 mr-1" /> Notify
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent check-ins - now standalone */}
-      <Card>
-        <CardHeader className="flex flex-row justify-between">
-          <div>
-            <CardTitle>Recent Check-Ins (Today)</CardTitle>
+          <CardHeader>
+            <CardTitle style={{ color: dynamicStyles.primaryColor }}>Revenue Summary</CardTitle>
             <CardDescription>
-              Last 5 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
+              Current active totals for {gym?.name || 'the gym'}.
             </CardDescription>
-          </div>
-          <Select value={recentFilter} onValueChange={(v: 'clients' | 'staff') => setRecentFilter(v)}>
-            <SelectTrigger className="w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="clients">Clients</SelectItem>
-              <SelectItem value="staff">Staff</SelectItem>
-            </SelectContent>
-          </Select>
-        </CardHeader>
-        <CardContent>
-          {recentFilter === 'clients' ? (
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div 
+                className="p-4 border rounded-md"
+                style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
+              >
+                <div className="text-sm" style={{ color: dynamicStyles.primaryColor }}>
+                  Total Package Revenue
+                </div>
+                <div 
+                  className="text-2xl font-bold"
+                  style={{ color: dynamicStyles.primaryColor }}
+                >
+                  {nf.format(totalPackageRevenue)}
+                </div>
+              </div>
+              <div 
+                className="p-4 border rounded-md"
+                style={{ backgroundColor: `${dynamicStyles.accentColor}10` }}
+              >
+                <div className="text-sm" style={{ color: dynamicStyles.accentColor }}>
+                  Total 1:1 Coaching Revenue
+                </div>
+                <div 
+                  className="text-2xl font-bold"
+                  style={{ color: dynamicStyles.accentColor }}
+                >
+                  {nf.format(totalCoachingRevenue)}
+                </div>
+              </div>
+              <div 
+                className="p-4 border rounded-md"
+                style={{ backgroundColor: `${dynamicStyles.secondaryColor}10` }}
+              >
+                <div className="text-sm" style={{ color: dynamicStyles.secondaryColor }}>
+                  Combined Revenue
+                </div>
+                <div 
+                  className="text-2xl font-bold"
+                  style={{ color: dynamicStyles.secondaryColor }}
+                >
+                  {nf.format(combinedRevenue)}
+                </div>
+              </div>
+            </div>
+            <div className="text-xs text-gray-600 mt-2">
+              Note: Revenue calculations for {gym?.name || 'this gym'}. Today's revenue counts package registrations today only.
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Expiring soon and Expired members side by side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Memberships Expiring Soon</CardTitle>
+                <CardDescription>Members expiring within 10 days</CardDescription>
+              </div>
+              <Button variant="outline" onClick={() => navigate('/memberships')}>
+                View All
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {loadingExpiring ? (
+                <div className="text-sm text-gray-500 py-6">Loading...</div>
+              ) : expiringMembers.length === 0 ? (
+                <div className="text-sm text-gray-500 py-6">No members expiring soon</div>
+              ) : (
+                <div className="space-y-3">
+                  {expiringMembers.map((m) => (
+                    <div 
+                      key={m.user_id} 
+                      className="flex items-center justify-between p-3 border rounded-md"
+                      style={{ backgroundColor: `${dynamicStyles.accentColor}15` }}
+                    >
+                      <div>
+                        <div 
+                          className="font-medium"
+                          style={{ color: dynamicStyles.primaryColor }}
+                        >
+                          {m.full_name}
+                        </div>
+                        <div className="text-xs text-gray-700">
+                          <Badge variant="secondary">{m.package_name || 'No Package'}</Badge>
+                          <span className="ml-2">Expires in {m.days_left} day{m.days_left === 1 ? '' : 's'}</span>
+                        </div>
+                      </div>
+                      <Button 
+                        size="sm" 
+                        onClick={() => openNotify(m)}
+                        style={{ backgroundColor: dynamicStyles.accentColor }}
+                      >
+                        <Bell className="h-4 w-4 mr-1" /> Notify
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Expired members with dynamic styling */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Expired Memberships</CardTitle>
+                <CardDescription>Members with expired memberships</CardDescription>
+              </div>
+              <Button variant="outline" onClick={() => navigate('/memberships')}>
+                View All
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {loadingExpired ? (
+                <div className="text-sm text-gray-500 py-6">Loading...</div>
+              ) : expiredMembers.length === 0 ? (
+                <div className="text-sm text-gray-500 py-6">No expired members</div>
+              ) : (
+                <div className="space-y-3">
+                  {expiredMembers.map((m) => (
+                    <div key={m.user_id} className="flex items-center justify-between p-3 border rounded-md bg-red-50">
+                      <div>
+                        <div className="font-medium text-red-900">{m.full_name}</div>
+                        <div className="text-xs text-red-700">
+                          <Badge variant="secondary">{m.package_name || 'No Package'}</Badge>
+                          <span className="ml-2">Expired {Math.abs(m.days_left)} day{Math.abs(m.days_left) === 1 ? '' : 's'} ago</span>
+                        </div>
+                      </div>
+                      <Button size="sm" onClick={() => openNotify(m)}>
+                        <Bell className="h-4 w-4 mr-1" /> Notify
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Update recent check-ins with gym branding */}
+        <Card>
+          <CardHeader className="flex flex-row justify-between">
+            <div>
+              <CardTitle>Recent Check-Ins (Today)</CardTitle>
+              <CardDescription>
+                Last 5 {recentFilter === 'clients' ? 'client' : 'staff'} check-ins
+              </CardDescription>
+            </div>
+            <Select value={recentFilter} onValueChange={(v: 'clients' | 'staff') => setRecentFilter(v)}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="clients">Clients</SelectItem>
+                <SelectItem value="staff">Staff</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardHeader>
+          <CardContent>
+            {recentFilter === 'clients' ? (
               loadingRecent ? (
                 <div className="text-sm text-gray-500 py-6">Loading...</div>
               ) : recentCheckIns.length === 0 ? (
@@ -651,171 +771,172 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      {/* Member Growth chart */}
-      <Card>
-        <CardHeader className="flex items-start justify-between gap-4">
-          <div className="text-left">
-            <CardTitle>Member Growth</CardTitle>
-            <CardDescription>
-              Cumulative users over time. 
-            </CardDescription>
-          </div>
-          <div className="ml-auto">
-            <Select value={growthRange} onValueChange={(v: GrowthRange) => setGrowthRange(v)}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Range" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1d">Today</SelectItem>
-                <SelectItem value="7d">Last 7 days</SelectItem>
-                <SelectItem value="30d">Last 30 days</SelectItem>
-                <SelectItem value="90d">Last 90 days</SelectItem>
-                <SelectItem value="12m">Last 12 months</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {growthLoading ? (
-            <div className="text-sm text-gray-500 py-4">Loading growth...</div>
-          ) : growthPoints.length === 0 ? (
-            <div className="text-sm text-gray-500 py-4">No data in selected range.</div>
-          ) : (
-            <div className="w-full">
-              <svg
-                className="w-full"
-                viewBox={`0 0 ${chartW} ${chartH}`}
-                role="img"
-                aria-label="Member growth area chart"
-              >
-                <defs>
-                  <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="#6366f1" stopOpacity="0.05" />
-                  </linearGradient>
-                  <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
-                    <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
-                    <feOffset dx="0" dy="1" result="off" />
-                    <feComponentTransfer>
-                      <feFuncA type="linear" slope="0.25" />
-                    </feComponentTransfer>
-                    <feMerge>
-                      <feMergeNode />
-                      <feMergeNode in="SourceGraphic" />
-                    </feMerge>
-                  </filter>
-                </defs>
-
-                {/* Y grid + ticks */}
-                {yTicks.map((t, i) => {
-                  const y = yAt(t);
-                  return (
-                    <g key={i}>
-                      <line x1={pad.left} y1={y} x2={chartW - pad.right} y2={y} stroke="#e5e7eb" strokeWidth="1" />
-                      <text x={pad.left - 6} y={y} textAnchor="end" dominantBaseline="middle" fontSize="9" fill="#4b5563">
-                        {t}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                {/* X labels (small, normal, limited to avoid overlap) */}
-                {xTickIdxs.map((i) => (
-                  <text key={i} x={xAt(i)} y={chartH - 8} textAnchor="middle" fontSize="7" fill="#4b5563">
-                    {formatXLabel(growthPoints[i].raw, growthRange)}
-                  </text>
-                ))}
-
-                {/* Axis labels */}
-                <text x={pad.left + innerW / 2} y={8} textAnchor="middle" fontSize="8" fill="#292d33">
-                  Date
-                </text>
-                <text
-                  x={8}
-                  y={pad.top + innerH / 2}
-                  textAnchor="middle"
-                  fontSize="10"
-                  fill="#374151"
-                  transform={`rotate(-90, 8, ${pad.top + innerH / 2})`}
-                >
-                  Cumulative Members
-                </text>
-
-                {/* Smooth line + gradient area */}
-                {(() => {
-                  const pts = growthPoints.map((p, i) => ({ x: xAt(i), y: yAt(p.value) }));
-                  const linePath = buildSmoothLinePath(pts, 0.7);
-                  const areaPath = `${linePath} L ${xAt(growthPoints.length - 1)} ${pad.top + innerH} L ${xAt(0)} ${pad.top + innerH} Z`;
-                  return (
-                    <>
-                      <path d={areaPath} fill="url(#growthGrad)" />
-                      <path d={linePath} fill="none" stroke="#6366f1" strokeWidth={2.5} strokeLinecap="round" filter="url(#softShadow)" />
-                      {pts.map((pt, i) => (
-                        <circle key={i} cx={pt.x} cy={pt.y} r={3} fill="#6366f1" />
-                      ))}
-                    </>
-                  );
-                })()}
-
-                {/* hover capture */}
-                <rect
-                  x={pad.left}
-                  y={pad.top}
-                  width={innerW}
-                  height={innerH}
-                  fill="transparent"
-                  onMouseMove={(e) => {
-                    const rect = (e.currentTarget as SVGRectElement).getBoundingClientRect();
-                    const mouseX = e.clientX - rect.left;
-                    const relX = Math.max(0, Math.min(innerW, mouseX));
-                    const step = growthPoints.length > 1 ? innerW / (growthPoints.length - 1) : innerW;
-                    const idx = Math.max(0, Math.min(growthPoints.length - 1, Math.round(relX / step)));
-                    setHoverIdx(idx);
-                  }}
-                  onMouseLeave={() => setHoverIdx(null)}
-                />
-
-                {/* hover tooltip */}
-                {hoverIdx !== null && (
-                  <g>
-                    <line
-                      x1={xAt(hoverIdx)}
-                      y1={pad.top}
-                      x2={xAt(hoverIdx)}
-                      y2={pad.top + innerH}
-                      stroke="#94a3b8"
-                      strokeDasharray="3 3"
-                    />
-                    <circle cx={xAt(hoverIdx)} cy={yAt(growthPoints[hoverIdx].value)} r={4} fill="#6366f1" />
-                    {(() => {
-                      const x = xAt(hoverIdx);
-                      const y = yAt(growthPoints[hoverIdx].value);
-                      const tipW = 150;
-                      const tipH = 44;
-                      const tipX = Math.min(Math.max(x - tipW / 2, pad.left), pad.left + innerW - tipW);
-                      const tipY = Math.max(pad.top + 4, y - tipH - 10);
-                      return (
-                        <g transform={`translate(${tipX}, ${tipY})`}>
-                          <rect width={tipW} height={tipH} rx={6} ry={6} fill="#111827" opacity="0.9" />
-                          <text x={8} y={16} fontSize="11" fill="#e5e7eb">
-                            {`Date: ${formatXLabel(growthPoints[hoverIdx].raw, growthRange)}`}
-                          </text>
-                          <text x={8} y={30} fontSize="11" fill="#e5e7eb">
-                            {`Members: ${growthPoints[hoverIdx].value}`}
-                          </text>
-                        </g>
-                      );
-                    })()}
-                  </g>
-                )}
-              </svg>
+        {/* Update growth chart with gym colors */}
+        <Card>
+          <CardHeader className="flex items-start justify-between gap-4">
+            <div className="text-left">
+              <CardTitle style={{ color: dynamicStyles.primaryColor }}>Member Growth</CardTitle>
+              <CardDescription>
+                Cumulative users over time for {gym?.name || 'this gym'}.
+              </CardDescription>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <div className="ml-auto">
+              <Select value={growthRange} onValueChange={(v: GrowthRange) => setGrowthRange(v)}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Range" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1d">Today</SelectItem>
+                  <SelectItem value="7d">Last 7 days</SelectItem>
+                  <SelectItem value="30d">Last 30 days</SelectItem>
+                  <SelectItem value="90d">Last 90 days</SelectItem>
+                  <SelectItem value="12m">Last 12 months</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {growthLoading ? (
+              <div className="text-sm text-gray-500 py-4">Loading growth...</div>
+            ) : growthPoints.length === 0 ? (
+              <div className="text-sm text-gray-500 py-4">No data in selected range.</div>
+            ) : (
+              <div className="w-full">
+                <svg
+                  className="w-full"
+                  viewBox={`0 0 ${chartW} ${chartH}`}
+                  role="img"
+                  aria-label="Member growth area chart"
+                >
+                  <defs>
+                    <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={dynamicStyles.primaryColor} stopOpacity="0.25" />
+                      <stop offset="100%" stopColor={dynamicStyles.primaryColor} stopOpacity="0.05" />
+                    </linearGradient>
+                    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+                      <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
+                      <feOffset dx="0" dy="1" result="off" />
+                      <feComponentTransfer>
+                        <feFuncA type="linear" slope="0.25" />
+                      </feComponentTransfer>
+                      <feMerge>
+                        <feMergeNode />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  </defs>
+
+                  {/* Y grid + ticks */}
+                  {yTicks.map((t, i) => {
+                    const y = yAt(t);
+                    return (
+                      <g key={i}>
+                        <line x1={pad.left} y1={y} x2={chartW - pad.right} y2={y} stroke="#e5e7eb" strokeWidth="1" />
+                        <text x={pad.left - 6} y={y} textAnchor="end" dominantBaseline="middle" fontSize="9" fill="#4b5563">
+                          {t}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {/* X labels (small, normal, limited to avoid overlap) */}
+                  {xTickIdxs.map((i) => (
+                    <text key={i} x={xAt(i)} y={chartH - 8} textAnchor="middle" fontSize="7" fill="#4b5563">
+                      {formatXLabel(growthPoints[i].raw, growthRange)}
+                    </text>
+                  ))}
+
+                  {/* Axis labels */}
+                  <text x={pad.left + innerW / 2} y={8} textAnchor="middle" fontSize="8" fill="#292d33">
+                    Date
+                  </text>
+                  <text
+                    x={8}
+                    y={pad.top + innerH / 2}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fill="#374151"
+                    transform={`rotate(-90, 8, ${pad.top + innerH / 2})`}
+                  >
+                    Cumulative Members
+                  </text>
+
+                  {/* Smooth line + gradient area */}
+                  {(() => {
+                    const pts = growthPoints.map((p, i) => ({ x: xAt(i), y: yAt(p.value) }));
+                    const linePath = buildSmoothLinePath(pts, 0.7);
+                    const areaPath = `${linePath} L ${xAt(growthPoints.length - 1)} ${pad.top + innerH} L ${xAt(0)} ${pad.top + innerH} Z`;
+                    return (
+                      <>
+                        <path d={areaPath} fill="url(#growthGrad)" />
+                        <path d={linePath} fill="none" stroke={dynamicStyles.primaryColor} strokeWidth={2.5} strokeLinecap="round" />
+                        {pts.map((pt, i) => (
+                          <circle key={i} cx={pt.x} cy={pt.y} r={3} fill={dynamicStyles.primaryColor} />
+                        ))}
+                      </>
+                    );
+                  })()}
+
+                  {/* hover capture */}
+                  <rect
+                    x={pad.left}
+                    y={pad.top}
+                    width={innerW}
+                    height={innerH}
+                    fill="transparent"
+                    onMouseMove={(e) => {
+                      const rect = (e.currentTarget as SVGRectElement).getBoundingClientRect();
+                      const mouseX = e.clientX - rect.left;
+                      const relX = Math.max(0, Math.min(innerW, mouseX));
+                      const step = growthPoints.length > 1 ? innerW / (growthPoints.length - 1) : innerW;
+                      const idx = Math.max(0, Math.min(growthPoints.length - 1, Math.round(relX / step)));
+                      setHoverIdx(idx);
+                    }}
+                    onMouseLeave={() => setHoverIdx(null)}
+                  />
+
+                  {/* hover tooltip */}
+                  {hoverIdx !== null && (
+                    <g>
+                      <line
+                        x1={xAt(hoverIdx)}
+                        y1={pad.top}
+                        x2={xAt(hoverIdx)}
+                        y2={pad.top + innerH}
+                        stroke="#94a3b8"
+                        strokeDasharray="3 3"
+                      />
+                      <circle cx={xAt(hoverIdx)} cy={yAt(growthPoints[hoverIdx].value)} r={4} fill={dynamicStyles.primaryColor} />
+                      {(() => {
+                        const x = xAt(hoverIdx);
+                        const y = yAt(growthPoints[hoverIdx].value);
+                        const tipW = 150;
+                        const tipH = 44;
+                        const tipX = Math.min(Math.max(x - tipW / 2, pad.left), pad.left + innerW - tipW);
+                        const tipY = Math.max(pad.top + 4, y - tipH - 10);
+                        return (
+                          <g transform={`translate(${tipX}, ${tipY})`}>
+                            <rect width={tipW} height={tipH} rx={6} ry={6} fill="#111827" opacity="0.9" />
+                            <text x={8} y={16} fontSize="11" fill="#e5e7eb">
+                              {`Date: ${formatXLabel(growthPoints[hoverIdx].raw, growthRange)}`}
+                            </text>
+                            <text x={8} y={30} fontSize="11" fill="#e5e7eb">
+                              {`Members: ${growthPoints[hoverIdx].value}`}
+                            </text>
+                          </g>
+                        );
+                      })()}
+                    </g>
+                  )}
+                </svg>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -876,4 +997,3 @@ export default function Dashboard() {
         </div>
       )} */}
 
- 

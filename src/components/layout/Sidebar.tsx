@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import React, { useEffect, useState, useMemo } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import { useGym } from "@/contexts/GymContext";
 import {
   Menu,
   LogOut,
@@ -11,74 +12,35 @@ import {
   Package,
   Bell,
   Settings,
-  ChartArea
+  ChartArea,
+  LayoutDashboard,
+  Calendar,
+  BarChart3,
+  UserCog
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
-type NavItem = {
-  label: string;
+interface NavItem {
+  name: string;
   href: string;
-  icon: React.ComponentType<{ size?: string | number }>;
-};
+  icon: React.ComponentType<{ className?: string }>;
+}
 
-const navItems: NavItem[] = [
-  {
-    label: "Dashboard",
-    href: "/",
-    icon: Home,
-  },
-  {
-    label: "Register Client",
-    href: "/register-client",
-    icon: User,
-  },
-  {
-    label: "Check-ins",
-    href: "/check-ins",
-    icon: ClipboardList,
-  },
-  {
-    label: "Packages",
-    href: "/packages",
-    icon: Package,
-  },
-  {
-    label: "Members List",
-    href: "/expiring-memberships",
-    icon: Users,
-  },
-  {
-    label: "Team",
-    href: "/team",
-    icon: Users,
-  },
-  {
-    label: "Trainer",
-    href: "/trainers",
-    icon: Dumbbell,
-  },
-  {
-    label: "Reports",
-    href: "/reports",
-    icon: ChartArea,
-  },
-  
-  {
-    label: "Notifications",
-    href: "/notification",
-    icon: Bell,
-  },
-  {
-    label: "Settings",
-    href: "/settings",
-    icon: Settings,
-  },
+const navigation: NavItem[] = [
+  { name: 'Dashboard', href: '/dashboard', icon: Home },
+  { name: 'Memberships', href: '/memberships', icon: Users },
+  { name: 'Register Client', href: '/register', icon: User },
+  { name: 'Check-ins', href: '/check-ins', icon: Calendar },
+  { name: 'Team', href: '/team', icon: UserCog },
+  { name: 'Trainers', href: '/trainers', icon: Dumbbell },
+  { name: 'Reports', href: '/reports', icon: BarChart3 },
+  { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 const navItemsByRole: Record<'admin' | 'receptionist', string[]> = {
-  admin: navItems.map(item => item.label),
+  admin: navigation.map(item => item.name),
   receptionist: [
     "Dashboard",
     "Register Client",
@@ -89,6 +51,7 @@ const navItemsByRole: Record<'admin' | 'receptionist', string[]> = {
 };
 
 export function Sidebar() {
+  const { gym } = useGym();
   const location = useLocation();
   const [collapsed, setCollapsed] = React.useState(false);
   const [role, setRole] = useState<'admin' | 'receptionist' | null>(null);
@@ -116,8 +79,8 @@ export function Sidebar() {
       }
 
       // data.role will be { name: 'admin' } or { name: 'receptionist' }
-      const roleName = data?.role?.name;
-      if (roleName === 'admin' || roleName === 'receptionist') {
+      const roleName = data?.role?.[0]?.name;
+      if (roleName === 'admin' || roleName === 'receptionist' ) {
         setRole(roleName);
       } else {
         setRole(null);
@@ -127,9 +90,34 @@ export function Sidebar() {
     fetchStaffRole();
   }, []);
 
-  const filteredNavItems = navItems.filter(item =>
-    (role && navItemsByRole[role]) ? navItemsByRole[role].includes(item.label) : false
+  const filteredNavItems = navigation.filter(item =>
+    (role && navItemsByRole[role]) ? navItemsByRole[role].includes(item.name) : false
   );
+
+  const gymRoutePrefix = useMemo(() => {
+    if (!gym || gym.id === 'default') return '';
+    return `/${gym.id}`;
+  }, [gym]);
+
+  const getNavPath = (href: string) => {
+    if (gym && gym.id !== 'default') {
+      return `/${gym.id}${href}`;
+    }
+    return href;
+  };
+
+  const dynamicStyles = {
+    primaryColor: gym?.brand_color || '#2563eb',
+    secondaryColor: gym?.brand_color || '#1e40af',
+    accentColor: gym?.brand_color || '#f59e0b',
+  };
+
+  const isActiveRoute = (href: string) => {
+    const fullPath = getNavPath(href);
+    return location.pathname === fullPath || 
+           location.pathname.startsWith(fullPath + '/') ||
+           (href === '/dashboard' && location.pathname === '/');
+  };
 
   return (
     <aside className={cn(
@@ -153,37 +141,75 @@ export function Sidebar() {
         </Button>
       </div>
       
-      <nav className="flex-1 py-4">
-        <ul className="space-y-1 px-2">
-          {filteredNavItems.map((item) => (
-            <li key={item.href}>
-              <Link
-                to={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
-                  location.pathname === item.href 
-                    ? "bg-fitness-primary text-white" 
-                    : "text-gray-700 hover:bg-gray-100"
-                )}
-              >
-                <item.icon size={20} />
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      
-      <div className="p-4 border-t border-gray-100">
-        <Link
-          to="/logout"
-          className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-gray-700 hover:bg-gray-100"
+      <div className="p-6">
+        {/* Gym logo and name */}
+        <div className="flex items-center gap-3 mb-8">
+          {gym?.logo && (
+            <img 
+              src={gym.logo} 
+              alt={`${gym.name} logo`}
+              className="h-8 w-8 object-contain rounded"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
           )}
-        >
-          <LogOut size={20} />
-          {!collapsed && <span>Logout</span>}
-        </Link>
+          <div>
+            <h2 
+              className="font-bold text-lg"
+              style={{ color: dynamicStyles.primaryColor }}
+            >
+              {gym?.name || 'ATL Fitness Hub'}
+            </h2>
+            <p className="text-xs text-gray-500">Admin Panel</p>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="space-y-1">
+          {filteredNavItems.map((item) => {
+            const href = getNavPath(item.href);
+            const active = isActiveRoute(item.href);
+            
+            return (
+              <NavLink
+                key={item.name}
+                to={href}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  active
+                    ? 'text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+                style={active ? { 
+                  backgroundColor: dynamicStyles.primaryColor,
+                  color: 'white'
+                } : {}}
+              >
+                <item.icon className="h-5 w-5" />
+                {!collapsed && item.name}
+              </NavLink>
+            );
+          })}
+        </nav>
+
+        {/* Logout */}
+        <div className="mt-8 pt-8 border-t">
+          <NavLink
+            to="/logout"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 transition-all duration-200"
+          >
+            <LogOut className="h-5 w-5" />
+            {!collapsed && "Logout"}
+          </NavLink>
+        </div>
+
+        {/* Gym info footer */}
+        <div className="mt-8 pt-4 border-t">
+          <div className="text-xs text-gray-400">
+            <div>Workspace: /{gym?.id || 'default'}</div>
+            <div className="mt-1">Status: {gym?.status || 'Active'}</div>
+          </div>
+        </div>
       </div>
     </aside>
   );

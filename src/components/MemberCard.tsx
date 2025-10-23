@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Bell, MoreVertical } from "lucide-react";
 import ActionsDropdown  from "./ActionsDropdown";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 import { MembershipInfo } from "@/types/memberships";
 
 interface MemberCardProps {

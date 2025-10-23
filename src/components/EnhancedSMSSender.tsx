@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, Send, MessageSquare, Wand2 } from 'lucide-react'
 import { smsService, SendManualSMSRequest } from '../services/smsService'
-import { supabase } from '@/supabaseClient'
+import { supabase } from '@/lib/supabaseClient'
 import { UserSelector } from './UserSelector'
 import type { User as DBuser } from '@/types/db'
 import { formatPhoneNumberForSms } from '@/utils/phone' // <-- Added

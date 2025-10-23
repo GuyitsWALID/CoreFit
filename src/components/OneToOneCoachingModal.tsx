@@ -6,7 +6,7 @@ import { Calendar, User, Clock, DollarSign, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { MembershipInfo } from "@/types/memberships";
 import { Trainer, CoachingSessionData } from "@/types/coaching"; 
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
 // Updated Trainer interface to match staff table structure
 

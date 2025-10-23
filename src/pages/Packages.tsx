@@ -25,7 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Edit, Archive, Grid3X3, List } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
 interface Package {
   id: string;

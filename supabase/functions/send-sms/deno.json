@@ -1,12 +1,7 @@
-
 {
-"compilerOptions": {
-"lib": ["deno.window", "deno.unstable"],
-"strict": true
-},
-"imports": {
-"@supabase/supabase-js": "npm:@supabase/supabase-js@^2.0.0",
-"@afromessage/afromessage-node": "npm:@afromessage/afromessagenode@^1.0.9",
-"node:": "node:"
-}
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.76.1",
+    "afromessage": "https://esm.sh/afromessage@1.0.9",
+    "serve": "https://deno.land/std@0.177.0/http/server.ts"
+  }
 }

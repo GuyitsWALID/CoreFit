@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, Clock, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
 // Import all the extracted components
 import {

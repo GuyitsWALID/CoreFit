@@ -1,0 +1,109 @@
+:root {
+  /* Default gym colors */
+  --gym-primary: #2563eb;
+  --gym-secondary: #1e40af;
+  --gym-accent: #f59e0b;
+  
+  /* Fitness theme compatibility */
+  --fitness-primary: var(--gym-primary);
+  --fitness-secondary: var(--gym-secondary);
+}
+
+/* Dynamic theme classes */
+.gym-primary {
+  color: var(--gym-primary) !important;
+}
+
+.gym-primary-bg {
+  background-color: var(--gym-primary) !important;
+}
+
+.gym-secondary {
+  color: var(--gym-secondary) !important;
+}
+
+.gym-secondary-bg {
+  background-color: var(--gym-secondary) !important;
+}
+
+.gym-accent {
+  color: var(--gym-accent) !important;
+}
+
+.gym-accent-bg {
+  background-color: var(--gym-accent) !important;
+}
+
+/* Button variants with gym colors */
+.btn-gym-primary {
+  background-color: var(--gym-primary);
+  border-color: var(--gym-primary);
+  color: white;
+}
+
+.btn-gym-primary:hover {
+  background-color: var(--gym-secondary);
+  border-color: var(--gym-secondary);
+}
+
+.btn-gym-secondary {
+  background-color: var(--gym-secondary);
+  border-color: var(--gym-secondary);
+  color: white;
+}
+
+.btn-gym-accent {
+  background-color: var(--gym-accent);
+  border-color: var(--gym-accent);
+  color: white;
+}
+
+/* Card variants */
+.card-gym-themed {
+  border-left: 4px solid var(--gym-primary);
+}
+
+.card-gym-themed .card-header {
+  background: linear-gradient(135deg, var(--gym-primary)10 0%, var(--gym-secondary)10 100%);
+}
+
+/* Link colors */
+.link-gym-primary {
+  color: var(--gym-primary);
+}
+
+.link-gym-primary:hover {
+  color: var(--gym-secondary);
+}
+
+/* Badge variants */
+.badge-gym-primary {
+  background-color: var(--gym-primary);
+  color: white;
+}
+
+.badge-gym-secondary {
+  background-color: var(--gym-secondary);
+  color: white;
+}
+
+.badge-gym-accent {
+  background-color: var(--gym-accent);
+  color: white;
+}
+
+/* Animations and transitions */
+.gym-theme-transition {
+  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .gym-header {
+    padding: 1rem;
+  }
+  
+  .gym-header h1 {
+    font-size: 1.5rem;
+  }
+}

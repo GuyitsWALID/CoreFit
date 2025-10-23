@@ -1,5 +1,5 @@
 // src/services/smsService.ts
-import { supabase } from '@/supabaseClient'
+import { supabase } from '@/lib/supabaseClient'
 import type { User, Staff } from '@/types/db'
 
 export interface SendManualSMSRequest {

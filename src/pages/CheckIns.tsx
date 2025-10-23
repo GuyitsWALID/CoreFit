@@ -28,7 +28,7 @@ import {
   SelectValue
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/supabaseClient';
+import { supabase } from '@/lib/supabaseClient';
 import { usePhysicalScanner } from '@/hooks/usePhysicalScanner'; // Import the new hook
 
 interface ClientCheckIn {

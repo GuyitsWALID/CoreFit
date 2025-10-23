@@ -30,7 +30,7 @@ import {
   CardFooter
 } from "@/components/ui/card";
 import { Eye, EyeOff } from "lucide-react";
-import { supabase } from "@/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
 import QRCodeSVG from 'react-qr-code';
