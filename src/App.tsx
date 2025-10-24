@@ -16,7 +16,11 @@ import CheckIns from '@/pages/CheckIns';
 import AdminLogin from '@/pages/AdminLogin';
 import Logout from '@/pages/Logout';
 import NotFound from '@/pages/NotFound';
-import OnboardingForm from './pages/onboard/index.tsx';
+import OnboardingForm from '@/pages/admin/onboard/index.tsx';
+import AdminGyms from '@/pages/admin/gyms';
+import Analytics from '@/pages/admin/analytics';
+import UserManagement from '@/pages/admin/users';
+import AdminSettings from '@/pages/admin/settings'; 
 
 // Layout component that wraps gym-specific pages
 const GymLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -36,12 +40,18 @@ function App() {
         <Routes>
           {/* Admin routes (no gym context needed) */}
           <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin" element={<div>Admin Overview</div>} />
+          <Route path="/admin/gyms" element={<AdminGyms />} />
+          <Route path="/admin/onboard" element={<OnboardingForm />} />
+          <Route path="/admin/analytics" element={<Analytics />} />
+          <Route path="/admin/users" element={<UserManagement/>} />
+          <Route path="/admin/settings" element={<AdminSettings/>} />
           
           {/* Gym-specific routes with dynamic identifier (ID or name) */}
           <Route path="/:gymIdentifier/*" element={
             <GymLayout>
               <Routes>
-                <Route path="/" element={<OnboardingForm />} />
+                <Route path="/admin/onboard" element={<OnboardingForm />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/memberships" element={<MembershipList />} />
                 <Route path="/register" element={<RegisterClient />} />
@@ -56,12 +66,8 @@ function App() {
             </GymLayout>
           } />
           
-          {/* Default routes (fallback to default gym) */}
-          <Route path="/" element={
-            <GymLayout>
-              <Dashboard />
-            </GymLayout>
-          } />
+          {/* Default route redirects to onboarding */}
+          <Route path="/" element={<Navigate to="/admin/onboard" replace />} />
           
           {/* Catch all */}
           <Route path="*" element={<NotFound />} />
@@ -74,4 +80,3 @@ function App() {
 }
 
 export default App;
-

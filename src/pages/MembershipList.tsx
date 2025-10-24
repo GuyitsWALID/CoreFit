@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Users, Clock, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
+import { useGym } from "@/contexts/GymContext";
+import { DynamicHeader } from "@/components/layout/DynamicHeader";
+import { Sidebar } from "@/components/layout/Sidebar";
 
 // Import all the extracted components
 import {
@@ -29,6 +32,7 @@ const statusColors: Record<string, string> = {
 
 export default function MembershipList() {
   const { toast } = useToast();
+  const { gym, loading: gymLoading } = useGym();
   
   // State management
   const [searchTerm, setSearchTerm] = useState("");
@@ -124,20 +128,48 @@ export default function MembershipList() {
     
   }, []);
 
+  // Update styling based on gym configuration
+  const dynamicStyles = useMemo(() => {
+    if (!gym) return {
+      primaryColor: '#2563eb',
+      secondaryColor: '#1e40af',
+      accentColor: '#f59e0b',
+    };
+    
+    const primaryColor = gym.brand_color || '#2563eb';
+    return {
+      primaryColor: primaryColor,
+      secondaryColor: primaryColor,
+      accentColor: primaryColor,
+    };
+  }, [gym]);
+
+  // Filter members by gym if gym context is available
   const fetchMembershipData = async () => {
     setIsLoading(true);
     try {
-      // Try to use the new user_combined_costs view first, fallback to users_with_membership_info
-      const { data, error } = await supabase
+      let query = supabase
         .from("user_combined_costs")
-        .select("*")
-        .order("days_left", { ascending: true });
+        .select("*");
+
+      // Filter by gym_id if gym context is available and not default
+      if (gym && gym.id !== 'default') {
+        query = query.eq('gym_id', gym.id);
+      }
+
+      const { data, error } = await query.order("days_left", { ascending: true });
       
       if (error) {
         // Fallback to the original view if the new one doesn't exist yet
-        const { data: fallbackData, error: fallbackError } = await supabase
+        let fallbackQuery = supabase
           .from("users_with_membership_info")
-          .select("*")
+          .select("*");
+
+        if (gym && gym.id !== 'default') {
+          fallbackQuery = fallbackQuery.eq('gym_id', gym.id);
+        }
+
+        const { data: fallbackData, error: fallbackError } = await fallbackQuery
           .order("days_left", { ascending: true });
         
         if (fallbackError) {
@@ -501,95 +533,154 @@ const handleUpgradeSubmit = async () => {
 
 
   // Loading state
+  if (gymLoading) {
+    return (
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-pulse">
+            <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-32 bg-gray-200 rounded"></div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
-      <div className="animate-fade-in py-24 text-center text-gray-500">Loading membership data...</div>
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DynamicHeader />
+          <main className="flex-1 flex items-center justify-center">
+            <div className="animate-pulse text-center text-gray-500">
+              Loading membership data for {gym?.name || 'gym'}...
+            </div>
+          </main>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="animate-fade-in bg-white min-h-screen px-0 md:px-8 py-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight">Membership Management</h2>
-            <p className="text-gray-500 mt-1">Manage member subscriptions, renewals, freezes, and coaching</p>
-          </div>
-          <ExportButton filteredMembers={filteredMembers} />
-        </div>
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar />
+      
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <DynamicHeader />
         
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <StatsCard
-            title="All Members"
-            value={allMembersCount}
-            description="Total active memberships"
-            icon={<Users className="h-4 w-4" />}
-          />
-          <StatsCard
-            title="Expiring Soon"
-            value={expiringCount}
-            description="Within 10 days"
-            icon={<Clock className="h-4 w-4" />}
-            iconColor="text-yellow-600"
-          />
-          <StatsCard
-            title="Expired"
-            value={expiredCount}
-            description="Require attention"
-            icon={<AlertTriangle className="h-4 w-4" />}
-            iconColor="text-red-600"
-          />
-        </div>
-        
-        {/* Search and Filters */}
-        <SearchFilters
-          searchTerm={searchTerm}
-          setSearchTerm={setSearchTerm}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          packageFilter={packageFilter}
-          setPackageFilter={setPackageFilter}
-          packageTypes={packageTypes}
-          sortOrder={sortOrder}
-          onSort={handleSort}
-        />
-        
-        {/* Tabs */}
-        <MembershipTabs
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          totalMembers={allMembersCount}
-          expiringCount={expiringCount}
-          expiredCount={expiredCount}
-        />
-        
-        {/* Member List */}
-        <div>
-          {filteredMembers.length === 0 ? (
-            <div className="text-center text-gray-400 py-16">No members found matching your filters</div>
-          ) : (
-            filteredMembers.map((member) => (
-              <MemberCard
-                key={member.user_id}
-                member={member}
-                statusColorMap={statusColors}
-                openDropdown={openDropdown}
-                setOpenDropdown={setOpenDropdown}
-                canFreeze={canFreeze}
-                processingAction={processingAction}
-                onNotify={handleNotify}
-                onFreeze={openFreeze}
-                onExtendFreeze={openExtend}
-                onUnfreeze={handleUnfreeze}
-                onRenew={handleRenew}
-                onUpgrade={handleUpgrade}
-                onCoaching={handleCoaching} // This should now work with updated MemberCardProps
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="animate-fade-in bg-white min-h-full px-0 md:px-8 py-8">
+            <div className="max-w-7xl mx-auto">
+              {/* Header with dynamic styling */}
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+                <div>
+                  <h2 
+                    className="text-3xl font-bold tracking-tight"
+                    style={{ color: dynamicStyles.primaryColor }}
+                  >
+                    Membership Management
+                  </h2>
+                  <p className="text-gray-500 mt-1">
+                    Manage member subscriptions for {gym?.name || 'your gym'}
+                  </p>
+                </div>
+                <ExportButton filteredMembers={filteredMembers} />
+              </div>
+              
+              {/* Stats Cards with dynamic colors */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                <div 
+                  className="rounded-lg p-0.5"
+                  style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
+                >
+                  <StatsCard
+                    title="All Members"
+                    value={allMembersCount}
+                    description="Total active memberships"
+                    icon={<Users className="h-4 w-4" />}
+                  />
+                </div>
+                <div 
+                  className="rounded-lg p-0.5"
+                  style={{ backgroundColor: `${dynamicStyles.accentColor}10` }}
+                >
+                  <StatsCard
+                    title="Expiring Soon"
+                    value={expiringCount}
+                    description="Within 10 days"
+                    icon={<Clock className="h-4 w-4" />}
+                    iconColor="text-yellow-600"
+                  />
+                </div>
+                <div className="rounded-lg p-0.5 bg-red-50">
+                  <StatsCard
+                    title="Expired"
+                    value={expiredCount}
+                    description="Require attention"
+                    icon={<AlertTriangle className="h-4 w-4" />}
+                    iconColor="text-red-600"
+                  />
+                </div>
+              </div>
+              
+              {/* Search and Filters */}
+              <SearchFilters
+                searchTerm={searchTerm}
+                setSearchTerm={setSearchTerm}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                packageFilter={packageFilter}
+                setPackageFilter={setPackageFilter}
+                packageTypes={packageTypes}
+                sortOrder={sortOrder}
+                onSort={handleSort}
               />
-            ))
-          )}
-        </div>
+              
+              {/* Tabs */}
+              <MembershipTabs
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                totalMembers={allMembersCount}
+                expiringCount={expiringCount}
+                expiredCount={expiredCount}
+              />
+              
+              {/* Member List */}
+              <div>
+                {filteredMembers.length === 0 ? (
+                  <div className="text-center text-gray-400 py-16">
+                    No members found for {gym?.name || 'this gym'}
+                  </div>
+                ) : (
+                  filteredMembers.map((member) => (
+                    <MemberCard
+                      key={member.user_id}
+                      member={member}
+                      statusColorMap={statusColors}
+                      openDropdown={openDropdown}
+                      setOpenDropdown={setOpenDropdown}
+                      canFreeze={canFreeze}
+                      processingAction={processingAction}
+                      onNotify={handleNotify}
+                      onFreeze={openFreeze}
+                      onExtendFreeze={openExtend}
+                      onUnfreeze={handleUnfreeze}
+                      onRenew={handleRenew}
+                      onUpgrade={handleUpgrade}
+                      onCoaching={handleCoaching}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </main>
       </div>
       
       {/* Modals */}

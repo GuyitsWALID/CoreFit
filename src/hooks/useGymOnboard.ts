@@ -4,7 +4,9 @@ import { supabase } from '@/lib/supabaseClient';
 
 interface OnboardingData {
   name: string;
-  website?: string;
+  owner_name: string;
+  owner_phone?: string;
+  owner_email?: string;
   street?: string;
   city?: string;
   state?: string;
@@ -12,13 +14,13 @@ interface OnboardingData {
   country?: string;
   address: string;
   timezone?: string;
-  logo?: string;
   brand_color: string;
   amenities: string[];
   tags: string[];
   max_capacity?: number | null;
-  social_media: object;
-  opening_hours: object;
+  latitude?: number;
+  longitude?: number;
+  description?: string;
 }
 
 export const useGymOnboard = () => {
@@ -30,25 +32,14 @@ export const useGymOnboard = () => {
     setError(null);
 
     try {
-      // Generate unique slug from gym name
-      const baseSlug = data.name
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '')
-        .replace(/\s+/g, '-')
-        .substring(0, 50);
-
-      let slug = baseSlug;
-      let counter = 1;
-
-      // Note: Since 'slug' field doesn't exist in your schema, we'll create a unique identifier
-      // using the name + id after insertion, or you can add slug field to your schema
-
-      // Insert gym data matching your schema
+      // Insert gym data matching your updated schema
       const { data: gym, error: gymError } = await supabase
         .from('gyms')
         .insert({
           name: data.name,
-          website: data.website || null,
+          owner_name: data.owner_name,
+          owner_phone: data.owner_phone || null,
+          owner_email: data.owner_email || null,
           street: data.street || null,
           city: data.city || null,
           state: data.state || null,
@@ -56,15 +47,14 @@ export const useGymOnboard = () => {
           country: data.country || null,
           address: data.address || null,
           timezone: data.timezone || null,
-          logo: data.logo || null,
           brand_color: data.brand_color,
           amenities: data.amenities || [],
           tags: data.tags || [],
           max_capacity: data.max_capacity || null,
-          social_media: data.social_media || {},
-          opening_hours: data.opening_hours || {},
-          status: 'active',
-          is_featured: false
+          latitude: data.latitude || null,
+          longitude: data.longitude || null,
+          description: data.description || null,
+          status: 'active'
         })
         .select()
         .single();
@@ -73,7 +63,7 @@ export const useGymOnboard = () => {
         throw new Error(`Failed to create gym: ${gymError.message}`);
       }
 
-      // Use gym ID as route identifier since slug field doesn't exist
+      // Use gym ID as route identifier
       const gymRoute = gym.id;
 
       return {

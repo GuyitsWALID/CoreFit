@@ -61,38 +61,70 @@ export function Sidebar() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return setRole(null);
 
-      // Join staff with roles table to get the role name
-      let { data, error } = await supabase
+      console.log('Current user:', user); // Debug log
+
+      // First try to get staff record by user ID
+      let { data: staffData, error } = await supabase
         .from('staff')
-        .select('id, email, role:roles(name)')
+        .select(`
+          id, 
+          email, 
+          roles!inner (
+            name
+          )
+        `)
         .eq('id', user.id)
         .single();
 
-      if (error && user.email) {
-        // fallback to email if id not found
-        const { data: emailData } = await supabase
+      // If not found by ID, try by email
+      if (error || !staffData) {
+        console.log('Staff not found by ID, trying email:', user.email); // Debug log
+        const { data: emailData, error: emailError } = await supabase
           .from('staff')
-          .select('id, email, role:roles(name)')
+          .select(`
+            id, 
+            email, 
+            roles!inner (
+              name
+            )
+          `)
           .eq('email', user.email)
           .single();
-        data = emailData;
+        
+        if (!emailError && emailData) {
+          staffData = emailData;
+        }
       }
 
-      // data.role will be { name: 'admin' } or { name: 'receptionist' }
-      const roleName = data?.role?.[0]?.name;
-      if (roleName === 'admin' || roleName === 'receptionist' ) {
-        setRole(roleName);
+      console.log('Staff data:', staffData); // Debug log
+
+      if (staffData?.roles) {
+        const roleName = staffData.roles.name?.toLowerCase();
+        console.log('Role name:', roleName); // Debug log
+        
+        if (roleName === 'admin' || roleName === 'receptionist') {
+          setRole(roleName as 'admin' | 'receptionist');
+        } else {
+          // Default to admin if role exists but doesn't match expected values
+          setRole('admin');
+        }
       } else {
-        setRole(null);
+        // If no staff record found, default to admin for logged-in users
+        console.log('No staff record found, defaulting to admin'); // Debug log
+        setRole('admin');
       }
     };
 
     fetchStaffRole();
   }, []);
 
-  const filteredNavItems = navigation.filter(item =>
-    (role && navItemsByRole[role]) ? navItemsByRole[role].includes(item.name) : false
-  );
+  // Show navigation items based on role, with fallback to show admin items
+  const filteredNavItems = navigation.filter(item => {
+    if (!role) return false; // Don't show anything if role is not determined yet
+    
+    const allowedItems = navItemsByRole[role] || navItemsByRole.admin;
+    return allowedItems.includes(item.name);
+  });
 
   const gymRoutePrefix = useMemo(() => {
     if (!gym || gym.id === 'default') return '';
@@ -126,8 +158,13 @@ export function Sidebar() {
     )}>
       <div className="p-4 flex items-center justify-between border-b border-gray-100">
         {!collapsed && (
-          <h1 className="font-semibold text-lg">
-            <span className="text-fitness-primary">ATL</span> Fitness
+          <h1 className="font-semibold text-lg"
+          style={{ color: dynamicStyles.primaryColor }}>
+        <span 
+          >
+          {gym?.name || 'coreFit'}
+        </span>
+        <p className="text-xs text-gray-500">Admin Panel</p>
           </h1>
         )}
         <Button 
@@ -141,76 +178,48 @@ export function Sidebar() {
         </Button>
       </div>
       
-      <div className="p-6">
-        {/* Gym logo and name */}
-        <div className="flex items-center gap-3 mb-8">
-          {gym?.logo && (
-            <img 
-              src={gym.logo} 
-              alt={`${gym.name} logo`}
-              className="h-8 w-8 object-contain rounded"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-          )}
-          <div>
-            <h2 
-              className="font-bold text-lg"
-              style={{ color: dynamicStyles.primaryColor }}
-            >
-              {gym?.name || 'ATL Fitness Hub'}
-            </h2>
-            <p className="text-xs text-gray-500">Admin Panel</p>
-          </div>
-        </div>
-
+      <div className="flex flex-col flex-1 p-4">
         {/* Navigation */}
-        <nav className="space-y-1">
+        <nav className="space-y-1 flex-1">
           {filteredNavItems.map((item) => {
-            const href = getNavPath(item.href);
-            const active = isActiveRoute(item.href);
-            
-            return (
-              <NavLink
-                key={item.name}
-                to={href}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  active
-                    ? 'text-white shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                }`}
-                style={active ? { 
-                  backgroundColor: dynamicStyles.primaryColor,
-                  color: 'white'
-                } : {}}
-              >
-                <item.icon className="h-5 w-5" />
-                {!collapsed && item.name}
-              </NavLink>
-            );
+        const href = getNavPath(item.href);
+        const active = isActiveRoute(item.href);
+        
+        return (
+          <NavLink
+        key={item.name}
+        to={href}
+        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+          active
+        ? 'text-white shadow-sm'
+        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+        }`}
+        style={active ? { 
+          backgroundColor: dynamicStyles.primaryColor,
+          color: 'white'
+        } : {}}
+          >
+        <item.icon className="h-5 w-5" />
+        {!collapsed && item.name}
+          </NavLink>
+        );
           })}
         </nav>
 
-        {/* Logout */}
-        <div className="mt-8 pt-8 border-t">
-          <NavLink
-            to="/logout"
-            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 transition-all duration-200"
-          >
-            <LogOut className="h-5 w-5" />
-            {!collapsed && "Logout"}
-          </NavLink>
-        </div>
-
-        {/* Gym info footer */}
-        <div className="mt-8 pt-4 border-t">
-          <div className="text-xs text-gray-400">
-            <div>Workspace: /{gym?.id || 'default'}</div>
-            <div className="mt-1">Status: {gym?.status || 'Active'}</div>
-          </div>
-        </div>
+        {/* Logout at bottom */}
+        <NavLink
+          to="/logout"
+          className={`flex items-center gap-3 rounded-lg text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 mt-auto ${
+        collapsed ? 'px-2 py-3 justify-center' : 'px-3 py-2'
+          }`}
+        >
+          <LogOut className={collapsed ? "h-6 w-6" : "h-5 w-5"} />
+          {!collapsed && "Logout"}
+        </NavLink>
       </div>
+
+        
+     
     </aside>
   );
 }

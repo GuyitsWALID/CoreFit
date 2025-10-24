@@ -33,16 +33,7 @@ export const DynamicHeader: React.FC = () => {
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            {gym.logo && (
-              <img 
-                src={gym.logo} 
-                alt={`${gym.name} logo`}
-                className="h-12 w-12 object-contain rounded"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            )}
+            {/* Note: logo field doesn't exist in new schema, you may want to add it */}
             <div>
               <h1 
                 className="text-2xl font-bold"
@@ -57,11 +48,12 @@ export const DynamicHeader: React.FC = () => {
                     <span>{gym.address}</span>
                   </div>
                 )}
-                {/* Note: email and phone not in schema, but we can add them later */}
-                <div className="flex items-center gap-1">
-                  <Globe className="h-3 w-3" />
-                  <span>{gym.website || 'No website'}</span>
-                </div>
+                {gym.owner_email && (
+                  <div className="flex items-center gap-1">
+                    <Globe className="h-3 w-3" />
+                    <span>{gym.owner_email}</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

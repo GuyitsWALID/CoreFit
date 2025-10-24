@@ -3,33 +3,27 @@ import { supabase } from '@/lib/supabaseClient';
 export interface GymConfig {
   id: string;
   name: string;
-  created_by?: string;
-  timezone?: string;
-  website?: string;
-  social_media?: object;
-  is_featured?: boolean;
-  tags?: string[];
+  owner_name: string;
+  owner_phone?: string;
+  owner_email?: string;
   street?: string;
   city?: string;
   state?: string;
   postal_code?: string;
   country?: string;
   address?: string;
-  opening_hours?: object;
-  facilities_schedule?: object;
-  max_capacity?: number;
-  deleted_at?: string;
-  owner_id?: string;
-  manager_id?: string;
-  logo?: string;
-  images?: string[];
-  amenities?: string[];
+  timezone?: string;
   brand_color?: string;
-  status: 'active' | 'inactive' | 'archived';
+  amenities?: string[];
+  tags?: string[];
+  max_capacity?: number;
+  latitude?: number;
+  longitude?: number;
+  description?: string;
+  status: 'active' | 'inactive' | 'pending' | 'archived';
   created_at: string;
   updated_at?: string;
-  // Add computed/virtual fields for compatibility
-  description?: string;
+  deleted_at?: string;
 }
 
 export interface GymApiResponse {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabaseClient';
 import { Search, Users, Package, Mail, Phone, Filter, MoreHorizontal, Eye } from 'lucide-react';
+import { useGym } from '@/contexts/GymContext';
+import { DynamicHeader } from '@/components/layout/DynamicHeader';
+import { Sidebar } from '@/components/layout/Sidebar';
 
 interface Trainer {
   id: string;
@@ -64,6 +67,7 @@ type Assignment = {
 
 export default function TrainersList() {
   const { toast } = useToast();
+  const { gym, loading: gymLoading } = useGym();
   const [trainers, setTrainers] = useState<Trainer[]>([]);
   const [filteredTrainers, setFilteredTrainers] = useState<Trainer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -86,6 +90,22 @@ export default function TrainersList() {
     filterAndSortTrainers();
   }, [trainers, searchTerm, statusFilter, packageFilter, sortBy, coachingType]);
 
+  // Dynamic styling based on gym configuration
+  const dynamicStyles = useMemo(() => {
+    if (!gym) return {
+      primaryColor: '#2563eb',
+      secondaryColor: '#1e40af',
+      accentColor: '#f59e0b',
+    };
+    
+    const primaryColor = gym.brand_color || '#2563eb';
+    return {
+      primaryColor: primaryColor,
+      secondaryColor: primaryColor,
+      accentColor: primaryColor,
+    };
+  }, [gym]);
+
   const fetchTrainers = async () => {
     setIsLoading(true);
     try {
@@ -97,8 +117,8 @@ export default function TrainersList() {
         .single();
       if (roleError || !trainerRole) throw roleError ?? new Error('Trainer role not found');
 
-      // 2) Fetch all active staff with role = trainer
-      const { data: trainersData, error: staffError } = await supabase
+      // 2) Fetch all active staff with role = trainer, filter by gym if available
+      let staffQuery = supabase
         .from('staff')
         .select(`
           id,
@@ -107,10 +127,18 @@ export default function TrainersList() {
           email,
           phone,
           hire_date,
-          is_active
+          is_active,
+          gym_id
         `)
         .eq('role_id', trainerRole.id)
         .order('first_name');
+
+      // Filter by gym if gym context is available and not default
+      if (gym && gym.id !== 'default') {
+        staffQuery = staffQuery.eq('gym_id', gym.id);
+      }
+
+      const { data: trainersData, error: staffError } = await staffQuery;
       if (staffError || !trainersData) throw staffError ?? new Error('No trainers returned');
 
       // 3) For each trainer, fetch both package-based and one-to-one assignments
@@ -290,7 +318,7 @@ export default function TrainersList() {
     const memberCount = coachingType === 'package' ? trainer.member_count : trainer.one_to_one_count;
     
     return (
-      <Card className="hover:shadow-md transition-shadow">
+      <Card className="hover:shadow-md transition-shadow" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
         <CardContent className="p-6">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
@@ -507,201 +535,265 @@ export default function TrainersList() {
     );
   };
 
+  // Loading state with dynamic layout
+  if (gymLoading) {
+    return (
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-pulse">
+            <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-32 bg-gray-200 rounded"></div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
-      <div className="animate-fade-in py-24 text-center text-gray-500">
-        Loading trainers data...
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DynamicHeader />
+          <main className="flex-1 flex items-center justify-center">
+            <div className="animate-pulse text-center text-gray-500">
+              Loading trainers data for {gym?.name || 'gym'}...
+            </div>
+          </main>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Trainers List</h2>
-          <p className="text-gray-500 mt-1">Manage trainers and view their member assignments</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="px-3 py-1">
-            Total: {trainers.length} trainers
-          </Badge>
-          <Badge variant="outline" className="px-3 py-1">
-            Active: {trainers.filter(t => t.is_active).length}
-          </Badge>
-        </div>
-      </div>
-
-      {/* Coaching Type Toggle */}
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar />
       
-        <CardContent className="p-6">
-          <div className="flex justify-center">
-            <div className="flex bg-gray-100 rounded-full p-1 w-full max-w-md">
-              <Button
-                variant={coachingType === 'package' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setCoachingType('package')}
-                className={`flex-1 py-2 rounded-full font-medium transition-all duration-200 ${
-                  coachingType === 'package' 
-                    ? 'bg-white shadow-sm text-gray-900 hover:bg-white' 
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-transparent'
-                }`}
-              >
-                <Package className="h-4 w-4 mr-2" />
-                Package Based
-              </Button>
-              <Button
-                variant={coachingType === 'one-to-one' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setCoachingType('one-to-one')}
-                className={`flex-1 py-2 rounded-full font-medium transition-all duration-200 ${
-                  coachingType === 'one-to-one' 
-                    ? 'bg-white shadow-sm text-gray-900 hover:bg-white' 
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-transparent'
-                }`}
-              >
-                <Users className="h-4 w-4 mr-2" />
-                One-to-One
-              </Button>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <DynamicHeader />
+        
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="animate-fade-in p-6">
+            {/* Header with dynamic styling */}
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 
+                  className="text-3xl font-bold tracking-tight"
+                  style={{ color: dynamicStyles.primaryColor }}
+                >
+                  Trainers List
+                </h2>
+                <p className="text-gray-500 mt-1">
+                  Manage trainers and view their member assignments for {gym?.name || 'your gym'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge 
+                  variant="outline" 
+                  className="px-3 py-1"
+                  style={{ borderColor: `${dynamicStyles.primaryColor}40` }}
+                >
+                  Total: {trainers.length} trainers
+                </Badge>
+                <Badge 
+                  variant="outline" 
+                  className="px-3 py-1"
+                  style={{ borderColor: `${dynamicStyles.accentColor}40` }}
+                >
+                  Active: {trainers.filter(t => t.is_active).length}
+                </Badge>
+              </div>
             </div>
+
+            {/* Coaching Type Toggle with dynamic colors */}
+            <Card className="mb-6" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
+              <CardContent className="p-6">
+                <div className="flex justify-center">
+                  <div className="flex bg-gray-100 rounded-full p-1 w-full max-w-md">
+                    <Button
+                      variant={coachingType === 'package' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setCoachingType('package')}
+                      className={`flex-1 py-2 rounded-full font-medium transition-all duration-200`}
+                      style={coachingType === 'package' ? {
+                        backgroundColor: dynamicStyles.primaryColor,
+                        color: 'white'
+                      } : {}}
+                    >
+                      <Package className="h-4 w-4 mr-2" />
+                      Package Based
+                    </Button>
+                    <Button
+                      variant={coachingType === 'one-to-one' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setCoachingType('one-to-one')}
+                      className={`flex-1 py-2 rounded-full font-medium transition-all duration-200`}
+                      style={coachingType === 'one-to-one' ? {
+                        backgroundColor: dynamicStyles.primaryColor,
+                        color: 'white'
+                      } : {}}
+                    >
+                      <Users className="h-4 w-4 mr-2" />
+                      One-to-One
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Search and Filter Controls */}
+            <Card className="mb-6" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
+              <CardContent className="p-6">
+                <div className="flex flex-col lg:flex-row gap-4">
+                  <div className="flex-1">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Input
+                        placeholder="Search trainers by name or email..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="w-32">
+                        <Filter className="h-4 w-4 mr-2" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="inactive">Inactive</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    
+                    {coachingType === 'package' && (
+                      <Select value={packageFilter} onValueChange={setPackageFilter}>
+                        <SelectTrigger className="w-40">
+                          <Package className="h-4 w-4 mr-2" />
+                          <SelectValue placeholder="Package" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Packages</SelectItem>
+                          {availablePackages.map(pkg => (
+                            <SelectItem key={pkg.id} value={pkg.id}>{pkg.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    
+                    <Select value={sortBy} onValueChange={setSortBy}>
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="name">Name</SelectItem>
+                        <SelectItem value="members">Members</SelectItem>
+                        <SelectItem value="hire_date">Hire Date</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Stats Cards with dynamic colors */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <Card style={{ backgroundColor: `${dynamicStyles.primaryColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-5 w-5" style={{ color: dynamicStyles.primaryColor }} />
+                    <div>
+                      <div className="text-2xl font-bold" style={{ color: dynamicStyles.primaryColor }}>
+                        {trainers.filter(t => t.is_active).length}
+                      </div>
+                      <div className="text-sm text-gray-500">Active Trainers</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card style={{ backgroundColor: `${dynamicStyles.primaryColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Package className="h-5 w-5" style={{ color: dynamicStyles.primaryColor }} />
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {coachingType === 'package' 
+                          ? trainers.reduce((sum, t) => sum + t.member_count, 0)
+                          : trainers.reduce((sum, t) => sum + t.one_to_one_count, 0)
+                        }
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {coachingType === 'package' ? 'Total Members' : 'Total Clients'}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card style={{ backgroundColor: `${dynamicStyles.primaryColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-5 w-5" style={{ color: dynamicStyles.primaryColor }} />
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {trainers.length > 0 ? Math.round(
+                          (coachingType === 'package' 
+                            ? trainers.reduce((sum, t) => sum + t.member_count, 0)
+                            : trainers.reduce((sum, t) => sum + t.one_to_one_count, 0)
+                          ) / trainers.filter(t => t.is_active).length
+                        ) || 0 : 0}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        Avg {coachingType === 'package' ? 'Members' : 'Clients'}/Trainer
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card style={{ backgroundColor: `${dynamicStyles.primaryColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <Package className="h-5 w-5" style={{ color: dynamicStyles.primaryColor }} />
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {coachingType === 'package' ? availablePackages.length : trainers.filter(t => t.one_to_one_count > 0).length}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {coachingType === 'package' ? 'Available Packages' : 'Active 1-on-1 Trainers'}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Trainers List */}
+            <div className="space-y-4">
+              {filteredTrainers.length === 0 ? (
+                <Card>
+                  <CardContent className="p-8 text-center">
+                    <div className="text-gray-500">No trainers found matching your filters</div>
+                  </CardContent>
+                </Card>
+              ) : (
+                filteredTrainers.map(trainer => (
+                  <TrainerCard key={trainer.id} trainer={trainer} />
+                ))
+              )}
+            </div>
+
+            {/* Trainer Details Modal */}
+            <TrainerDetailsModal />
           </div>
-        </CardContent>
-      
-
-      {/* Filters */}
-      <Card className="mb-6">
-        <CardContent className="p-4">
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-1">
-              <Input
-                placeholder="Search trainers by name, email, or specialization..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-              </SelectContent>
-            </Select>
-            {coachingType === 'package' && (
-              <Select value={packageFilter} onValueChange={setPackageFilter}>
-                <SelectTrigger className="w-48">
-                  <SelectValue placeholder="Package" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Packages</SelectItem>
-                  {availablePackages.map(pkg => (
-                    <SelectItem key={pkg.id} value={pkg.id}>{pkg.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="name">Name</SelectItem>
-                <SelectItem value="members">{coachingType === 'package' ? 'Member Count' : 'Client Count'}</SelectItem>
-                <SelectItem value="hire_date">Hire Date</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-fitness-primary" />
-              <div>
-                <div className="text-2xl font-bold">{trainers.filter(t => t.is_active).length}</div>
-                <div className="text-sm text-gray-500">Active Trainers</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-fitness-primary" />
-              <div>
-                <div className="text-2xl font-bold">
-                  {coachingType === 'package' 
-                    ? trainers.reduce((sum, t) => sum + t.member_count, 0)
-                    : trainers.reduce((sum, t) => sum + t.one_to_one_count, 0)
-                  }
-                </div>
-                <div className="text-sm text-gray-500">
-                  {coachingType === 'package' ? 'Total Members' : 'Total Clients'}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-fitness-primary" />
-              <div>
-                <div className="text-2xl font-bold">
-                  {trainers.length > 0 ? Math.round(
-                    (coachingType === 'package' 
-                      ? trainers.reduce((sum, t) => sum + t.member_count, 0)
-                      : trainers.reduce((sum, t) => sum + t.one_to_one_count, 0)
-                    ) / trainers.filter(t => t.is_active).length
-                  ) || 0 : 0}
-                </div>
-                <div className="text-sm text-gray-500">
-                  Avg {coachingType === 'package' ? 'Members' : 'Clients'}/Trainer
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-fitness-primary" />
-              <div>
-                <div className="text-2xl font-bold">
-                  {coachingType === 'package' ? availablePackages.length : trainers.filter(t => t.one_to_one_count > 0).length}
-                </div>
-                <div className="text-sm text-gray-500">
-                  {coachingType === 'package' ? 'Available Packages' : 'Active 1-on-1 Trainers'}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        </main>
       </div>
-
-      {/* Trainers List */}
-      <div className="space-y-4">
-        {filteredTrainers.length === 0 ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <div className="text-gray-500">No trainers found matching your filters</div>
-            </CardContent>
-          </Card>
-        ) : (
-          filteredTrainers.map(trainer => (
-            <TrainerCard key={trainer.id} trainer={trainer} />
-          ))
-        )}
-      </div>
-
-      {/* Trainer Details Modal */}
-      <TrainerDetailsModal />
     </div>
   );
 }

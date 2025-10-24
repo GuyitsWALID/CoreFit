@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -59,6 +59,9 @@ import 'react-phone-input-2/lib/style.css';
 // Add QrCode icon
 import { QrCode } from 'lucide-react';
 import { callSendWelcomeSmsFunction } from "@/utils/sendWelcomeViaEdge";
+import { useGym } from "@/contexts/GymContext";
+import { DynamicHeader } from "@/components/layout/DynamicHeader";
+import { Sidebar } from "@/components/layout/Sidebar";
 
 interface Role {
   id: string;
@@ -110,6 +113,7 @@ const formSchema = z.object({
 
 export default function TeamManagement() {
   const { toast } = useToast();
+  const { gym, loading: gymLoading } = useGym();
 
   // --- state fixes ---
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -158,12 +162,21 @@ export default function TeamManagement() {
   // --- data fetching ---
   const fetchTeamMembers = async () => {
     setIsLoading(true);
-    const { data, error } = await supabase
+    
+    let query = supabase
       .from('staff')
       .select(`
         *,
         roles(id, name)
       `);
+
+    // Filter by gym if gym context is available and not default
+    if (gym && gym.id !== 'default') {
+      query = query.eq('gym_id', gym.id);
+    }
+
+    const { data, error } = await query;
+    
     if (error) {
       toast({ title: 'Load failed', description: error.message, variant: 'destructive' });
     } else {
@@ -449,146 +462,222 @@ export default function TeamManagement() {
     img.src = url;
   };
 
-  // --- loading state ---
+  // Dynamic styling based on gym configuration
+  const dynamicStyles = useMemo(() => {
+    if (!gym) return {
+      primaryColor: '#2563eb',
+      secondaryColor: '#1e40af', 
+      accentColor: '#f59e0b',
+    };
+    
+    const primaryColor = gym.brand_color || '#2563eb';
+    return {
+      primaryColor: primaryColor,
+      secondaryColor: primaryColor,
+      accentColor: primaryColor,
+    };
+  }, [gym]);
+
+  // Loading state with dynamic layout
+  if (gymLoading) {
+    return (
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-pulse">
+            <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
+            <div className="grid grid-cols-1 gap-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-32 bg-gray-200 rounded"></div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading) {
-    return <div className="py-8 text-center">Loading team members…</div>;
+    return (
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DynamicHeader />
+          <main className="flex-1 flex items-center justify-center">
+            <div className="animate-pulse text-center text-gray-500">
+              Loading team members for {gym?.name || 'gym'}...
+            </div>
+          </main>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Team Management</h2>
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder="Search…"
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-          />
-          <Button onClick={() => setDialogOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" /> Add Member
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setDisplayMode(displayMode === 'card' ? 'list' : 'card')}
-          >
-            {displayMode === 'card' ? <List className="h-4 w-4" /> : <Grid3X3 className="h-4 w-4" />}
-          </Button>
-        </div>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
-        <TabsList>
-          <TabsTrigger value="all">All</TabsTrigger>
-          {roles.map(r => (
-            <TabsTrigger key={r.id} value={r.name.toLowerCase()}>
-              {r.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      {filteredMembers.length === 0 ? (
-        <div className="text-center text-gray-500">No members found.</div>
-      ) : displayMode === 'card' ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredMembers.map(renderMemberCard)}
-        </div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Phone</TableHead>
-              <TableHead>Salary</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredMembers.map(renderMemberRow)}
-          </TableBody>
-        </Table>
-      )}
-
-      {/* confirm active toggle */}
-      <Dialog open={confirmActiveDialog} onOpenChange={setConfirmActiveDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Status Change</DialogTitle>
-          </DialogHeader>
-          <DialogDescription>
-            Are you sure you want to set{' '}
-            <strong>
-              {pendingActiveMember?.first_name} {pendingActiveMember?.last_name}
-            </strong>{' '}
-            to <strong>{pendingActiveMember?.is_active ? 'inactive' : 'active'}</strong>?
-          </DialogDescription>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmActiveDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={confirmToggleActive}>Confirm</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add/Edit modal */}
-      <MemberFormModal
-        isOpen={dialogOpen || editDialogOpen}
-        onClose={() => {
-          setDialogOpen(false);
-          setEditDialogOpen(false);
-          setEditMember(null);
-        }}
-        memberToEdit={editMember}
-        roles={roles}
-        onSave={async () => {
-          await fetchTeamMembers();
-          // QR dialog is handled by realtime insert listener
-        }}
-      />
-
-      {/* New: QR code modal after creating a member */}
-      <Dialog open={!!qrInfo} onOpenChange={(o) => !o && setQrInfo(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Staff QR Code</DialogTitle>
-            <DialogDescription>
-              QR code generated for {qrInfo?.first_name} {qrInfo?.last_name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-md border p-4 bg-white" ref={qrContainerRef}>
-              <div className="flex flex-col items-center gap-3">
-                <QRCode
-                  value={qrInfo?.qr_code || ''}
-                  size={240}
-                  bgColor="#FFFFFF"
-                  fgColor="#111827"
-                  level="M"
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar />
+      
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <DynamicHeader />
+        
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="space-y-6 p-6">
+            {/* Header with dynamic styling */}
+            <div className="flex justify-between items-center">
+              <h2 
+                className="text-2xl font-bold"
+                style={{ color: dynamicStyles.primaryColor }}
+              >
+                Team Management
+              </h2>
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Search…"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
                 />
-                <div className="text-xs text-gray-600 break-all">
-                  {qrInfo?.qr_code}
-                </div>
+                <Button 
+                  onClick={() => setDialogOpen(true)}
+                  style={{ backgroundColor: dynamicStyles.primaryColor }}
+                  className="text-white"
+                >
+                  <Plus className="mr-1 h-4 w-4" /> Add Member
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setDisplayMode(displayMode === 'card' ? 'list' : 'card')}
+                >
+                  {displayMode === 'card' ? <List className="h-4 w-4" /> : <Grid3X3 className="h-4 w-4" />}
+                </Button>
               </div>
             </div>
-            <div className="text-sm">
-              <div><span className="text-gray-500">Name:</span> {qrInfo?.first_name} {qrInfo?.last_name}</div>
-              <div><span className="text-gray-500">Email:</span> {qrInfo?.email}</div>
-              <div><span className="text-gray-500">Staff ID:</span> {qrInfo?.id}</div>
-            </div>
+
+            {/* Tabs with dynamic styling */}
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
+              <TabsList>
+                <TabsTrigger 
+                  value="all"
+                  style={activeTab === 'all' ? { backgroundColor: dynamicStyles.primaryColor, color: 'white' } : {}}
+                >
+                  All
+                </TabsTrigger>
+                {roles.map(r => (
+                  <TabsTrigger 
+                    key={r.id} 
+                    value={r.name.toLowerCase()}
+                    style={activeTab === r.name.toLowerCase() ? { backgroundColor: dynamicStyles.primaryColor, color: 'white' } : {}}
+                  >
+                    {r.name}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            {filteredMembers.length === 0 ? (
+              <div className="text-center text-gray-500">No members found.</div>
+            ) : displayMode === 'card' ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {filteredMembers.map(renderMemberCard)}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Salary</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredMembers.map(renderMemberRow)}
+                </TableBody>
+              </Table>
+            )}
+
+            {/* confirm active toggle */}
+            <Dialog open={confirmActiveDialog} onOpenChange={setConfirmActiveDialog}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Confirm Status Change</DialogTitle>
+                </DialogHeader>
+                <DialogDescription>
+                  Are you sure you want to set{' '}
+                  <strong>
+                    {pendingActiveMember?.first_name} {pendingActiveMember?.last_name}
+                  </strong>{' '}
+                  to <strong>{pendingActiveMember?.is_active ? 'inactive' : 'active'}</strong>?
+                </DialogDescription>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setConfirmActiveDialog(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={confirmToggleActive}>Confirm</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Add/Edit modal */}
+            <MemberFormModal
+              isOpen={dialogOpen || editDialogOpen}
+              onClose={() => {
+                setDialogOpen(false);
+                setEditDialogOpen(false);
+                setEditMember(null);
+              }}
+              memberToEdit={editMember}
+              roles={roles}
+              onSave={async () => {
+                await fetchTeamMembers();
+                // QR dialog is handled by realtime insert listener
+              }}
+            />
+
+            {/* New: QR code modal after creating a member */}
+            <Dialog open={!!qrInfo} onOpenChange={(o) => !o && setQrInfo(null)}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Staff QR Code</DialogTitle>
+                  <DialogDescription>
+                    QR code generated for {qrInfo?.first_name} {qrInfo?.last_name}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <div className="rounded-md border p-4 bg-white" ref={qrContainerRef}>
+                    <div className="flex flex-col items-center gap-3">
+                      <QRCode
+                        value={qrInfo?.qr_code || ''}
+                        size={240}
+                        bgColor="#FFFFFF"
+                        fgColor="#111827"
+                        level="M"
+                      />
+                      <div className="text-xs text-gray-600 break-all">
+                        {qrInfo?.qr_code}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-sm">
+                    <div><span className="text-gray-500">Name:</span> {qrInfo?.first_name} {qrInfo?.last_name}</div>
+                    <div><span className="text-gray-500">Email:</span> {qrInfo?.email}</div>
+                    <div><span className="text-gray-500">Staff ID:</span> {qrInfo?.id}</div>
+                  </div>
+                </div>
+                <DialogFooter className="flex items-center justify-between gap-2">
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={downloadSVG}>Download SVG</Button>
+                    <Button onClick={downloadPNG}>Download PNG</Button>
+                  </div>
+                  <Button variant="secondary" onClick={() => setQrInfo(null)}>Close</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
-          <DialogFooter className="flex items-center justify-between gap-2">
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={downloadSVG}>Download SVG</Button>
-              <Button onClick={downloadPNG}>Download PNG</Button>
-            </div>
-            <Button variant="secondary" onClick={() => setQrInfo(null)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </main>
+      </div>
     </div>
   );
 }
