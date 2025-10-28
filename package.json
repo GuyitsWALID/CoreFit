@@ -9,8 +9,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "clean": "rimraf dist node_modules/.vite",
-    "postinstall": "npm run clean-platform-deps"
+    "clean": "rimraf dist node_modules/.vite"
+    
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

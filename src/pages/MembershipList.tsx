@@ -19,7 +19,6 @@ import {
 import { OneToOneCoachingModal } from "@/components/OneToOneCoachingModal";
 import FreezeModal, { FreezeMode } from "@/components/Modals/FreezeActionModal";
 import { MembershipInfo } from "@/types/memberships";
-import FreezeActionModal from "@/components/Modals/FreezeActionModal";
 import { CoachingSessionData, Trainer } from "@/types/coaching"; // Ensure this matches your types
 import { fetchTrainers } from "@/lib/supabase_trainer_query";
 
