@@ -82,6 +82,7 @@ interface TeamMember {
   salary: number;
   is_active: boolean;
   created_at: string;
+  gym_id?: string;
   roles?: {
     id: string;
     name: string;
@@ -124,7 +125,7 @@ export default function TeamManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [editMember, setEditMember] = useState<TeamMember | null>(null);
 
-  // NEW: control “Add” vs “Edit” modal
+  // NEW: control "Add" vs "Edit" modal
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
@@ -134,6 +135,22 @@ export default function TeamManagement() {
   const [qrInfo, setQrInfo] = useState<QRInfo | null>(null);
   const qrContainerRef = useRef<HTMLDivElement>(null);
 
+  // Dynamic styling based on gym configuration
+  const dynamicStyles = useMemo(() => {
+    if (!gym) return {
+      primaryColor: '#2563eb',
+      secondaryColor: '#1e40af', 
+      accentColor: '#f59e0b',
+    };
+    
+    const primaryColor = gym.brand_color || '#2563eb';
+    return {
+      primaryColor: primaryColor,
+      secondaryColor: primaryColor,
+      accentColor: primaryColor,
+    };
+  }, [gym]);
+
   // Helper: create a JSON QR payload for a staff record to match scanner format
   const buildStaffQr = (m: TeamMember) =>
     JSON.stringify({
@@ -141,6 +158,7 @@ export default function TeamManagement() {
       firstName: m.first_name,
       lastName: m.last_name,
       roleId: m.role_id || null,
+      gymId: gym?.id || null,
     });
 
   // Ensure missing QR codes are generated for a list of members
@@ -161,6 +179,8 @@ export default function TeamManagement() {
 
   // --- data fetching ---
   const fetchTeamMembers = async () => {
+    if (!gym || gym.id === 'default') return;
+    
     setIsLoading(true);
     
     let query = supabase
@@ -178,7 +198,11 @@ export default function TeamManagement() {
     const { data, error } = await query;
     
     if (error) {
-      toast({ title: 'Load failed', description: error.message, variant: 'destructive' });
+      toast({ 
+        title: 'Load failed', 
+        description: `Could not load team members: ${error.message}`, 
+        variant: 'destructive' 
+      });
     } else {
       const list = (data || []) as TeamMember[];
       setTeamMembers(list);
@@ -194,15 +218,24 @@ export default function TeamManagement() {
   };
 
   useEffect(() => {
-    fetchTeamMembers();
-    fetchRoles();
-  }, []);
+    if (gym && gym.id !== 'default') {
+      fetchTeamMembers();
+      fetchRoles();
+    }
+  }, [gym]);
 
   // Realtime: when a new staff row is inserted, assign qr_code if missing and show QR modal
   useEffect(() => {
+    if (!gym || gym.id === 'default') return;
+
     const channel = supabase
       .channel('staff-insert-qr')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'staff' }, async (payload) => {
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'staff',
+        filter: `gym_id=eq.${gym.id}` // Only listen for this gym's staff
+      }, async (payload) => {
         const row = payload.new as TeamMember;
         try {
           const value = row.qr_code || buildStaffQr(row);
@@ -217,7 +250,10 @@ export default function TeamManagement() {
             email: row.email,
             qr_code: value,
           });
-          toast({ title: 'QR code generated', description: `QR for ${row.first_name} ${row.last_name} is ready` });
+          toast({ 
+            title: 'QR code generated', 
+            description: `QR for ${row.first_name} ${row.last_name} is ready for ${gym.name}` 
+          });
         } catch (e: any) {
           toast({ title: 'QR generation failed', description: e?.message || 'Could not set QR', variant: 'destructive' });
         }
@@ -227,7 +263,7 @@ export default function TeamManagement() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [gym]);
 
   // --- actions ---
   const handleToggleActive = (member: TeamMember) => {
@@ -246,7 +282,10 @@ export default function TeamManagement() {
     if (error) {
       toast({ title: "Update failed", description: error.message, variant: "destructive" });
     } else {
-      toast({ title: "Status updated", description: `Now ${newActive ? 'active' : 'inactive'}.` });
+      toast({ 
+        title: "Status updated", 
+        description: `${pendingActiveMember.first_name} ${pendingActiveMember.last_name} is now ${newActive ? 'active' : 'inactive'} at ${gym?.name || 'the gym'}.` 
+      });
       await fetchTeamMembers();
     }
     setConfirmActiveDialog(false);
@@ -289,9 +328,9 @@ export default function TeamManagement() {
         recipient_name: `${member.first_name} ${member.last_name}`,
         username: member.email,
         password: password,
-        gym_name: "ATL Fitness Hub",
-        gym_address: "Your gym address here",
-        gym_phone: "+251-XXX-XXX-XXXX",
+        gym_name: gym?.name || "Your Gym",
+        gym_address: gym?.address || "Gym Address",
+        gym_phone: gym?.owner_phone || "+1-XXX-XXX-XXXX",
         recipient_id: member.id,
       },
     };
@@ -311,7 +350,7 @@ export default function TeamManagement() {
     if (result.ok) {
       toast({
         title: "Welcome SMS sent",
-        description: `Welcome SMS was sent successfully to ${member.phone}`,
+        description: `Welcome SMS was sent successfully to ${member.phone} for ${gym?.name || 'the gym'}`,
       });
     } else {
       console.error("send-sms function error:", result);
@@ -323,10 +362,6 @@ export default function TeamManagement() {
     }
   }
 
-  // Example usage: call sendWelcomeSmsAndNotify after adding a new staff member
-  // You should call this after successful staff registration, e.g.:
-  // await sendWelcomeSmsAndNotify(newMember, password);
-
   // --- filtering & rendering ---
   const filteredMembers = teamMembers.filter(member => {
     const matchesSearch = searchTerm === '' ||
@@ -337,21 +372,30 @@ export default function TeamManagement() {
   });
 
   const renderMemberCard = (member: TeamMember) => (
-    <Card key={member.id} className="hover:shadow-md">
+    <Card key={member.id} className="hover:shadow-md transition-shadow" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
       <CardHeader>
         <CardTitle className="flex items-center gap-3">
           <Avatar className="h-10 w-10">
-            <AvatarFallback>
+            <AvatarFallback style={{ backgroundColor: `${dynamicStyles.primaryColor}20`, color: dynamicStyles.primaryColor }}>
               {member.first_name[0]}{member.last_name[0]}
             </AvatarFallback>
           </Avatar>
           <div className="flex-1">
-            <div className="font-semibold">{member.first_name} {member.last_name}</div>
-            <Badge className="mr-2">{member.roles?.name}</Badge>
-            <Switch
-              checked={member.is_active}
-              onCheckedChange={() => handleToggleActive(member)}
-            />
+            <div className="font-semibold" style={{ color: dynamicStyles.primaryColor }}>
+              {member.first_name} {member.last_name}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <Badge 
+                style={{ backgroundColor: `${dynamicStyles.accentColor}20`, color: dynamicStyles.accentColor }}
+              >
+                {member.roles?.name}
+              </Badge>
+              <Switch
+                checked={member.is_active}
+                onCheckedChange={() => handleToggleActive(member)}
+                style={{ accentColor: dynamicStyles.primaryColor }}
+              />
+            </div>
           </div>
         </CardTitle>
       </CardHeader>
@@ -365,10 +409,20 @@ export default function TeamManagement() {
       </CardContent>
       <CardFooter>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => handleEdit(member)}
+            style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
+          >
             <Edit className="mr-1 h-4 w-4" /> Edit
           </Button>
-          <Button variant="outline" size="sm" onClick={() => openQrForMember(member)}>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => openQrForMember(member)}
+            style={{ borderColor: dynamicStyles.accentColor, color: dynamicStyles.accentColor }}
+          >
             <QrCode className="mr-1 h-4 w-4" /> QR
           </Button>
         </div>
@@ -381,14 +435,18 @@ export default function TeamManagement() {
       <TableCell>
         <div className="flex items-center gap-2">
           <Avatar className="h-8 w-8">
-            <AvatarFallback>
+            <AvatarFallback style={{ backgroundColor: `${dynamicStyles.primaryColor}20`, color: dynamicStyles.primaryColor }}>
               {member.first_name[0]}{member.last_name[0]}
             </AvatarFallback>
           </Avatar>
-          {member.first_name} {member.last_name}
+          <span style={{ color: dynamicStyles.primaryColor }}>{member.first_name} {member.last_name}</span>
         </div>
       </TableCell>
-      <TableCell>{member.roles?.name}</TableCell>
+      <TableCell>
+        <Badge style={{ backgroundColor: `${dynamicStyles.accentColor}20`, color: dynamicStyles.accentColor }}>
+          {member.roles?.name}
+        </Badge>
+      </TableCell>
       <TableCell>{member.email}</TableCell>
       <TableCell>{member.phone}</TableCell>
       <TableCell>ETB {member.salary}</TableCell>
@@ -397,16 +455,28 @@ export default function TeamManagement() {
           <Switch
             checked={member.is_active}
             onCheckedChange={() => handleToggleActive(member)}
+            style={{ accentColor: dynamicStyles.primaryColor }}
           />
           <span>{member.is_active ? "Active" : "Inactive"}</span>
         </div>
       </TableCell>
       <TableCell>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => handleEdit(member)}>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => handleEdit(member)}
+            style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
+          >
             <Edit className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="sm" onClick={() => openQrForMember(member)} aria-label="Show QR">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => openQrForMember(member)} 
+            aria-label="Show QR"
+            style={{ borderColor: dynamicStyles.accentColor, color: dynamicStyles.accentColor }}
+          >
             <QrCode className="h-4 w-4" />
           </Button>
         </div>
@@ -462,22 +532,6 @@ export default function TeamManagement() {
     img.src = url;
   };
 
-  // Dynamic styling based on gym configuration
-  const dynamicStyles = useMemo(() => {
-    if (!gym) return {
-      primaryColor: '#2563eb',
-      secondaryColor: '#1e40af', 
-      accentColor: '#f59e0b',
-    };
-    
-    const primaryColor = gym.brand_color || '#2563eb';
-    return {
-      primaryColor: primaryColor,
-      secondaryColor: primaryColor,
-      accentColor: primaryColor,
-    };
-  }, [gym]);
-
   // Loading state with dynamic layout
   if (gymLoading) {
     return (
@@ -492,6 +546,30 @@ export default function TeamManagement() {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!gym || gym.id === 'default') {
+    return (
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DynamicHeader />
+          <main className="flex-1 flex items-center justify-center">
+            <Card className="max-w-md">
+              <CardContent className="p-6 text-center">
+                <h2 className="text-xl font-semibold mb-2">Gym Context Required</h2>
+                <p className="text-gray-600 mb-4">
+                  This page requires a specific gym context. Please access it from a gym-specific URL.
+                </p>
+                <Button onClick={() => window.location.href = '/admin/dashboard'}>
+                  Go to Admin Dashboard
+                </Button>
+              </CardContent>
+            </Card>
+          </main>
         </div>
       </div>
     );
@@ -524,15 +602,20 @@ export default function TeamManagement() {
           <div className="space-y-6 p-6">
             {/* Header with dynamic styling */}
             <div className="flex justify-between items-center">
-              <h2 
-                className="text-2xl font-bold"
-                style={{ color: dynamicStyles.primaryColor }}
-              >
-                Team Management
-              </h2>
+              <div>
+                <h2 
+                  className="text-3xl font-bold tracking-tight"
+                  style={{ color: dynamicStyles.primaryColor }}
+                >
+                  Team Management
+                </h2>
+                <p className="text-gray-500 mt-1">
+                  Manage staff members for {gym?.name || 'your gym'}
+                </p>
+              </div>
               <div className="flex items-center gap-2">
                 <Input
-                  placeholder="Search…"
+                  placeholder="Search team members..."
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                 />
@@ -552,6 +635,82 @@ export default function TeamManagement() {
               </div>
             </div>
 
+            {/* Stats Cards with dynamic colors */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Card style={{ backgroundColor: `${dynamicStyles.primaryColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                      style={{ backgroundColor: dynamicStyles.primaryColor }}
+                    >
+                      <span className="text-white text-sm">👥</span>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold" style={{ color: dynamicStyles.primaryColor }}>
+                        {teamMembers.length}
+                      </div>
+                      <div className="text-sm text-gray-500">Total Team</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card style={{ backgroundColor: `${dynamicStyles.accentColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                      style={{ backgroundColor: dynamicStyles.accentColor }}
+                    >
+                      <span className="text-white text-sm">✓</span>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold" style={{ color: dynamicStyles.accentColor }}>
+                        {teamMembers.filter(m => m.is_active).length}
+                      </div>
+                      <div className="text-sm text-gray-500">Active</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card style={{ backgroundColor: `${dynamicStyles.secondaryColor}08` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <div 
+                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                      style={{ backgroundColor: dynamicStyles.secondaryColor }}
+                    >
+                      <span className="text-white text-sm">📋</span>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold" style={{ color: dynamicStyles.secondaryColor }}>
+                        {roles.length}
+                      </div>
+                      <div className="text-sm text-gray-500">Roles</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card style={{ backgroundColor: `#10b98108` }}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center bg-green-600">
+                      <span className="text-white text-sm">🎯</span>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-green-600">
+                        {filteredMembers.length}
+                      </div>
+                      <div className="text-sm text-gray-500">Filtered</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
             {/* Tabs with dynamic styling */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
               <TabsList>
@@ -559,7 +718,7 @@ export default function TeamManagement() {
                   value="all"
                   style={activeTab === 'all' ? { backgroundColor: dynamicStyles.primaryColor, color: 'white' } : {}}
                 >
-                  All
+                  All ({teamMembers.length})
                 </TabsTrigger>
                 {roles.map(r => (
                   <TabsTrigger 
@@ -567,35 +726,44 @@ export default function TeamManagement() {
                     value={r.name.toLowerCase()}
                     style={activeTab === r.name.toLowerCase() ? { backgroundColor: dynamicStyles.primaryColor, color: 'white' } : {}}
                   >
-                    {r.name}
+                    {r.name} ({teamMembers.filter(m => m.roles?.name.toLowerCase() === r.name.toLowerCase()).length})
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
 
             {filteredMembers.length === 0 ? (
-              <div className="text-center text-gray-500">No members found.</div>
+              <div className="text-center text-gray-500 py-8">
+                {teamMembers.length === 0 
+                  ? `No team members found for ${gym.name}. Add your first team member to get started!`
+                  : "No members found matching your search criteria."
+                }
+              </div>
             ) : displayMode === 'card' ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {filteredMembers.map(renderMemberCard)}
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead>Salary</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredMembers.map(renderMemberRow)}
-                </TableBody>
-              </Table>
+              <Card style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Phone</TableHead>
+                        <TableHead>Salary</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredMembers.map(renderMemberRow)}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
             )}
 
             {/* confirm active toggle */}
@@ -609,13 +777,19 @@ export default function TeamManagement() {
                   <strong>
                     {pendingActiveMember?.first_name} {pendingActiveMember?.last_name}
                   </strong>{' '}
-                  to <strong>{pendingActiveMember?.is_active ? 'inactive' : 'active'}</strong>?
+                  to <strong>{pendingActiveMember?.is_active ? 'inactive' : 'active'}</strong> at {gym.name}?
                 </DialogDescription>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setConfirmActiveDialog(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={confirmToggleActive}>Confirm</Button>
+                  <Button 
+                    onClick={confirmToggleActive}
+                    style={{ backgroundColor: dynamicStyles.primaryColor }}
+                    className="text-white"
+                  >
+                    Confirm
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -634,25 +808,32 @@ export default function TeamManagement() {
                 await fetchTeamMembers();
                 // QR dialog is handled by realtime insert listener
               }}
+              gym={gym} // Pass gym context to modal
             />
 
             {/* New: QR code modal after creating a member */}
             <Dialog open={!!qrInfo} onOpenChange={(o) => !o && setQrInfo(null)}>
               <DialogContent className="max-w-md">
                 <DialogHeader>
-                  <DialogTitle>Staff QR Code</DialogTitle>
+                  <DialogTitle style={{ color: dynamicStyles.primaryColor }}>
+                    Staff QR Code for {gym.name}
+                  </DialogTitle>
                   <DialogDescription>
                     QR code generated for {qrInfo?.first_name} {qrInfo?.last_name}
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3">
-                  <div className="rounded-md border p-4 bg-white" ref={qrContainerRef}>
+                  <div 
+                    className="rounded-md border p-4 bg-white" 
+                    ref={qrContainerRef}
+                    style={{ borderColor: `${dynamicStyles.primaryColor}20` }}
+                  >
                     <div className="flex flex-col items-center gap-3">
                       <QRCode
                         value={qrInfo?.qr_code || ''}
                         size={240}
                         bgColor="#FFFFFF"
-                        fgColor="#111827"
+                        fgColor={dynamicStyles.primaryColor}
                         level="M"
                       />
                       <div className="text-xs text-gray-600 break-all">
@@ -664,14 +845,32 @@ export default function TeamManagement() {
                     <div><span className="text-gray-500">Name:</span> {qrInfo?.first_name} {qrInfo?.last_name}</div>
                     <div><span className="text-gray-500">Email:</span> {qrInfo?.email}</div>
                     <div><span className="text-gray-500">Staff ID:</span> {qrInfo?.id}</div>
+                    <div><span className="text-gray-500">Gym:</span> {gym.name}</div>
                   </div>
                 </div>
                 <DialogFooter className="flex items-center justify-between gap-2">
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={downloadSVG}>Download SVG</Button>
-                    <Button onClick={downloadPNG}>Download PNG</Button>
+                    <Button 
+                      variant="outline" 
+                      onClick={downloadSVG}
+                      style={{ borderColor: dynamicStyles.accentColor, color: dynamicStyles.accentColor }}
+                    >
+                      Download SVG
+                    </Button>
+                    <Button 
+                      onClick={downloadPNG}
+                      style={{ backgroundColor: dynamicStyles.accentColor }}
+                      className="text-white"
+                    >
+                      Download PNG
+                    </Button>
                   </div>
-                  <Button variant="secondary" onClick={() => setQrInfo(null)}>Close</Button>
+                  <Button 
+                    variant="secondary" 
+                    onClick={() => setQrInfo(null)}
+                  >
+                    Close
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

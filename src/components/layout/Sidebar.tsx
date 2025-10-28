@@ -33,6 +33,7 @@ const navigation: NavItem[] = [
   { name: 'Memberships', href: '/memberships', icon: Users },
   { name: 'Register Client', href: '/register', icon: User },
   { name: 'Check-ins', href: '/check-ins', icon: Calendar },
+  { name: 'Packages', href: '/packages', icon: Package },
   { name: 'Team', href: '/team', icon: UserCog },
   { name: 'Trainers', href: '/trainers', icon: Dumbbell },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
@@ -44,9 +45,10 @@ const navItemsByRole: Record<'admin' | 'receptionist', string[]> = {
   receptionist: [
     "Dashboard",
     "Register Client",
+    "Check-ins",
+    "Packages",
     "Team",
     "Trainer",
-    "Check-ins",
   ],
 };
 
@@ -208,7 +210,7 @@ export function Sidebar() {
 
         {/* Logout at bottom */}
         <NavLink
-          to="/logout"
+          to="/login"
           className={`flex items-center gap-3 rounded-lg text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 mt-auto ${
         collapsed ? 'px-2 py-3 justify-center' : 'px-3 py-2'
           }`}

@@ -21,6 +21,7 @@ import AdminGyms from '@/pages/admin/gyms';
 import Analytics from '@/pages/admin/analytics';
 import UserManagement from '@/pages/admin/users';
 import AdminSettings from '@/pages/admin/settings'; 
+import Packages from './pages/Packages.tsx';
 
 // Layout component that wraps gym-specific pages
 const GymLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -39,7 +40,7 @@ function App() {
       <div className="App">
         <Routes>
           {/* Admin routes (no gym context needed) */}
-          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/login" element={<AdminLogin />} />
           <Route path="/admin" element={<div>Admin Overview</div>} />
           <Route path="/admin/gyms" element={<AdminGyms />} />
           <Route path="/admin/onboard" element={<OnboardingForm />} />
@@ -57,6 +58,7 @@ function App() {
                 <Route path="/register" element={<RegisterClient />} />
                 <Route path="/team" element={<Team />} />
                 <Route path="/trainers" element={<TrainersList />} />
+                <Route path="/packages" element={<Packages />} />
                 <Route path="/check-ins" element={<CheckIns />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/settings" element={<Settings />} />

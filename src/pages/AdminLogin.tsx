@@ -50,42 +50,149 @@ export default function AdminLogin() {
   async function onSubmit(values: z.infer<typeof loginSchema>) {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // 1. Authenticate with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: values.email,
         password: values.password,
       });
 
-      if (error) {
+      if (authError) {
         toast({
           title: "Login failed",
-          description: error.message,
+          description: authError.message,
           variant: "destructive",
         });
         return;
       }
 
-      // Check if user exists and is admin (replace this with your real admin check if needed)
-      if (data.user) {
-        // Optionally, fetch user profile/role from your DB here and check for admin role
-        toast({
-          title: "Login successful",
-          description: "Welcome to the admin dashboard",
-        });
-        navigate("/"); // Redirect to dashboard
-      } else {
+      if (!authData.user) {
         toast({
           title: "Login failed",
-          description: "No such admin user found.",
+          description: "No user data returned from authentication.",
           variant: "destructive",
         });
+        return;
       }
-    } catch (error) {
+
+      // 2. Fetch admin/staff record to get gym_id and role
+      let staffRecord = null;
+      
+      // First try to find by user ID
+      const { data: staffById, error: staffByIdError } = await supabase
+        .from('staff')
+        .select(`
+          id,
+          gym_id,
+          first_name,
+          last_name,
+          is_active,
+          roles!inner (
+            id,
+            name
+          ),
+          gyms (
+            id,
+            name,
+            status
+          )
+        `)
+        .eq('id', authData.user.id)
+        .eq('is_active', true)
+        .single();
+
+      if (!staffByIdError && staffById) {
+        staffRecord = staffById;
+      } else {
+        // Fallback: try to find by email if ID lookup fails
+        const { data: staffByEmail, error: staffByEmailError } = await supabase
+          .from('staff')
+          .select(`
+            id,
+            gym_id,
+            first_name,
+            last_name,
+            is_active,
+            roles!inner (
+              id,
+              name
+            ),
+            gyms (
+              id,
+              name,
+              status
+            )
+          `)
+          .eq('email', values.email)
+          .eq('is_active', true)
+          .single();
+
+        if (!staffByEmailError && staffByEmail) {
+          staffRecord = staffByEmail;
+        }
+      }
+
+      if (!staffRecord) {
+        toast({
+          title: "Access denied",
+          description: "No active admin account found for this email. Please contact your system administrator.",
+          variant: "destructive",
+        });
+        // Sign out the user since they don't have proper access
+        await supabase.auth.signOut();
+        return;
+      }
+
+      // 3. Check if user has admin role or other authorized roles
+      const userRole = (staffRecord.roles as any)?.name?.toLowerCase();
+      const authorizedRoles = ['admin', 'manager', 'owner']; // Add roles that can access admin dashboard
+      
+      if (!authorizedRoles.includes(userRole)) {
+        toast({
+          title: "Access denied",
+          description: `Your role (${userRole}) does not have admin dashboard access.`,
+          variant: "destructive",
+        });
+        await supabase.auth.signOut();
+        return;
+      }
+
+      // 4. Check if gym exists and is active
+      const gym = staffRecord.gyms as any;
+      if (!gym || gym.status !== 'active') {
+        toast({
+          title: "Gym access unavailable",
+          description: "The gym associated with your account is not currently active.",
+          variant: "destructive",
+        });
+        await supabase.auth.signOut();
+        return;
+      }
+
+      // 5. Success - redirect to gym-specific dashboard
+      toast({
+        title: "Login successful",
+        description: `Welcome ${staffRecord.first_name}! Redirecting to ${gym.name} dashboard...`,
+      });
+
+      // Navigate to gym-specific dashboard
+      const gymUrl = `/${gym.id}/dashboard`;
+      
+      // Use window.location.href for a full page navigation to ensure proper gym context loading
+      window.location.href = gymUrl;
+      
+      // Alternative: Use navigate if you prefer React Router navigation
+      // navigate(gymUrl);
+
+    } catch (error: any) {
       console.error('Login error:', error);
       toast({
         title: "Login failed",
-        description: "An unexpected error occurred",
+        description: error.message || "An unexpected error occurred during login",
         variant: "destructive",
       });
+      
+      // Ensure user is signed out on any unexpected error
+      await supabase.auth.signOut();
     } finally {
       setIsLoading(false);
     }
@@ -99,14 +206,14 @@ export default function AdminLogin() {
             <Lock className="h-8 w-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900">Admin Login</h1>
-          <p className="text-gray-600 mt-2">Access the fitness hub admin panel</p>
+          <p className="text-gray-600 mt-2">Access your gym's admin dashboard</p>
         </div>
 
         <Card className="w-full shadow-lg">
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl text-center">Sign In</CardTitle>
             <CardDescription className="text-center">
-              Enter your credentials to access the admin dashboard
+              Enter your credentials to access your gym's admin dashboard
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -122,9 +229,10 @@ export default function AdminLogin() {
                         <User className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                         <FormControl>
                           <Input 
-                            placeholder="admin@fitnesshub.com" 
+                            placeholder="admin@yourgym.com" 
                             type="email"
                             className="pl-10"
+                            disabled={isLoading}
                             {...field} 
                           />
                         </FormControl>
@@ -147,6 +255,7 @@ export default function AdminLogin() {
                             placeholder="Enter your password"
                             type={showPassword ? "text" : "password"}
                             className="pl-10 pr-10"
+                            disabled={isLoading}
                             {...field} 
                           />
                         </FormControl>
@@ -156,6 +265,7 @@ export default function AdminLogin() {
                           size="sm"
                           className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                           onClick={togglePasswordVisibility}
+                          disabled={isLoading}
                         >
                           {showPassword ? (
                             <EyeOff className="h-4 w-4 text-gray-400" />
@@ -175,6 +285,7 @@ export default function AdminLogin() {
                       id="remember"
                       type="checkbox"
                       className="rounded border-gray-300 text-fitness-primary focus:ring-fitness-primary"
+                      disabled={isLoading}
                     />
                     <label htmlFor="remember" className="text-sm text-gray-600">
                       Remember me
@@ -193,12 +304,24 @@ export default function AdminLogin() {
                   className="w-full bg-fitness-primary hover:bg-fitness-primary/90 text-white"
                   disabled={isLoading}
                 >
-                  {isLoading ? "Signing In..." : "Sign In"}
+                  {isLoading ? "Signing In..." : "Sign In to Gym Dashboard"}
                 </Button>
               </form>
             </Form>
 
             <div className="mt-6 text-center">
+              <p className="text-sm text-gray-600">
+                Super Admin?{" "}
+                <Link
+                  to="/admin/dashboard"
+                  className="text-fitness-primary hover:text-fitness-primary/80"
+                >
+                  Super Admin Login
+                </Link>
+              </p>
+            </div>
+
+            <div className="mt-4 text-center">
               <p className="text-sm text-gray-600">
                 Need help?{" "}
                 <a
@@ -214,7 +337,7 @@ export default function AdminLogin() {
 
         <div className="mt-8 text-center">
           <p className="text-xs text-gray-500">
-            © 2025 ATL Fitness Hub. All rights reserved.
+            © 2025 CoreFit Gym Management System. All rights reserved.
           </p>
         </div>
       </div>

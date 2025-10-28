@@ -11,12 +11,7 @@ export const SuperAdSidebar: React.FC<SuperAdSidebarProps> = ({ className }) => 
   const location = useLocation();
 
   const navigationItems = [
-    {
-      name: 'Overview',
-      href: '/admin',
-      icon: Home,
-      description: 'Admin dashboard overview'
-    },
+    
     {
       name: 'Gym Management',
       href: '/admin/gyms',
