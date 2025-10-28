@@ -21,6 +21,7 @@ import FreezeModal, { FreezeMode } from "@/components/Modals/FreezeActionModal";
 import { MembershipInfo } from "@/types/memberships";
 import { CoachingSessionData, Trainer } from "@/types/coaching"; // Ensure this matches your types
 import { fetchTrainers } from "@/lib/supabase_trainer_query";
+import FreezeActionModal from "../components/Modals/FreezeActionModal.tsx";
 
 
 const statusColors: Record<string, string> = {
