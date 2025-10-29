@@ -309,18 +309,6 @@ export default function AdminLogin() {
               </form>
             </Form>
 
-            <div className="mt-6 text-center">
-              <p className="text-sm text-gray-600">
-                Super Admin?{" "}
-                <Link
-                  to="/admin/dashboard"
-                  className="text-fitness-primary hover:text-fitness-primary/80"
-                >
-                  Super Admin Login
-                </Link>
-              </p>
-            </div>
-
             <div className="mt-4 text-center">
               <p className="text-sm text-gray-600">
                 Need help?{" "}
