@@ -6,7 +6,7 @@
 import { supabase } from '@/lib/supabaseClient';
 import { ParsedRecord } from '@/utils/importParsers';
 
-export type ImportDataType = 'users' | 'memberships' | 'check_ins' | 'packages';
+export type ImportDataType = 'users' | 'memberships' | 'check_ins' | 'packages' | 'staff';
 export type DuplicateHandling = 'skip' | 'update' | 'create_new';
 
 export interface FieldMapping {
@@ -72,6 +72,19 @@ export const TARGET_FIELDS: Record<ImportDataType, { field: string; label: strin
     { field: 'description', label: 'Description', required: false },
     { field: 'is_active', label: 'Is Active', required: false },
   ],
+  staff: [
+    { field: 'full_name', label: 'Full Name (will split into first/last)', required: false },
+    { field: 'first_name', label: 'First Name', required: false },
+    { field: 'last_name', label: 'Last Name', required: false },
+    { field: 'email', label: 'Email', required: true },
+    { field: 'phone', label: 'Phone', required: false },
+    { field: 'date_of_birth', label: 'Date of Birth', required: false },
+    { field: 'gender', label: 'Gender', required: false },
+    { field: 'role_name', label: 'Role Name', required: false },
+    { field: 'hire_date', label: 'Hire Date', required: false },
+    { field: 'salary', label: 'Salary', required: false },
+    { field: 'is_active', label: 'Is Active', required: false },
+  ],
 };
 
 // Auto-detect field mappings based on common field names
@@ -103,6 +116,10 @@ export function autoDetectMappings(sourceHeaders: string[], dataType: ImportData
     package_name: ['package_name', 'package', 'membership_type', 'plan'],
     start_date: ['start_date', 'start', 'begin_date', 'from_date'],
     expiry_date: ['expiry_date', 'end_date', 'expires', 'valid_until', 'to_date'],
+    role_name: ['role_name', 'role', 'position', 'job_title', 'title'],
+    hire_date: ['hire_date', 'hired_date', 'start_date', 'join_date', 'joined'],
+    salary: ['salary', 'pay', 'wage', 'compensation'],
+    is_active: ['is_active', 'active', 'status', 'enabled'],
   };
   
   for (const target of targetFields) {
@@ -537,6 +554,201 @@ async function importCheckIns(
   return result;
 }
 
+// Import staff/team members
+async function importStaff(
+  data: ParsedRecord[],
+  config: ImportConfig
+): Promise<ImportResult> {
+  const result: ImportResult = {
+    success: true,
+    totalRecords: data.length,
+    imported: 0,
+    skipped: 0,
+    updated: 0,
+    failed: 0,
+    errors: [],
+  };
+  
+  // Fetch roles for mapping
+  const { data: roles } = await supabase.from('roles').select('id, name');
+  const roleMap = new Map(roles?.map(r => [r.name.toLowerCase(), r.id]) || []);
+  
+  for (let i = 0; i < data.length; i++) {
+    const record = data[i];
+    try {
+      const mappedData: Record<string, any> = {};
+      
+      for (const mapping of config.fieldMappings) {
+        if (mapping.sourceField && record[mapping.sourceField] !== undefined) {
+          mappedData[mapping.targetField] = record[mapping.sourceField];
+        }
+      }
+      
+      // Handle full_name - split into first_name and last_name
+      if (mappedData.full_name && (!mappedData.first_name || !mappedData.last_name)) {
+        const nameParts = String(mappedData.full_name).trim().split(/\s+/);
+        if (nameParts.length >= 2) {
+          mappedData.first_name = nameParts[0];
+          mappedData.last_name = nameParts.slice(1).join(' ');
+        } else if (nameParts.length === 1) {
+          mappedData.first_name = nameParts[0];
+          mappedData.last_name = '';
+        }
+      }
+      
+      // Validate required fields
+      if (!mappedData.email) {
+        throw new Error('Email is required for staff import');
+      }
+      
+      // Helper function to validate dates
+      const cleanDate = (dateValue: string | null | undefined): string | null => {
+        if (!dateValue) return null;
+        if (dateValue === '0000-00-00' || dateValue === '0000-00-00 00:00:00') return null;
+        const parsed = new Date(dateValue);
+        if (isNaN(parsed.getTime())) return null;
+        return dateValue;
+      };
+      
+      // Map role name to role_id
+      let roleId: string | null = null;
+      if (mappedData.role_name) {
+        roleId = roleMap.get(String(mappedData.role_name).toLowerCase()) || null;
+      }
+      
+      // Handle is_active conversion
+      let isActive = true;
+      if (mappedData.is_active !== undefined) {
+        isActive = mappedData.is_active === '1' || 
+                   mappedData.is_active === 'true' || 
+                   mappedData.is_active === true ||
+                   mappedData.is_active === 'active';
+      }
+      
+      // Check for existing staff by email
+      const { data: existingStaff } = await supabase
+        .from('staff')
+        .select('id')
+        .eq('email', mappedData.email)
+        .eq('gym_id', config.gymId)
+        .maybeSingle();
+      
+      if (existingStaff) {
+        if (config.duplicateHandling === 'skip') {
+          result.skipped++;
+          continue;
+        } else if (config.duplicateHandling === 'update') {
+          const { error } = await supabase
+            .from('staff')
+            .update({
+              first_name: mappedData.first_name || undefined,
+              last_name: mappedData.last_name || undefined,
+              phone: mappedData.phone || undefined,
+              date_of_birth: cleanDate(mappedData.date_of_birth),
+              gender: mappedData.gender || undefined,
+              role_id: roleId || undefined,
+              hire_date: cleanDate(mappedData.hire_date),
+              salary: mappedData.salary ? parseFloat(mappedData.salary) : undefined,
+              is_active: isActive,
+            })
+            .eq('id', existingStaff.id);
+          
+          if (error) throw error;
+          result.updated++;
+          continue;
+        }
+      }
+      
+      // Generate a temporary password for auth
+      const tempPassword = `Temp${crypto.randomUUID().slice(0, 8)}!`;
+      
+      // Create auth account for staff
+      let userId: string | null = null;
+      
+      // Add delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: mappedData.email,
+        password: tempPassword,
+      });
+      
+      if (authError) {
+        // If rate limited, wait and retry
+        if (authError.message?.includes('rate limit') || (authError as any).status === 429) {
+          console.warn(`Row ${i + 1}: Rate limited, waiting 10 seconds...`);
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          
+          const { data: retryData, error: retryError } = await supabase.auth.signUp({
+            email: mappedData.email,
+            password: tempPassword,
+          });
+          
+          if (retryError) {
+            console.warn(`Row ${i + 1}: Auth creation failed after retry:`, retryError.message);
+            userId = crypto.randomUUID();
+          } else {
+            userId = retryData?.user?.id || crypto.randomUUID();
+          }
+        } else {
+          console.warn(`Row ${i + 1}: Auth creation failed:`, authError.message);
+          userId = crypto.randomUUID();
+        }
+      } else {
+        userId = authData?.user?.id || crypto.randomUUID();
+      }
+      
+      // Generate QR code data for staff
+      const qrData = JSON.stringify({
+        staffId: userId,
+        firstName: mappedData.first_name,
+        lastName: mappedData.last_name || '',
+        roleId: roleId,
+        gymId: config.gymId,
+      });
+      
+      // Insert into staff table
+      const { error } = await supabase
+        .from('staff')
+        .insert({
+          id: userId,
+          first_name: mappedData.first_name || '',
+          last_name: mappedData.last_name || '',
+          email: mappedData.email,
+          phone: mappedData.phone || null,
+          date_of_birth: cleanDate(mappedData.date_of_birth),
+          gender: mappedData.gender || null,
+          role_id: roleId,
+          hire_date: cleanDate(mappedData.hire_date) || new Date().toISOString().split('T')[0],
+          salary: mappedData.salary ? parseFloat(mappedData.salary) : 0,
+          is_active: isActive,
+          gym_id: config.gymId,
+          qr_code: qrData,
+          created_at: new Date().toISOString(),
+        });
+      
+      if (error) {
+        console.error(`Row ${i + 1} Staff Insert Error:`, {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        });
+        throw error;
+      }
+      result.imported++;
+      
+    } catch (error: any) {
+      result.failed++;
+      const errorMsg = error.details || error.hint || error.message || 'Unknown error';
+      result.errors.push(`Row ${i + 1}: ${errorMsg}`);
+      console.error(`Import failed for row ${i + 1}:`, error);
+    }
+  }
+  
+  result.success = result.failed === 0;
+  return result;
+}
+
 // Main import function
 export async function importData(
   data: ParsedRecord[],
@@ -552,6 +764,8 @@ export async function importData(
     case 'memberships':
       // Memberships are handled as part of users for now
       return importUsers(data, config);
+    case 'staff':
+      return importStaff(data, config);
     default:
       return {
         success: false,

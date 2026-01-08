@@ -422,6 +422,7 @@ export default function ImportPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="users">Users / Members</SelectItem>
+                          <SelectItem value="staff">Staff / Team</SelectItem>
                           <SelectItem value="packages">Packages</SelectItem>
                           <SelectItem value="check_ins">Check-ins</SelectItem>
                         </SelectContent>
