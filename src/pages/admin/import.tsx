@@ -684,14 +684,25 @@ export default function ImportPage() {
               {currentStep === 'result' && importResult && (
                 <div className="space-y-6">
                   <div className="text-center py-4">
-                    {importResult.success ? (
+                    {importResult.cancelled ? (
+                      <StopCircle className="h-16 w-16 mx-auto text-orange-600" />
+                    ) : importResult.success ? (
                       <CheckCircle2 className="h-16 w-16 mx-auto text-green-600" />
                     ) : (
                       <AlertCircle className="h-16 w-16 mx-auto text-yellow-600" />
                     )}
                     <h2 className="text-xl font-semibold mt-4">
-                      {importResult.success ? 'Import Successful' : 'Import Completed with Issues'}
+                      {importResult.cancelled 
+                        ? 'Import Cancelled' 
+                        : importResult.success 
+                          ? 'Import Successful' 
+                          : 'Import Completed with Issues'}
                     </h2>
+                    {importResult.cancelled && (
+                      <p className="text-gray-500 mt-2">
+                        The import was cancelled. {importResult.imported} records were imported before cancellation.
+                      </p>
+                    )}
                   </div>
                   
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
