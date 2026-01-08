@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Badge } from '@/components/ui/badge'
 import { Search, User as UserIcon, Users as UsersIcon, Phone, Mail } from 'lucide-react'
 import { smsService } from '@/services/smsService'
+import { useGym } from '@/contexts/GymContext'
 import type { User } from '@/types/db'
 
 interface UserSelectorProps {
@@ -23,6 +24,7 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
   selectedUsers,
   mode
 }) => {
+  const { gym } = useGym()
   const [isOpen, setIsOpen] = useState(false)
   const [users, setUsers] = useState<User[]>([])
   const [filteredUsers, setFilteredUsers] = useState<User[]>([])
@@ -59,7 +61,7 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
   }, [users, searchTerm, membershipFilter, statusFilter, userTypeFilter])
 
   const loadPackages = async () => {
-    const res = await smsService.getPackages()
+    const res = await smsService.getPackages(gym?.id)
     if (res.success) setPackages(res.data || [])
     else setPackages([])
   }
@@ -74,13 +76,13 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
     setIsLoading(true)
     try {
       if (userTypeFilter === 'all' || userTypeFilter === 'member') {
-        const res = await smsService.searchUsers('', 200)
+        const res = await smsService.searchUsers('', 200, gym?.id)
         if (res.success) setUsers(res.data || [])
         else setUsers([])
       } else {
         // treat userTypeFilter as a role name for staff
         const roleName = userTypeFilter
-        const res = await smsService.getStaffByRole(roleName)
+        const res = await smsService.getStaffByRole(roleName, gym?.id)
         if (res.success) setUsers(res.data || [])
         else setUsers([])
       }

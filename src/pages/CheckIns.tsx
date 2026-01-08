@@ -783,6 +783,7 @@ export default function CheckIns() {
       const { data: userByQrCode, error: qrCodeErr } = await supabase
         .from('users')
         .select('id, first_name, last_name, email, package_id, packages(name), qr_code_data')
+        .eq('gym_id', gym?.id)
         .eq('qr_code_data', code)
         .maybeSingle();
 
@@ -808,10 +809,13 @@ export default function CheckIns() {
           checkin_date: dateStr,
         };
 
+        const packageInfo = userByQrCode.packages as any;
         const extendedCheckInData = {
           ...checkInData,
           'QR-CODE USED': true,
-          package_type_at_checkin: userByQrCode.packages?.name || null,
+          package_type_at_checkin: Array.isArray(packageInfo) 
+            ? packageInfo[0]?.name || null 
+            : packageInfo?.name || null,
         };
 
         let { error: insertError } = await supabase
@@ -841,6 +845,7 @@ export default function CheckIns() {
       const { data: staffByQrCode, error: staffQrErr } = await supabase
         .from('staff')
         .select('id, first_name, last_name, email, role_id, roles(name), qr_code')
+        .eq('gym_id', gym?.id)
         .eq('qr_code', code)
         .maybeSingle();
 
@@ -919,6 +924,7 @@ export default function CheckIns() {
         const { data: userById } = await supabase
           .from('users')
           .select('id, first_name, last_name, email, package_id, packages(name)')
+          .eq('gym_id', gym?.id)
           .eq('id', id)
           .maybeSingle();
         
@@ -933,6 +939,7 @@ export default function CheckIns() {
         const { data: staffById } = await supabase
           .from('staff')
           .select('id, first_name, last_name, email, role_id, roles(name)')
+          .eq('gym_id', gym?.id)
           .eq('id', id)
           .maybeSingle();
         

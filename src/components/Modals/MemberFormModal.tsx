@@ -217,7 +217,8 @@ export default function MemberFormModal({
         const { error } = await supabase
           .from('staff')
           .update(updateData)
-          .eq('id', memberToEdit.id);
+          .eq('id', memberToEdit.id)
+          .eq('gym_id', gym?.id); // Ensure staff belongs to this gym
 
         if (error) {
           toast({

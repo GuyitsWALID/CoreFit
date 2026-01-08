@@ -301,10 +301,12 @@ export default function MembershipList() {
 
   // Fetch available packages for upgrade
   const fetchPackages = async () => {
+    if (!gym || gym.id === 'default') return;
     try {
       const { data, error } = await supabase
         .from('packages')
         .select('id, name, price')
+        .eq('gym_id', gym.id)
         .order('price', { ascending: true });
       
       if (!error) {

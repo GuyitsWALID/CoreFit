@@ -219,7 +219,8 @@ export default function Packages() {
       const { error } = await supabase
         .from('packages')
         .update({ archived: !isArchived })
-        .eq('id', id);
+        .eq('id', id)
+        .eq('gym_id', gym?.id); // Ensure package belongs to this gym
 
       if (error) {
         toast({
@@ -251,7 +252,8 @@ export default function Packages() {
       const { error } = await supabase
         .from('packages')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('gym_id', gym?.id); // Ensure package belongs to this gym
 
       if (error) {
         toast({
@@ -314,7 +316,8 @@ export default function Packages() {
         const { error } = await supabase
           .from('packages')
           .update(packageData)
-          .eq('id', formData.id);
+          .eq('id', formData.id)
+          .eq('gym_id', gym.id); // Ensure package belongs to this gym
 
         if (error) {
           toast({

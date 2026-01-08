@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,8 @@ import {
   RefreshCw,
   ArrowRight,
   ArrowLeft,
-  Menu
+  Menu,
+  StopCircle
 } from 'lucide-react';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -76,6 +77,7 @@ export default function ImportPage() {
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   // Loading
   const [loading, setLoading] = useState(true);
@@ -187,6 +189,9 @@ export default function ImportPage() {
   const runImport = async () => {
     if (!parseResult || !selectedGymId) return;
     
+    // Create new abort controller for this import
+    abortControllerRef.current = new AbortController();
+    
     setImporting(true);
     setImportProgress(0);
     setCurrentStep('import');
@@ -204,14 +209,20 @@ export default function ImportPage() {
         setImportProgress(prev => Math.min(prev + 10, 90));
       }, 500);
       
-      const result = await importData(parseResult.data, config);
+      const result = await importData(parseResult.data, config, abortControllerRef.current.signal);
       
       clearInterval(progressInterval);
       setImportProgress(100);
       setImportResult(result);
       setCurrentStep('result');
       
-      if (result.success) {
+      if (result.cancelled) {
+        toast({
+          title: 'Import Cancelled',
+          description: `Import was cancelled. ${result.imported} records were imported before cancellation.`,
+          variant: 'destructive',
+        });
+      } else if (result.success) {
         toast({
           title: 'Import Complete',
           description: `Successfully imported ${result.imported} records`,
@@ -231,11 +242,28 @@ export default function ImportPage() {
       });
     } finally {
       setImporting(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  // Cancel import
+  const cancelImport = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      toast({
+        title: 'Cancelling Import',
+        description: 'Please wait while the import is being cancelled...',
+      });
     }
   };
 
   // Reset import
   const resetImport = () => {
+    // Cancel any ongoing import first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setCurrentStep('config');
     setFile(null);
     setFileContent('');
@@ -243,6 +271,7 @@ export default function ImportPage() {
     setFieldMappings([]);
     setImportResult(null);
     setImportProgress(0);
+    setImporting(false);
   };
 
   // Download template
@@ -635,6 +664,19 @@ export default function ImportPage() {
                   </div>
                   <Progress value={importProgress} className="max-w-md mx-auto" />
                   <p className="text-sm text-gray-500">{importProgress}% complete</p>
+                  
+                  {/* Cancel Button */}
+                  <Button 
+                    variant="destructive" 
+                    onClick={cancelImport}
+                    className="mt-4"
+                  >
+                    <StopCircle className="h-4 w-4 mr-2" />
+                    Cancel Import
+                  </Button>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Records imported before cancellation will be kept
+                  </p>
                 </div>
               )}
 

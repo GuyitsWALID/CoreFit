@@ -233,6 +233,7 @@ export default function TrainersList() {
           const { data: packages } = await supabase
             .from('packages')
             .select('id, name, price')
+            .eq('gym_id', gym.id)
             .eq('requires_trainer', true)
             .order('name');
 
@@ -261,9 +262,11 @@ export default function TrainersList() {
 
 
   const fetchPackages = async () => {
+    if (!gym || gym.id === 'default') return;
     const { data } = await supabase
       .from('packages')
       .select('id, name')
+      .eq('gym_id', gym.id)
       .eq('requires_trainer', true)
       .order('name');
     

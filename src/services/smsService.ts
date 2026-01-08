@@ -111,13 +111,19 @@ class SMSService {
     }
   }
 
-  async getPackages(): GenericResponse<{ id: string; name: string }[]> {
+  async getPackages(gymId?: string): GenericResponse<{ id: string; name: string }[]> {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('packages')
         .select('id, name')
         .eq('archived', false)
         .order('name', { ascending: true })
+      
+      if (gymId) {
+        query = query.eq('gym_id', gymId)
+      }
+      
+      const { data, error } = await query
       if (error) return { success: false, error: error.message }
       return { success: true, data }
     } catch (err: unknown) {
@@ -139,7 +145,7 @@ class SMSService {
    * Fetch staff for a given role name (e.g., "trainer", "receptionist", "admin")
    * Returns them mapped into a User-like shape for the selector.
    */
-  async getStaffByRole(roleName: string): GenericResponse<User[]> {
+  async getStaffByRole(roleName: string, gymId?: string): GenericResponse<User[]> {
     try {
       // 1) find role id
       const { data: roleData, error: roleErr } = await supabase.from('roles').select('id, name').eq('name', roleName).limit(1).single()
@@ -149,12 +155,18 @@ class SMSService {
       const roleId = roleData.id
 
       // 2) fetch staff with that role_id
-      const { data: staffData, error: staffErr } = await supabase
+      let query = supabase
         .from('staff')
         .select('id, first_name, last_name, full_name, email, phone, role_id, is_active')
         .eq('role_id', roleId)
         .eq('is_active', true)
         .order('full_name', { ascending: true })
+
+      if (gymId) {
+        query = query.eq('gym_id', gymId)
+      }
+
+      const { data: staffData, error: staffErr } = await query
 
       if (staffErr) return { success: false, error: staffErr.message }
 
@@ -181,12 +193,16 @@ class SMSService {
   /**
    * Search users (members). Returns membership_type from package.name for compatibility.
    */
-  async searchUsers(searchTerm = '', limit = 50): GenericResponse {
+  async searchUsers(searchTerm = '', limit = 50, gymId?: string): GenericResponse {
     try {
       let query = supabase
         .from('users')
         .select('id, first_name, last_name, full_name, email, phone, package_id, membership_expiry, created_at, status, package:packages(name)')
         .limit(limit)
+
+      if (gymId) {
+        query = query.eq('gym_id', gymId)
+      }
 
       if (searchTerm && searchTerm.trim().length > 0) {
         const like = `%${searchTerm.replace(/%/g, '\\%')}%`
@@ -223,13 +239,18 @@ class SMSService {
     }
   }
 
-  async getUserById(userId: string): GenericResponse {
+  async getUserById(userId: string, gymId?: string): GenericResponse {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('users')
         .select('id, first_name, last_name, full_name, email, phone, package_id, membership_expiry, created_at, status, package:packages(name)')
         .eq('id', userId)
-        .single()
+      
+      if (gymId) {
+        query = query.eq('gym_id', gymId)
+      }
+      
+      const { data, error } = await query.single()
       if (error) return { success: false, error: error.message }
 
       const pkg: PackageJoin = (data as any)?.package ?? null

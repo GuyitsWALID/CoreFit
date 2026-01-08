@@ -168,7 +168,7 @@ export default function TeamManagement() {
     try {
       await Promise.all(
         missing.map(m =>
-          supabase.from('staff').update({ qr_code: buildStaffQr(m) }).eq('id', m.id)
+          supabase.from('staff').update({ qr_code: buildStaffQr(m) }).eq('id', m.id).eq('gym_id', gym?.id)
         )
       );
       await fetchTeamMembers();
@@ -240,7 +240,7 @@ export default function TeamManagement() {
         try {
           const value = row.qr_code || buildStaffQr(row);
           if (!row.qr_code) {
-            await supabase.from('staff').update({ qr_code: value }).eq('id', row.id);
+            await supabase.from('staff').update({ qr_code: value }).eq('id', row.id).eq('gym_id', gym?.id);
           }
           await fetchTeamMembers();
           setQrInfo({
@@ -277,7 +277,8 @@ export default function TeamManagement() {
     const { error } = await supabase
       .from('staff')
       .update({ is_active: newActive })
-      .eq('id', pendingActiveMember.id);
+      .eq('id', pendingActiveMember.id)
+      .eq('gym_id', gym?.id); // Ensure staff belongs to this gym
 
     if (error) {
       toast({ title: "Update failed", description: error.message, variant: "destructive" });
@@ -302,7 +303,7 @@ export default function TeamManagement() {
     try {
       let value = member.qr_code || buildStaffQr(member);
       if (!member.qr_code) {
-        const { error } = await supabase.from('staff').update({ qr_code: value }).eq('id', member.id);
+        const { error } = await supabase.from('staff').update({ qr_code: value }).eq('id', member.id).eq('gym_id', gym?.id);
         if (error) throw error;
         // refresh local list so member now has qr_code
         await fetchTeamMembers();

@@ -1,6 +1,7 @@
 // src/pages/Reports.tsx
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { useGym } from '@/contexts/GymContext';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, BarChart, Bar
@@ -21,6 +22,7 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#E57373', '#9575CD'
 const CTA_BG = '#6C9D9A'; // export & refresh button color requested
 
 export default function ReportsPage(): JSX.Element {
+  const { gym, loading: gymLoading } = useGym();
   // Controls
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | 'custom'>('30d');
   const [customFrom, setCustomFrom] = useState<string>('');
@@ -49,10 +51,12 @@ export default function ReportsPage(): JSX.Element {
   const [revenueData, setRevenueData] = useState<RevenuePoint[]>([]);
 
   useEffect(() => {
-    fetchPackagesAndRoles();
-    fetchAllAnalytics();
+    if (gym && !gymLoading) {
+      fetchPackagesAndRoles();
+      fetchAllAnalytics();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange, customFrom, customTo, revenuePackageFilter]);
+  }, [gym, gymLoading, timeRange, customFrom, customTo, revenuePackageFilter]);
 
   function rangeToDates(range: string) {
     const now = new Date();
@@ -73,7 +77,7 @@ export default function ReportsPage(): JSX.Element {
 
   async function fetchPackagesAndRoles() {
     try {
-      const { data: pkgs } = await supabase.from('packages').select('name').order('name');
+      const { data: pkgs } = await supabase.from('packages').select('name').eq('gym_id', gym?.id).order('name');
       if (pkgs?.length) setPackagesList(pkgs.map((p: any) => p.name));
     } catch (e) {
       // ignore
@@ -98,7 +102,7 @@ export default function ReportsPage(): JSX.Element {
       const range = rangeToDates(timeRange);
 
       // --- User growth ---
-      const usersQuery = supabase.from('users').select('id, created_at').order('created_at', { ascending: true });
+      const usersQuery = supabase.from('users').select('id, created_at').eq('gym_id', gym?.id).order('created_at', { ascending: true });
       if (range) usersQuery.gte('created_at', range.from).lte('created_at', range.to);
       const { data: usersData, error: usersErr } = await usersQuery;
       if (usersErr) throw usersErr;
@@ -112,7 +116,7 @@ export default function ReportsPage(): JSX.Element {
       const userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
 
       // --- Packages & member status ---
-      const pkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').order('created_at', { ascending: true });
+      const pkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').eq('gym_id', gym?.id).order('created_at', { ascending: true });
       if (range) pkgQuery.gte('created_at', range.from).lte('created_at', range.to);
       const { data: pkgData, error: pkgErr } = await pkgQuery;
       if (pkgErr) throw pkgErr;
@@ -129,7 +133,8 @@ export default function ReportsPage(): JSX.Element {
       // We'll fetch package_price and one_to_one_coaching_cost (no date filter) and aggregate totals.
     const { data: revenueRows, error: revenueError } = await supabase
       .from("user_combined_costs")
-      .select("package_price, one_to_one_coaching_cost, total_monthly_cost");
+      .select("package_price, one_to_one_coaching_cost, total_monthly_cost")
+      .eq('gym_id', gym?.id);
 
     if (revenueError) {
       console.error("Revenue fetch error:", revenueError);
@@ -164,7 +169,7 @@ export default function ReportsPage(): JSX.Element {
       const memberStatusArr = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
 
       // --- Staff breakdown (resolve role names) ---
-      const { data: staffData, error: staffErr } = await supabase.from('staff').select('id, full_name, is_active, role_id').order('created_at', { ascending: true });
+      const { data: staffData, error: staffErr } = await supabase.from('staff').select('id, full_name, is_active, role_id').eq('gym_id', gym?.id).order('created_at', { ascending: true });
       if (staffErr) throw staffErr;
       const staff = (staffData ?? []) as StaffRow[];
       const roleCounts: Record<string, number> = {};
@@ -216,6 +221,7 @@ export default function ReportsPage(): JSX.Element {
       const { data, error } = await supabase
         .from('users_with_membership_info')
         .select('user_id, full_name, email, phone, created_at, membership_expiry, days_left, package_name')
+        .eq('gym_id', gym?.id)
         .eq('package_name', pkgName)
         .order('created_at', { ascending: true })
         .limit(1000);
@@ -238,6 +244,7 @@ export default function ReportsPage(): JSX.Element {
       const { data: rows, error } = await supabase
         .from('user_combined_costs')
         .select('id, user_id, package_price, one_to_one_coaching_cost, package_name, created_at')
+        .eq('gym_id', gym?.id)
         .limit(5000);
       if (error) throw error;
       const raw = (rows ?? []) as CombinedRow[];

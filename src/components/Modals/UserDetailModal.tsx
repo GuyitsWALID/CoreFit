@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { useGym } from "@/contexts/GymContext";
 
 interface UserDetailModalProps {
   userId: string;
@@ -10,23 +11,25 @@ interface UserDetailModalProps {
 }
 
 export default function UserDetailModal({ userId, isOpen, onClose }: UserDetailModalProps) {
+  const { gym } = useGym();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (isOpen && userId) {
+    if (isOpen && userId && gym?.id) {
       setLoading(true);
       supabase
         .from("users")
         .select("id, first_name, last_name, email, phone, date_of_birth, gender, package_id, packages(name), emergency_name, emergency_phone")
         .eq("id", userId)
+        .eq("gym_id", gym.id) // Ensure user belongs to this gym
         .single()
         .then(({ data }) => {
           setUser(data);
         })
         .finally(() => setLoading(false));
     }
-  }, [isOpen, userId]);
+  }, [isOpen, userId, gym?.id]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>

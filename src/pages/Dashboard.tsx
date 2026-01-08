@@ -137,6 +137,7 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from('users')
         .select('created_at')
+        .eq('gym_id', gym?.id)
         .gte('created_at', start.toISOString())
         .lte('created_at', now.toISOString())
         .order('created_at', { ascending: true });
@@ -205,13 +206,15 @@ export default function Dashboard() {
       // Total Members: users count
       const { count: usersCount, error: usersErr } = await supabase
         .from('users')
-        .select('*', { count: 'exact', head: true });
+        .select('*', { count: 'exact', head: true })
+        .eq('gym_id', gym?.id);
       if (!usersErr && typeof usersCount === 'number') setTotalMembers(usersCount || 0);
 
       // Today's client check-ins (from client_checkins)
       const { count: ciCount, error: ciErr } = await supabase
         .from('client_checkins')
         .select('*', { count: 'exact' })
+        .eq('gym_id', gym?.id)
         .eq('checkin_date', todayStr);
       if (!ciErr && typeof ciCount === 'number') setTodayCheckIns(ciCount || 0);
 
@@ -219,6 +222,7 @@ export default function Dashboard() {
       const { count: activeCnt } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
+        .eq('gym_id', gym?.id)
         .ilike('status', 'active%')
         .gte('membership_expiry', new Date().toISOString());
       if (typeof activeCnt === 'number') setActiveMembers(activeCnt || 0);
@@ -227,6 +231,7 @@ export default function Dashboard() {
       const { data: newUsers } = await supabase
         .from('users')
         .select('id, created_at, package_id, packages(price)')
+        .eq('gym_id', gym?.id)
         .not('package_id', 'is', null)
         .gte('created_at', dayStartISO)
         .lte('created_at', dayEndISO);
@@ -248,6 +253,7 @@ export default function Dashboard() {
       const { data: activeUsers } = await supabase
         .from('users')
         .select('id, package_id, packages(price)')
+        .eq('gym_id', gym?.id)
         .not('package_id', 'is', null)
         .ilike('status', 'active%')
         .gte('membership_expiry', new Date().toISOString());
@@ -261,6 +267,7 @@ export default function Dashboard() {
       const { data: activeCoaching } = await supabase
         .from('one_to_one_coaching')
         .select('hourly_rate, days_per_week, hours_per_session, status')
+        .eq('gym_id', gym?.id)
         .eq('status', 'active');
       const coachingTotal = (activeCoaching || []).reduce((sum: number, r: any) => {
         const hr = Number(r?.hourly_rate || 0);
@@ -291,6 +298,7 @@ export default function Dashboard() {
       const { data } = await supabase
         .from('users')
         .select('id, full_name, phone, membership_expiry, packages(name)')
+        .eq('gym_id', gym?.id)
         .not('membership_expiry', 'is', null)
         .gte('membership_expiry', now.toISOString())
         .lte('membership_expiry', in10.toISOString())
@@ -325,6 +333,7 @@ export default function Dashboard() {
       const { data } = await supabase
         .from('users')
         .select('id, full_name, phone, membership_expiry, packages(name)')
+        .eq('gym_id', gym?.id)
         .not('membership_expiry', 'is', null)
         .lt('membership_expiry', now.toISOString())
         .order('membership_expiry', { ascending: false });
@@ -357,6 +366,7 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from('client_checkins')
         .select('id, checkin_time, users(full_name, packages(name))')
+        .eq('gym_id', gym?.id)
         .eq('checkin_date', todayStr)
         .order('checkin_time', { ascending: false })
         .limit(10);
@@ -382,6 +392,7 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from('staff_checkins')
         .select('id, checkin_time, staff(first_name, last_name, roles(name))')
+        .eq('gym_id', gym?.id)
         .eq('checkin_date', todayStr)
         .order('checkin_time', { ascending: false })
         .limit(5);
@@ -406,6 +417,7 @@ export default function Dashboard() {
       const { data } = await supabase
         .from('notification_templates')
         .select('id, name, title, body')
+        .eq('gym_id', gym?.id)
         .order('created_at', { ascending: false });
       setTemplates(data || []);
       if ((data || []).length > 0) setSelectedTemplateId((data as any[])[0].id);

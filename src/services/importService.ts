@@ -29,6 +29,7 @@ export interface ImportResult {
   updated: number;
   failed: number;
   errors: string[];
+  cancelled?: boolean;
 }
 
 // Target fields for each data type
@@ -147,7 +148,8 @@ export function autoDetectMappings(sourceHeaders: string[], dataType: ImportData
 // Import users
 async function importUsers(
   data: ParsedRecord[],
-  config: ImportConfig
+  config: ImportConfig,
+  signal?: AbortSignal
 ): Promise<ImportResult> {
   const result: ImportResult = {
     success: true,
@@ -160,6 +162,13 @@ async function importUsers(
   };
   
   for (let i = 0; i < data.length; i++) {
+    // Check for cancellation at the start of each iteration
+    if (signal?.aborted) {
+      result.cancelled = true;
+      result.errors.push(`Import cancelled by user after ${result.imported} records`);
+      break;
+    }
+    
     const record = data[i];
     try {
       const mappedData: Record<string, any> = {};
@@ -342,7 +351,7 @@ async function importUsers(
           first_name: mappedData.first_name,
           last_name: mappedData.last_name || '',
           email: mappedData.email || null,
-          phone: mappedData.phone || null,
+          phone: mappedData.phone || '',  // phone is NOT NULL, use empty string
           gender: mappedData.gender || null,
           date_of_birth: mappedData.date_of_birth || null,
           emergency_name: mappedData.emergency_name || null,
@@ -384,7 +393,8 @@ async function importUsers(
 // Import packages
 async function importPackages(
   data: ParsedRecord[],
-  config: ImportConfig
+  config: ImportConfig,
+  signal?: AbortSignal
 ): Promise<ImportResult> {
   const result: ImportResult = {
     success: true,
@@ -397,6 +407,13 @@ async function importPackages(
   };
   
   for (let i = 0; i < data.length; i++) {
+    // Check for cancellation at the start of each iteration
+    if (signal?.aborted) {
+      result.cancelled = true;
+      result.errors.push(`Import cancelled by user after ${result.imported} records`);
+      break;
+    }
+    
     const record = data[i];
     try {
       const mappedData: Record<string, any> = {};
@@ -476,7 +493,8 @@ async function importPackages(
 // Import check-ins
 async function importCheckIns(
   data: ParsedRecord[],
-  config: ImportConfig
+  config: ImportConfig,
+  signal?: AbortSignal
 ): Promise<ImportResult> {
   const result: ImportResult = {
     success: true,
@@ -492,6 +510,13 @@ async function importCheckIns(
   const userCache: Record<string, string> = {};
   
   for (let i = 0; i < data.length; i++) {
+    // Check for cancellation at the start of each iteration
+    if (signal?.aborted) {
+      result.cancelled = true;
+      result.errors.push(`Import cancelled by user after ${result.imported} records`);
+      break;
+    }
+    
     const record = data[i];
     try {
       const mappedData: Record<string, any> = {};
@@ -557,7 +582,8 @@ async function importCheckIns(
 // Import staff/team members
 async function importStaff(
   data: ParsedRecord[],
-  config: ImportConfig
+  config: ImportConfig,
+  signal?: AbortSignal
 ): Promise<ImportResult> {
   const result: ImportResult = {
     success: true,
@@ -574,6 +600,13 @@ async function importStaff(
   const roleMap = new Map(roles?.map(r => [r.name.toLowerCase(), r.id]) || []);
   
   for (let i = 0; i < data.length; i++) {
+    // Check for cancellation at the start of each iteration
+    if (signal?.aborted) {
+      result.cancelled = true;
+      result.errors.push(`Import cancelled by user after ${result.imported} records`);
+      break;
+    }
+    
     const record = data[i];
     try {
       const mappedData: Record<string, any> = {};
@@ -752,20 +785,21 @@ async function importStaff(
 // Main import function
 export async function importData(
   data: ParsedRecord[],
-  config: ImportConfig
+  config: ImportConfig,
+  signal?: AbortSignal
 ): Promise<ImportResult> {
   switch (config.dataType) {
     case 'users':
-      return importUsers(data, config);
+      return importUsers(data, config, signal);
     case 'packages':
-      return importPackages(data, config);
+      return importPackages(data, config, signal);
     case 'check_ins':
-      return importCheckIns(data, config);
+      return importCheckIns(data, config, signal);
     case 'memberships':
       // Memberships are handled as part of users for now
-      return importUsers(data, config);
+      return importUsers(data, config, signal);
     case 'staff':
-      return importStaff(data, config);
+      return importStaff(data, config, signal);
     default:
       return {
         success: false,
