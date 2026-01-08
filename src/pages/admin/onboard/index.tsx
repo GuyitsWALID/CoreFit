@@ -3,6 +3,9 @@ import { useGymOnboard } from '@/hooks/useGymOnboard';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { Button } from '@/components/ui/button';
+import { Menu } from 'lucide-react';
 
 // Helper for free address geocoding (OpenStreetMap/Nominatim)
 const geocodeAddress = async (address) => {
@@ -131,11 +134,29 @@ export default function OnboardingForm() {
   const nextStep = () => setStep(prev => Math.min(prev + 1, 4));
   const prevStep = () => setStep(prev => Math.max(prev - 1, 1));
 
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   return (
     <div className="flex h-screen bg-gray-50">
-      <SuperAdSidebar />
+      <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto flex flex-col">
+        {/* Mobile Header */}
+        {isMobile && (
+          <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu size={24} />
+            </Button>
+            <h1 className="font-semibold text-lg text-blue-600">Super Admin</h1>
+          </div>
+        )}
+        <div className="p-4 md:p-6 flex-1">
         <div className="flex justify-center items-start min-h-full">
           <div className="w-full max-w-4xl">
             {/* Card Container */}
@@ -436,6 +457,7 @@ export default function OnboardingForm() {
               )}
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>

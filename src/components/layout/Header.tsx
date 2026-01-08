@@ -115,14 +115,14 @@ export function Header() {
 
   return (
     <>
-      <header className="bg-white border-b border-gray-200 py-4 px-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
+      <header className="bg-white border-b border-gray-200 py-3 md:py-4 px-4 md:px-6 flex items-center justify-between">
+        <div className="hidden md:block">
+          <h1 className="text-xl md:text-2xl font-semibold">Dashboard</h1>
           <p className="text-gray-500 text-sm">
             Welcome back, {userProfile?.full_name || "User"} ({userProfile?.role || "Staff"})
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4 ml-auto">
           {/* System notification for expiring memberships */}
           <DropdownMenu onOpenChange={handleExpiringDropdownOpenChange}>
             <DropdownMenuTrigger asChild>
@@ -179,8 +179,8 @@ export function Header() {
                 <div className="bg-fitness-primary text-white rounded-full p-1">
                   <User size={18} />
                 </div>
-                <span>{userProfile?.full_name || "User"}</span>
-                <span className="text-xs text-gray-400 ml-1">({userProfile?.role || "Staff"})</span>
+                <span className="hidden sm:inline">{userProfile?.full_name || "User"}</span>
+                <span className="hidden md:inline text-xs text-gray-400 ml-1">({userProfile?.role || "Staff"})</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

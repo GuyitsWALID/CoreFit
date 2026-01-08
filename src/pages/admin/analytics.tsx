@@ -18,8 +18,10 @@ import {
   RefreshCw,
   Filter,
   Eye,
-  ArrowUpDown
+  ArrowUpDown,
+  Menu
 } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
 import {
   LineChart,
   Line,
@@ -381,10 +383,13 @@ export default function Analytics() {
       }));
   }, [gyms]);
 
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   if (loading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <SuperAdSidebar />
+        <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex items-center justify-center">
           <div className="animate-pulse text-center">
             <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
@@ -397,10 +402,24 @@ export default function Analytics() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <SuperAdSidebar />
+      <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto flex flex-col">
+        {/* Mobile Header */}
+        {isMobile && (
+          <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu size={24} />
+            </Button>
+            <h1 className="font-semibold text-lg text-blue-600">Super Admin</h1>
+          </div>
+        )}
+        <div className="p-4 md:p-6 space-y-6 flex-1">
           {/* Header */}
           <div className="flex items-center justify-between">
             <div>

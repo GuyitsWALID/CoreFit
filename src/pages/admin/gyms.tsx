@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabaseClient';
-import { Search, Plus, Building, MapPin, Mail, Phone, Filter, MoreHorizontal, Eye, ArrowLeft, UserPlus } from 'lucide-react';
+import { Search, Plus, Building, MapPin, Mail, Phone, Filter, MoreHorizontal, Eye, ArrowLeft, UserPlus, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -16,6 +16,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Eye as EyeIcon, EyeOff } from 'lucide-react';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface Gym {
   id: string;
@@ -429,10 +430,13 @@ export default function AdminGyms() {
       );
     };
 
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   if (isLoading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <SuperAdSidebar />
+        <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex items-center justify-center">
           <div className="animate-pulse">
             <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
@@ -449,10 +453,24 @@ export default function AdminGyms() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <SuperAdSidebar />
+      <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6">
+      <div className="flex-1 overflow-y-auto flex flex-col">
+        {/* Mobile Header */}
+        {isMobile && (
+          <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu size={24} />
+            </Button>
+            <h1 className="font-semibold text-lg text-blue-600">Super Admin</h1>
+          </div>
+        )}
+        <div className="p-4 md:p-6 flex-1">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
