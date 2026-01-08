@@ -245,8 +245,69 @@ async function importUsers(
         // If 'create_new', continue to insert
       }
       
-      // Generate a new UUID for the user
-      const userId = crypto.randomUUID();
+      // Helper function to validate and clean date fields
+      const cleanDate = (dateValue: string | null | undefined): string | null => {
+        if (!dateValue) return null;
+        // Invalid dates from MySQL exports
+        if (dateValue === '0000-00-00' || dateValue === '0000-00-00 00:00:00') return null;
+        // Check if it's a valid date
+        const parsed = new Date(dateValue);
+        if (isNaN(parsed.getTime())) return null;
+        return dateValue;
+      };
+      
+      // Clean date fields
+      mappedData.date_of_birth = cleanDate(mappedData.date_of_birth);
+      mappedData.membership_expiry = cleanDate(mappedData.membership_expiry);
+      
+      // Generate a temporary password for auth (users will need to reset)
+      const tempPassword = `Temp${crypto.randomUUID().slice(0, 8)}!`;
+      
+      // Try to create Supabase Auth account if email exists
+      let userId: string | null = null;
+      
+      if (mappedData.email) {
+        // Add delay to avoid rate limiting (Supabase free tier: ~4 signups per minute)
+        // Wait 1.5 seconds between signups
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: mappedData.email,
+          password: tempPassword,
+          options: {
+            // Don't send confirmation email for bulk imports
+            emailRedirectTo: undefined,
+          }
+        });
+        
+        if (authError) {
+          // If rate limited, wait longer and retry once
+          if (authError.message?.includes('rate limit') || authError.status === 429) {
+            console.warn(`Row ${i + 1}: Rate limited, waiting 10 seconds before retry...`);
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            
+            const { data: retryData, error: retryError } = await supabase.auth.signUp({
+              email: mappedData.email,
+              password: tempPassword,
+            });
+            
+            if (retryError) {
+              console.warn(`Row ${i + 1}: Auth creation failed after retry for ${mappedData.email}:`, retryError.message);
+              userId = crypto.randomUUID();
+            } else {
+              userId = retryData?.user?.id || crypto.randomUUID();
+            }
+          } else {
+            console.warn(`Row ${i + 1}: Auth creation failed for ${mappedData.email}:`, authError.message);
+            userId = crypto.randomUUID();
+          }
+        } else {
+          userId = authData?.user?.id || crypto.randomUUID();
+        }
+      } else {
+        // No email - generate UUID without auth
+        userId = crypto.randomUUID();
+      }
       
       // Generate QR code data
       const qrData = JSON.stringify({
@@ -256,33 +317,46 @@ async function importUsers(
         gymId: config.gymId,
       });
       
-      // Use the RPC function to insert the user (same as RegisterClient.tsx)
-      const { error } = await supabase.rpc('register_user_profile', {
-        p_user_id: userId,
-        p_first_name: mappedData.first_name,
-        p_last_name: mappedData.last_name || '',
-        p_gender: mappedData.gender || null,
-        p_email: mappedData.email || null,
-        p_phone: mappedData.phone || null,
-        p_emergency_name: mappedData.emergency_name || null,
-        p_emergency_phone: mappedData.emergency_phone || null,
-        p_relationship: mappedData.relationship || null,
-        p_fitness_goal: mappedData.fitness_goal || null,
-        p_package_id: null,
-        p_membership_expiry: mappedData.membership_expiry || null,
-        p_trainer_id: null,
-        p_status: mappedData.status || 'active',
-        p_date_of_birth: mappedData.date_of_birth || null,
-        p_qr_code_data: qrData,
-        p_gym_id: config.gymId,
-      });
+      // Insert into users table (full_name is a generated column, don't include it)
+      const { error } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          first_name: mappedData.first_name,
+          last_name: mappedData.last_name || '',
+          email: mappedData.email || null,
+          phone: mappedData.phone || null,
+          gender: mappedData.gender || null,
+          date_of_birth: mappedData.date_of_birth || null,
+          emergency_name: mappedData.emergency_name || null,
+          emergency_phone: mappedData.emergency_phone || null,
+          relationship: mappedData.relationship || null,
+          fitness_goal: mappedData.fitness_goal || null,
+          status: mappedData.status || 'active',
+          membership_expiry: mappedData.membership_expiry || null,
+          gym_id: config.gymId,
+          qr_code_data: qrData,
+          created_at: new Date().toISOString(),
+        });
       
-      if (error) throw error;
+      if (error) {
+        // Log detailed error for debugging
+        console.error(`Row ${i + 1} Insert Error:`, {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          mappedData: mappedData,
+        });
+        throw error;
+      }
       result.imported++;
       
     } catch (error: any) {
       result.failed++;
-      result.errors.push(`Row ${i + 1}: ${error.message}`);
+      const errorMsg = error.details || error.hint || error.message || 'Unknown error';
+      result.errors.push(`Row ${i + 1}: ${errorMsg}`);
+      console.error(`Import failed for row ${i + 1}:`, error);
     }
   }
   
