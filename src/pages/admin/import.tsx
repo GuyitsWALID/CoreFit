@@ -130,19 +130,30 @@ export default function ImportPage() {
       const content = e.target?.result as string;
       setFileContent(content);
       
+      // Debug: log first 500 chars
+      console.log('File content preview:', content.substring(0, 500));
+      console.log('Selected format:', selectedFormat);
+      
       // Parse the file
       const parser = getParser(selectedFormat);
       const result = parser(content);
+      
+      // Debug: log parse result
+      console.log('Parse result:', result);
+      console.log('Headers found:', result.headers);
+      console.log('Data count:', result.data?.length);
+      
       setParseResult(result);
       
       if (result.success) {
         // Auto-detect field mappings
         const mappings = autoDetectMappings(result.headers, selectedDataType);
+        console.log('Field mappings:', mappings);
         setFieldMappings(mappings);
         
         toast({
           title: 'File parsed successfully',
-          description: `Found ${result.data.length} records with ${result.headers.length} columns`,
+          description: `Found ${result.data.length} records with ${result.headers.length} columns: ${result.headers.join(', ')}`,
         });
       } else {
         toast({

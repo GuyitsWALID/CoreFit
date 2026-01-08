@@ -34,8 +34,9 @@ export interface ImportResult {
 // Target fields for each data type
 export const TARGET_FIELDS: Record<ImportDataType, { field: string; label: string; required: boolean }[]> = {
   users: [
-    { field: 'first_name', label: 'First Name', required: true },
-    { field: 'last_name', label: 'Last Name', required: true },
+    { field: 'full_name', label: 'Full Name (will split into first/last)', required: false },
+    { field: 'first_name', label: 'First Name', required: false },
+    { field: 'last_name', label: 'Last Name', required: false },
     { field: 'email', label: 'Email', required: false },
     { field: 'phone', label: 'Phone', required: false },
     { field: 'gender', label: 'Gender', required: false },
@@ -44,7 +45,7 @@ export const TARGET_FIELDS: Record<ImportDataType, { field: string; label: strin
     { field: 'emergency_phone', label: 'Emergency Contact Phone', required: false },
     { field: 'relationship', label: 'Emergency Contact Relationship', required: false },
     { field: 'fitness_goal', label: 'Fitness Goal', required: false },
-    { field: 'status', label: 'Status', required: false },
+    { field: 'status', label: 'Status (active/inactive)', required: false },
     { field: 'membership_expiry', label: 'Membership Expiry', required: false },
   ],
   memberships: [
@@ -79,16 +80,19 @@ export function autoDetectMappings(sourceHeaders: string[], dataType: ImportData
   const mappings: FieldMapping[] = [];
   
   const commonAliases: Record<string, string[]> = {
-    first_name: ['first_name', 'firstname', 'first', 'fname', 'given_name', 'givenname'],
-    last_name: ['last_name', 'lastname', 'last', 'lname', 'surname', 'family_name', 'familyname'],
+    full_name: ['fullname', 'fullName', 'full_name', 'name', 'member_name', 'client_name'],
+    first_name: ['first_name', 'firstname', 'firstName', 'first', 'fname', 'given_name', 'givenname'],
+    last_name: ['last_name', 'lastname', 'lastName', 'last', 'lname', 'surname', 'family_name', 'familyname'],
     email: ['email', 'e-mail', 'email_address', 'emailaddress', 'mail'],
     phone: ['phone', 'telephone', 'tel', 'mobile', 'cell', 'phone_number', 'phonenumber', 'contact'],
     gender: ['gender', 'sex'],
-    date_of_birth: ['date_of_birth', 'dob', 'birth_date', 'birthdate', 'birthday'],
-    status: ['status', 'state', 'active'],
+    date_of_birth: ['date_of_birth', 'dateOfBirth', 'dob', 'birth_date', 'birthdate', 'birthday'],
+    status: ['status', 'state', 'isActive', 'is_active', 'active'],
     membership_expiry: ['membership_expiry', 'expiry', 'expiry_date', 'expires', 'end_date', 'valid_until'],
-    emergency_name: ['emergency_name', 'emergency_contact', 'emergency_contact_name', 'ice_name'],
-    emergency_phone: ['emergency_phone', 'emergency_contact_phone', 'emergency_number', 'ice_phone'],
+    emergency_name: ['emergency_name', 'emergencyContactName', 'emergency_contact', 'emergency_contact_name', 'ice_name'],
+    emergency_phone: ['emergency_phone', 'emergencyContactPhone', 'emergency_contact_phone', 'emergency_number', 'ice_phone'],
+    relationship: ['relationship', 'emergencyContactRelationship', 'emergency_relationship', 'ice_relationship'],
+    fitness_goal: ['fitness_goal', 'fitnessGoals', 'fitnessGoal', 'fitness_goals', 'goals'],
     name: ['name', 'package_name', 'title'],
     price: ['price', 'cost', 'amount', 'fee'],
     duration: ['duration', 'length', 'period'],
@@ -149,34 +153,67 @@ async function importUsers(
         }
       }
       
-      // Validate required fields
-      if (!mappedData.first_name || !mappedData.last_name) {
+      // Handle full_name - split into first_name and last_name
+      if (mappedData.full_name && (!mappedData.first_name || !mappedData.last_name)) {
+        const nameParts = String(mappedData.full_name).trim().split(/\s+/);
+        if (nameParts.length >= 2) {
+          mappedData.first_name = nameParts[0];
+          mappedData.last_name = nameParts.slice(1).join(' ');
+        } else if (nameParts.length === 1) {
+          mappedData.first_name = nameParts[0];
+          mappedData.last_name = '';
+        }
+      }
+      
+      // Handle isActive -> status conversion
+      if (mappedData.status === '1' || mappedData.status === 'true' || mappedData.status === true) {
+        mappedData.status = 'active';
+      } else if (mappedData.status === '0' || mappedData.status === 'false' || mappedData.status === false) {
+        mappedData.status = 'inactive';
+      }
+      
+      // Handle fitnessGoals array format
+      if (mappedData.fitness_goal && typeof mappedData.fitness_goal === 'string') {
+        // Remove brackets and quotes if it's a JSON array string
+        if (mappedData.fitness_goal.startsWith('[')) {
+          try {
+            const goals = JSON.parse(mappedData.fitness_goal);
+            mappedData.fitness_goal = Array.isArray(goals) ? goals.join(', ') : mappedData.fitness_goal;
+          } catch {
+            // Keep as-is if parsing fails
+          }
+        }
+      }
+      
+      // Validate - need at least a name
+      if (!mappedData.first_name && !mappedData.full_name) {
         result.skipped++;
-        result.errors.push(`Row ${i + 1}: Missing required fields (first_name or last_name)`);
+        result.errors.push(`Row ${i + 1}: Missing required field (first_name or full_name)`);
         continue;
       }
       
-      // Check for duplicates
+      // Check for duplicates - use maybeSingle() instead of single() to avoid 406 errors
       const email = mappedData.email;
       const phone = mappedData.phone;
       
       let existingUser = null;
       if (email) {
-        const { data: existing } = await supabase
+        const { data: existing, error } = await supabase
           .from('users')
           .select('id')
           .eq('gym_id', config.gymId)
           .eq('email', email)
-          .single();
-        existingUser = existing;
-      } else if (phone) {
-        const { data: existing } = await supabase
+          .maybeSingle();
+        if (!error) existingUser = existing;
+      }
+      if (!existingUser && phone) {
+        const { data: existing, error } = await supabase
           .from('users')
           .select('id')
           .eq('gym_id', config.gymId)
           .eq('phone', phone)
-          .single();
-        existingUser = existing;
+          .maybeSingle();
+        if (!error) existingUser = existing;
       }
       
       if (existingUser) {
@@ -184,10 +221,19 @@ async function importUsers(
           result.skipped++;
           continue;
         } else if (config.duplicateHandling === 'update') {
+          // Update existing user directly
           const { error } = await supabase
             .from('users')
             .update({
-              ...mappedData,
+              first_name: mappedData.first_name,
+              last_name: mappedData.last_name || '',
+              gender: mappedData.gender || null,
+              date_of_birth: mappedData.date_of_birth || null,
+              emergency_name: mappedData.emergency_name || null,
+              emergency_phone: mappedData.emergency_phone || null,
+              relationship: mappedData.relationship || null,
+              fitness_goal: mappedData.fitness_goal || null,
+              status: mappedData.status || 'active',
               updated_at: new Date().toISOString(),
             })
             .eq('id', existingUser.id);
@@ -199,36 +245,37 @@ async function importUsers(
         // If 'create_new', continue to insert
       }
       
+      // Generate a new UUID for the user
+      const userId = crypto.randomUUID();
+      
       // Generate QR code data
       const qrData = JSON.stringify({
-        name: `${mappedData.first_name} ${mappedData.last_name}`,
-        email: mappedData.email || '',
-        phone: mappedData.phone || '',
-        gym_id: config.gymId,
-        created_at: new Date().toISOString(),
+        userId: userId,
+        firstName: mappedData.first_name,
+        lastName: mappedData.last_name || '',
+        gymId: config.gymId,
       });
       
-      // Insert new user
-      const { error } = await supabase
-        .from('users')
-        .insert({
-          first_name: mappedData.first_name,
-          last_name: mappedData.last_name,
-          full_name: `${mappedData.first_name} ${mappedData.last_name}`,
-          email: mappedData.email || null,
-          phone: mappedData.phone || null,
-          gender: mappedData.gender || null,
-          date_of_birth: mappedData.date_of_birth || null,
-          emergency_name: mappedData.emergency_name || null,
-          emergency_phone: mappedData.emergency_phone || null,
-          relationship: mappedData.relationship || null,
-          fitness_goal: mappedData.fitness_goal || null,
-          status: mappedData.status || 'active',
-          membership_expiry: mappedData.membership_expiry || null,
-          gym_id: config.gymId,
-          qr_code_data: qrData,
-          created_at: new Date().toISOString(),
-        });
+      // Use the RPC function to insert the user (same as RegisterClient.tsx)
+      const { error } = await supabase.rpc('register_user_profile', {
+        p_user_id: userId,
+        p_first_name: mappedData.first_name,
+        p_last_name: mappedData.last_name || '',
+        p_gender: mappedData.gender || null,
+        p_email: mappedData.email || null,
+        p_phone: mappedData.phone || null,
+        p_emergency_name: mappedData.emergency_name || null,
+        p_emergency_phone: mappedData.emergency_phone || null,
+        p_relationship: mappedData.relationship || null,
+        p_fitness_goal: mappedData.fitness_goal || null,
+        p_package_id: null,
+        p_membership_expiry: mappedData.membership_expiry || null,
+        p_trainer_id: null,
+        p_status: mappedData.status || 'active',
+        p_date_of_birth: mappedData.date_of_birth || null,
+        p_qr_code_data: qrData,
+        p_gym_id: config.gymId,
+      });
       
       if (error) throw error;
       result.imported++;

@@ -74,9 +74,74 @@ function parseCSVLine(line: string): string[] {
  */
 export function parseJSON(content: string): ParseResult {
   try {
-    const parsed = JSON.parse(content);
+    let parsed;
+    const trimmedContent = content.trim();
     
-    if (Array.isArray(parsed)) {
+    // Try to parse as-is first
+    try {
+      parsed = JSON.parse(trimmedContent);
+    } catch {
+      // If parsing fails, the content might be multiple JSON objects without array brackets
+      // Try wrapping in brackets
+      let fixedContent = trimmedContent;
+      
+      // Remove trailing comma if present
+      if (fixedContent.endsWith(',')) {
+        fixedContent = fixedContent.slice(0, -1);
+      }
+      
+      // Check if it starts with { but not [
+      if (fixedContent.startsWith('{')) {
+        // Wrap in array brackets
+        fixedContent = '[' + fixedContent + ']';
+      }
+      
+      try {
+        parsed = JSON.parse(fixedContent);
+      } catch {
+        // Try to parse as newline-delimited JSON (NDJSON)
+        const lines = trimmedContent.split('\n').filter(line => line.trim());
+        const records: ParsedRecord[] = [];
+        for (const line of lines) {
+          try {
+            let cleanLine = line.trim();
+            // Remove trailing comma
+            if (cleanLine.endsWith(',')) {
+              cleanLine = cleanLine.slice(0, -1);
+            }
+            if (cleanLine.startsWith('{') && cleanLine.endsWith('}')) {
+              records.push(JSON.parse(cleanLine));
+            }
+          } catch {
+            // Skip invalid lines
+          }
+        }
+        if (records.length > 0) {
+          const headers = Object.keys(records[0]);
+          return { success: true, data: records, headers };
+        }
+        return { success: false, data: [], headers: [], error: 'Could not parse JSON. Make sure it\'s a valid JSON array or comma-separated objects.' };
+      }
+    }
+    
+    // Handle PHPMyAdmin export format
+    // Structure: [{"type":"header",...}, {"type":"database",...}, {"type":"table","data":[...]}]
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      // Check if this is a PHPMyAdmin export
+      const headerObj = parsed.find((item: any) => item.type === 'header');
+      const tableObj = parsed.find((item: any) => item.type === 'table' && item.data);
+      
+      if (headerObj && tableObj && Array.isArray(tableObj.data)) {
+        // This is a PHPMyAdmin export - extract the actual data
+        const actualData = tableObj.data;
+        if (actualData.length === 0) {
+          return { success: false, data: [], headers: [], error: 'PHPMyAdmin export has no data records' };
+        }
+        const headers = Object.keys(actualData[0]);
+        return { success: true, data: actualData, headers };
+      }
+      
+      // Regular array of objects
       if (parsed.length === 0) {
         return { success: false, data: [], headers: [], error: 'JSON array is empty' };
       }
