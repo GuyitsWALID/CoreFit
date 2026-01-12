@@ -35,3 +35,17 @@ export interface Staff {
   is_active?: boolean | null;
   created_at?: string | null;
 }
+
+/**
+ * Client check-in record
+ */
+export interface ClientCheckin {
+  id: string;
+  user_id: string;
+  checkin_time?: string | null;
+  checkin_date?: string | null;
+  gym_id?: string | null;
+  package_type_at_checkin?: string | null;
+  package_access_level_at_checkin?: string | null;
+  created_at?: string | null;
+}

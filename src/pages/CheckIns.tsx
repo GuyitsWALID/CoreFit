@@ -165,6 +165,28 @@ export default function CheckIns() {
     }
   };
 
+  // Safely insert a client_checkins row but fallback if package columns are missing in DB schema
+  const safeInsertClientCheckin = async (payload: Record<string, any>) => {
+    try {
+      const { error } = await supabase.from('client_checkins').insert([payload]);
+      if (!error) return { ok: true };
+
+      // If the error suggests a missing column in the schema, retry without package metadata
+      const msg = (error.message || '').toString().toLowerCase();
+      if (msg.includes('package_access_level_at_checkin') || msg.includes('package_type_at_checkin') || msg.includes('could not find') || msg.includes('does not exist') || msg.includes('schema cache')) {
+        addDebugInfo('client_checkins schema missing package columns, retrying without those fields');
+        const { package_type_at_checkin, package_access_level_at_checkin, ...fallback } = payload as any;
+        const { error: fallbackError } = await supabase.from('client_checkins').insert([fallback]);
+        if (!fallbackError) return { ok: true, fallback: true };
+        return { ok: false, error: fallbackError };
+      }
+
+      return { ok: false, error };
+    } catch (err: any) {
+      return { ok: false, error: err };
+    }
+  };
+
   const loadJsQR = async () => {
     try {
       // Load jsQR from CDN
@@ -637,7 +659,20 @@ export default function CheckIns() {
     return Array.isArray(data) && data.length > 0;
   };
 
+  const [scanLocked, setScanLocked] = useState(false);
+  const scanLockTimerRef = useRef<number | null>(null);
+
   const handleQrResult = async (value: string) => {
+    if (scanLocked) {
+      addDebugInfo('Scan ignored: scanLocked is active');
+      return;
+    }
+
+    // Immediately lock to prevent concurrent/duplicate handling
+    setScanLocked(true);
+
+    let scanSucceeded = false;
+
     try {
       const code = value.trim();
       const nowIso = new Date().toISOString();
@@ -733,14 +768,14 @@ export default function CheckIns() {
               package_access_level_at_checkin: packageAccessLevel || null,
             };
 
-            const { error: insertError } = await supabase
-              .from('client_checkins')
-              .insert([checkInData]);
-
-            if (insertError) {
-              throw new Error(`Failed to record check-in: ${insertError.message}`);
+            const insertResult = await safeInsertClientCheckin(checkInData);
+            if (!insertResult.ok) {
+              const errMsg = insertResult.error?.message || JSON.stringify(insertResult.error);
+              throw new Error(`Failed to record check-in: ${errMsg}`);
             }
+            if (insertResult.fallback) addDebugInfo('Check-in inserted without package metadata (DB lacks columns)');
 
+            scanSucceeded = true; // mark success so cooldown applies
             setQrStatus('success');
             toast({
               title: 'Check-in successful',
@@ -808,6 +843,7 @@ export default function CheckIns() {
               throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
             }
 
+            scanSucceeded = true;
             setQrStatus('success');
             toast({
               title: 'Check-in successful',
@@ -871,20 +907,13 @@ export default function CheckIns() {
           package_access_level_at_checkin: packageAccessLevel || null,
         };
 
-        let { error: insertError } = await supabase
-          .from('client_checkins')
-          .insert([extendedCheckInData]);
-
-        if (insertError) {
-          const { error: basicInsertError } = await supabase
-            .from('client_checkins')
-            .insert([checkInData]);
-          
-          if (basicInsertError) {
-            throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
-          }
+        const insertResult = await safeInsertClientCheckin(extendedCheckInData);
+        if (!insertResult.ok) {
+          throw new Error(`Failed to record check-in: ${insertResult.error?.message || JSON.stringify(insertResult.error)}`);
         }
+        if (insertResult.fallback) addDebugInfo('Check-in inserted without package metadata (DB lacks columns)');
 
+        scanSucceeded = true;
         setQrStatus('success');
         toast({
           title: 'Check-in successful',
@@ -1057,16 +1086,11 @@ export default function CheckIns() {
           package_access_level_at_checkin: packageAccessLevel || null,
         };
 
-        let { error: insertError } = await supabase
-          .from('client_checkins')
-          .insert([extendedCheckInData]);
-
-        if (insertError) {
-          const { error: basicInsertError } = await supabase
-            .from('client_checkins')
-            .insert([checkInData]);
-          if (basicInsertError) throw new Error(`Failed to record check-in: ${basicInsertError.message}`);
+        const insertResult = await safeInsertClientCheckin(extendedCheckInData);
+        if (!insertResult.ok) {
+          throw new Error(`Failed to record check-in: ${insertResult.error?.message || JSON.stringify(insertResult.error)}`);
         }
+        if (insertResult.fallback) addDebugInfo('Check-in inserted without package metadata (DB lacks columns)');
       } else {
         if (await alreadyCheckedInRecently('staff', person.id)) {
           addDebugInfo('Duplicate staff check-in prevented by time window (fallback path)');
@@ -1099,6 +1123,19 @@ export default function CheckIns() {
         description: `An error occurred while recording the check-in: ${err.message}`,
         variant: 'destructive',
       });
+    } finally {
+      // If scan succeeded, keep lock for cooldown to avoid duplicate inserts
+      if (scanSucceeded) {
+        if (scanLockTimerRef.current) window.clearTimeout(scanLockTimerRef.current);
+        scanLockTimerRef.current = window.setTimeout(() => {
+          setScanLocked(false);
+          scanLockTimerRef.current = null;
+          addDebugInfo('Scan lock released after cooldown');
+        }, 5000);
+      } else {
+        // release lock immediately if not successful so retries are possible
+        setScanLocked(false);
+      }
     }
   };
 
