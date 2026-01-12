@@ -147,6 +147,24 @@ export default function CheckIns() {
     setDebugInfo(prev => [...prev.slice(-4), `${new Date().toLocaleTimeString()}: ${info}`]);
   };
 
+  // Determine whether a package's access level allows check-in at the current time
+  const checkPackageAccess = (accessLevel?: string) : { allowed: boolean; reason?: string } => {
+    if (!accessLevel) return { allowed: true };
+    const hour = new Date().getHours(); // local hour of day (0-23)
+    switch ((accessLevel || '').toString()) {
+      case 'all_hours':
+        return { allowed: true };
+      case 'peak_hours':
+        // default peak: 06:00 - 22:00
+        return { allowed: hour >= 6 && hour < 22, reason: 'Peak hours only (06:00–22:00)' };
+      case 'off_peak_hours':
+        // default off-peak: 22:00 - 06:00
+        return { allowed: hour < 6 || hour >= 22, reason: 'Off-peak hours only (22:00–06:00)' };
+      default:
+        return { allowed: true };
+    }
+  };
+
   const loadJsQR = async () => {
     try {
       // Load jsQR from CDN
@@ -682,13 +700,37 @@ export default function CheckIns() {
             }
 
             addDebugInfo(`Found user: ${userMatch.first_name} ${userMatch.last_name}`);
-            
-            // Insert into client_checkins with gym_id
+
+            // Resolve package name & access level (try relation first, else lookup by package_id)
+            let packageName: string | null = null;
+            let packageAccessLevel: string | null = null;
+            if (userMatch.packages) {
+              const pkg = Array.isArray(userMatch.packages) ? userMatch.packages[0] : userMatch.packages;
+              packageName = pkg?.name || null;
+              packageAccessLevel = pkg?.access_level || (pkg as any)?.accessLevel || null;
+            } else if (userMatch.package_id) {
+              const { data: pkgRow } = await supabase.from('packages').select('name, access_level').eq('id', userMatch.package_id).maybeSingle();
+              packageName = (pkgRow as any)?.name || null;
+              packageAccessLevel = (pkgRow as any)?.access_level || (pkgRow as any)?.accessLevel || null;
+            }
+
+            // Enforce package access rules
+            const { allowed, reason } = checkPackageAccess(packageAccessLevel);
+            if (!allowed) {
+              addDebugInfo(`Access denied by package (${packageAccessLevel || 'unknown'}): ${reason}`);
+              toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
+              setQrStatus('error');
+              return;
+            }
+
+            // Insert into client_checkins with gym_id and package metadata
             const checkInData = {
               user_id: userMatch.id,
               checkin_time: nowIso,
               checkin_date: dateStr,
               gym_id: gym?.id || null,
+              package_type_at_checkin: packageName,
+              package_access_level_at_checkin: packageAccessLevel || null,
             };
 
             const { error: insertError } = await supabase
@@ -705,7 +747,7 @@ export default function CheckIns() {
               description: `${userMatch.first_name} ${userMatch.last_name} has been checked in successfully to ${gym?.name || 'the gym'}.`,
             });
             fetchCheckIns();
-            return;
+            return; 
           } else {
             addDebugInfo(`User not found with ID: ${qrData.userId} in gym ${gym?.id}`);
           }
@@ -810,12 +852,23 @@ export default function CheckIns() {
         };
 
         const packageInfo = userByQrCode.packages as any;
+        const packageName = Array.isArray(packageInfo) ? packageInfo[0]?.name || null : packageInfo?.name || null;
+        const packageAccessLevel = Array.isArray(packageInfo) ? packageInfo[0]?.access_level || packageInfo[0]?.accessLevel || null : packageInfo?.access_level || packageInfo?.accessLevel || null;
+
+        // Enforce package access rules
+        const { allowed, reason } = checkPackageAccess(packageAccessLevel);
+        if (!allowed) {
+          addDebugInfo(`Access denied by package (${packageAccessLevel || 'unknown'}): ${reason}`);
+          toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
+          setQrStatus('error');
+          return;
+        }
+
         const extendedCheckInData = {
           ...checkInData,
           'QR-CODE USED': true,
-          package_type_at_checkin: Array.isArray(packageInfo) 
-            ? packageInfo[0]?.name || null 
-            : packageInfo?.name || null,
+          package_type_at_checkin: packageName,
+          package_access_level_at_checkin: packageAccessLevel || null,
         };
 
         let { error: insertError } = await supabase
@@ -979,10 +1032,29 @@ export default function CheckIns() {
           checkin_date: dateStr,
         };
 
+        // Resolve package access level if available
+        let packageAccessLevel: string | null = null;
+        if (person.package_id) {
+          const { data: pkgRow } = await supabase.from('packages').select('access_level, name').eq('id', person.package_id).maybeSingle();
+          packageAccessLevel = (pkgRow as any)?.access_level || (pkgRow as any)?.accessLevel || null;
+        } else if (person.packages) {
+          const pkg = Array.isArray(person.packages) ? person.packages[0] : person.packages;
+          packageAccessLevel = pkg?.access_level || pkg?.accessLevel || null;
+        }
+
+        const { allowed, reason } = checkPackageAccess(packageAccessLevel);
+        if (!allowed) {
+          addDebugInfo(`Access denied by package (${packageAccessLevel || 'unknown'}): ${reason}`);
+          toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
+          setQrStatus('error');
+          return;
+        }
+
         const extendedCheckInData = {
           ...checkInData,
           'QR-CODE USED': true,
           package_type_at_checkin: person.packages?.name || null,
+          package_access_level_at_checkin: packageAccessLevel || null,
         };
 
         let { error: insertError } = await supabase
