@@ -2,6 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useGym } from '@/contexts/GymContext';
+import { DynamicHeader } from '@/components/layout/DynamicHeader';
+import { Sidebar } from '@/components/layout/Sidebar';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, BarChart, Bar
@@ -17,6 +19,8 @@ type StaffBreakdown = { roles: StaffRoleCount[]; counts: { total: number; active
 type UserWithPkg = { user_id: string; package_name?: string | null; created_at?: string; status?: string; full_name?: string; email?: string; days_left?: number };
 type StaffRow = { id: string; full_name: string; is_active: boolean; role_id?: string };
 type CombinedRow = { id?: string; user_id?: string; package_price?: number | null; one_to_one_coaching_cost?: number | null; package_name?: string | null; created_at?: string };
+
+type RevenuePoint = { name: string; value: number };
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#E57373', '#9575CD'];
 const CTA_BG = '#6C9D9A'; // export & refresh button color requested
@@ -47,7 +51,6 @@ export default function ReportsPage(): JSX.Element {
   const [activeDrill, setActiveDrill] = useState<{ type: 'package' | 'revenue'; id: string } | null>(null);
   const [drillUsers, setDrillUsers] = useState<UserWithPkg[]>([]);
   const [drillTransactions, setDrillTransactions] = useState<any[]>([]);
-  type RevenuePoint = { name: string; value: number };
   const [revenueData, setRevenueData] = useState<RevenuePoint[]>([]);
 
   useEffect(() => {
@@ -282,8 +285,13 @@ export default function ReportsPage(): JSX.Element {
   const ctaStyle: React.CSSProperties = { backgroundColor: CTA_BG, color: 'white' };
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Admin — Analytics & Reports</h1>
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <DynamicHeader />
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="p-6">
+            <h1 className="text-2xl font-bold mb-4">Admin — Analytics & Reports</h1>
 
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center mb-6">
@@ -522,6 +530,9 @@ export default function ReportsPage(): JSX.Element {
           {!drillUsers.length && !drillTransactions.length && <div className="text-sm text-muted-foreground">No results for this drill.</div>}
         </div>
       )}
+        </div>
+      </main>
     </div>
+  </div>
   );
 }

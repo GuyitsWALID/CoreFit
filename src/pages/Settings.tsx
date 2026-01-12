@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
+import { DynamicHeader } from '@/components/layout/DynamicHeader';
+import { Sidebar } from '@/components/layout/Sidebar';
 
 const TABS = ["Personal Info", "Notifications", "Account", "Password"];
 
@@ -112,8 +114,13 @@ export default function Settings() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto py-10 px-4">
-      <h1 className="text-3xl font-bold mb-6">Settings</h1>
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <DynamicHeader />
+        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="max-w-2xl mx-auto py-10 px-4">
+            <h1 className="text-3xl font-bold mb-6">Settings</h1>
       <div className="flex border-b mb-8">
         {TABS.map((t) => (
           <button
@@ -262,6 +269,9 @@ export default function Settings() {
             </div>
           </form>
         )}
+          </div>
+          </div>
+        </main>
       </div>
     </div>
   );
