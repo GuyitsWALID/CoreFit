@@ -130,9 +130,12 @@ export const MigrationDashboard: React.FC = () => {
 
       if (!res.body) throw new Error('Streaming not supported by this browser');
 
+      addLog(`Server response status: ${res.status}`, 'info');
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
+      let receivedEvents = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -143,28 +146,48 @@ export const MigrationDashboard: React.FC = () => {
         let parts = buf.split('\n\n');
         buf = parts.pop() || '';
         for (const part of parts) {
-          if (!part.startsWith('data:')) continue;
-          const dataStr = part.replace(/^data:\s*/m, '');
-          let obj: any = null;
-          try { obj = JSON.parse(dataStr); } catch (e) { addLog(`Malformed event: ${dataStr}`, 'warning'); continue; }
+          const trimmed = part.trim();
+          if (!trimmed) continue;
 
-          if (obj.type === 'progress') {
-            setProgress(obj.percent ?? 0);
-            addLog(`Progress: ${obj.percent}%`, 'info');
-          } else if (obj.type === 'start') {
-            addLog(obj.message || 'Migration started', 'info');
-          } else if (obj.type === 'done') {
-            addLog('Migration finished', 'success');
-            if (obj.result?.skippedPayments) addLog(`Skipped payments: ${obj.result.skippedPayments}`, 'warning');
-            if (obj.result?.skippedRows && obj.result.skippedRows.length) addLog(`Skipped rows: ${obj.result.skippedRows.length}`, 'warning');
-            setPreview(obj.result.preview || null);
-          } else if (obj.type === 'error') {
-            addLog(`Error: ${obj.message}`, 'error');
+          // Handle multiple data: lines in a part
+          const dataLines = trimmed.split(/\r?\n/).filter(l => l.startsWith('data:'));
+          if (dataLines.length === 0) {
+            addLog(`Non-data chunk received: ${trimmed.slice(0, 200)}`, 'warning');
+            continue;
+          }
+
+          for (const line of dataLines) {
+            const dataStr = line.replace(/^data:\s*/m, '');
+            let obj: any = null;
+            try { obj = JSON.parse(dataStr); } catch (e) { addLog(`Malformed event: ${dataStr}`, 'warning'); continue; }
+
+            receivedEvents++;
+
+            if (obj.type === 'progress') {
+              setProgress(obj.percent ?? 0);
+              addLog(`Progress: ${obj.percent}%`, 'info');
+            } else if (obj.type === 'start') {
+              addLog(obj.message || 'Migration started', 'info');
+            } else if (obj.type === 'done') {
+              addLog('Migration finished', 'success');
+              if (obj.result?.skippedPayments) addLog(`Skipped payments: ${obj.result.skippedPayments}`, 'warning');
+              if (obj.result?.skippedRows && obj.result.skippedRows.length) addLog(`Skipped rows: ${obj.result.skippedRows.length}`, 'warning');
+              // if preview was included in result
+              if (obj.result?.preview) setPreview(obj.result.preview);
+            } else if (obj.type === 'error') {
+              addLog(`Error: ${obj.message}`, 'error');
+            } else {
+              addLog(`Event: ${JSON.stringify(obj).slice(0, 400)}`, 'info');
+            }
           }
         }
       }
 
-      addLog('Migration stream closed', 'info');
+      if (receivedEvents === 0) {
+        addLog('Migration stream closed without emitting events. Check function logs and preview output.', 'warning');
+      } else {
+        addLog('Migration stream closed', 'info');
+      }
 
     } catch (err: any) {
       addLog(`Migration failed: ${err.message}`, 'error');
