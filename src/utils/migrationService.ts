@@ -28,7 +28,9 @@ export const executeMigration = async (
   fileContent: string, 
   targetGymId: string,
   supabaseUrl: string,
-  supabaseKey: string
+  supabaseKey: string,
+  isDryRun: boolean = true, // New parameter
+  onProgress?: (percent: number) => void // New callback for UI
 ) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
   const today = new Date().toISOString().split('T')[0];
@@ -206,13 +208,24 @@ export const executeMigration = async (
     });
   });
 
-  // 2b. Insert Users in batches
+  // 2b. Insert Users in batches with Progress and Dry Run support
   const chunkSize = 150;
   for (let i = 0; i < usersToInsert.length; i += chunkSize) {
     const batch = usersToInsert.slice(i, i + chunkSize);
-    // Use explicit onConflict to rely on unique constraint - prefer 'id' (ensure id unique or change to 'email' as needed)
-    const { error } = await supabase.from('users').upsert(batch, { onConflict: 'id' });
-    if (error) throw error;
+    
+    if (!isDryRun) {
+      const { error } = await supabase.from('users').upsert(batch, { onConflict: 'id' });
+      if (error) throw error;
+    } else {
+      // In dry run, we just log to console to verify the JSON structure
+      console.log(`DRY RUN: Prepared batch of ${batch.length} users`, batch[0]);
+    }
+
+    // Update the UI Progress Bar
+    if (onProgress) {
+      const percent = usersToInsert.length > 0 ? Math.round(((i + batch.length) / usersToInsert.length) * 100) : 100;
+      onProgress(percent);
+    }
   }
 
   // 3. Handle legacy role tables and transform into our staff/roles schema
@@ -308,12 +321,21 @@ export const executeMigration = async (
     }
   }
 
-  // Insert staff in batches (avoid duplicates by email or id)
+  // 3b. Insert Staff in batches with Dry Run support
   for (let i = 0; i < staffToInsert.length; i += chunkSize) {
     const batch = staffToInsert.slice(i, i + chunkSize);
-    // Use onConflict:'email' to avoid creating duplicate staff records when email has a unique constraint in Supabase
-    const { error } = await supabase.from('staff').upsert(batch, { onConflict: 'email' });
-    if (error) throw error;
+    
+    if (!isDryRun) {
+      const { error } = await supabase.from('staff').upsert(batch, { onConflict: 'email' });
+      if (error) throw error;
+    } else {
+      console.log(`DRY RUN: Prepared batch of ${batch.length} staff`, batch[0]);
+    }
+
+    // Optionally update progress to 100 after staff insertion completes
+    if (onProgress && i + batch.length >= staffToInsert.length) {
+      onProgress(100);
+    }
   }
 
   // Double-check the counts in Supabase vs our processed list
