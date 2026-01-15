@@ -72,8 +72,20 @@ export const MigrationDashboard: React.FC = () => {
             body: JSON.stringify({ sql: content, gymId: selectedGymId })
           });
           if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'Preview failed' }));
-            addLog(`Preview error: ${err.error || 'Unknown'}`, 'error');
+            // Try to parse JSON error, otherwise show text
+            const text = await res.text().catch(() => 'No response body');
+            let errMsg = `Preview failed (status ${res.status})`;
+            try {
+              const parsed = JSON.parse(text);
+              errMsg = parsed.error || JSON.stringify(parsed);
+            } catch {
+              errMsg = text;
+            }
+            addLog(`Preview error: ${errMsg}`, 'error');
+
+            if (res.status === 404) {
+              addLog('Preview endpoint not found (404). Make sure Supabase function migrate-preview is deployed.', 'error');
+            }
             return;
           }
           const { preview } = await res.json();
@@ -127,6 +139,16 @@ export const MigrationDashboard: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql: content, gymId: selectedGymId, dryRun: isDryRun })
       });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => 'No response body');
+        let errMsg = `Migration start failed (status ${res.status})`;
+        try { errMsg = JSON.parse(text).error || errMsg; } catch {}
+        addLog(errMsg, 'error');
+        if (res.status === 404) addLog('Migration endpoint not found (404). Make sure Supabase function migrate-run is deployed.', 'error');
+        setIsMigrating(false);
+        return;
+      }
 
       if (!res.body) throw new Error('Streaming not supported by this browser');
 
