@@ -21,7 +21,7 @@ import AdminGyms from '@/pages/admin/gyms';
 import Analytics from '@/pages/admin/analytics';
 import UserManagement from '@/pages/admin/users';
 import AdminSettings from '@/pages/admin/settings'; 
-import ImportPage from '@/pages/admin/import';
+import { MigrationDashboard } from '@/components/MigrationPage';
 import Packages from './pages/Packages.tsx';
 
 // Layout component that wraps gym-specific pages
@@ -48,7 +48,7 @@ function App() {
           <Route path="/admin/analytics" element={<Analytics />} />
           <Route path="/admin/users" element={<UserManagement/>} />
           <Route path="/admin/settings" element={<AdminSettings/>} />
-          <Route path="/admin/import" element={<ImportPage/>} />
+          <Route path="/admin/import" element={<MigrationDashboard/>} />
           
           {/* Gym-specific routes with dynamic identifier (ID or name) */}
           <Route path="/:gymIdentifier/*" element={
