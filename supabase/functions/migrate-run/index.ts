@@ -50,16 +50,29 @@ serve(async (req: Request) => {
         send({ type: 'start', message: 'Migration started', dryRun });
 
         try {
-          // Call executeMigration with callback for progress
-          const result = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, dryRun, (percent: number) => {
+          // Run a quick preview first so the UI gets immediate feedback
+          const preview = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, true);
+          send({ type: 'preview', preview });
+
+          if (dryRun) {
+            // If caller requested dry run only, finish here with preview
+            send({ type: 'done', result: { preview } });
+            controller.close();
+            return;
+          }
+
+          // Now run the actual migration and stream progress
+          const result = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, false, (percent: number) => {
             send({ type: 'progress', percent });
           });
 
+          // Send final summary and close
           send({ type: 'done', result });
           controller.close();
         } catch (err: unknown) {
+          console.error('migrate-run error', err);
           if (err instanceof Error) {
-            send({ type: 'error', message: err.message });
+            send({ type: 'error', message: err.message, stack: err.stack });
             controller.error(err);
           } else {
             send({ type: 'error', message: 'Unknown error' });

@@ -34,6 +34,12 @@ export const MigrationDashboard: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isMobile = useIsMobile();
 
+  const [functionsHealthy, setFunctionsHealthy] = useState<boolean | null>(null);
+
+  // Base URL for migration functions. Prefer explicit env override (useful for localhost testing), otherwise
+  // fall back to the Supabase project's functions base derived from VITE_SUPABASE_URL.
+  const functionsBase = (import.meta.env.VITE_MIGRATE_FUNCTIONS_BASE as string | undefined) ?? ((import.meta.env.VITE_SUPABASE_URL as string || '').replace(/\/$/, '') + '/functions/v1');
+
   useEffect(() => {
     const fetchGyms = async () => {
       const { data } = await supabase.from('gyms').select('id, name').eq('status', 'active').order('name');
@@ -42,7 +48,19 @@ export const MigrationDashboard: React.FC = () => {
         if (data.length > 0) setSelectedGymId(data[0].id);
       }
     };
+
+    const pingFunctions = async () => {
+      try {
+        const res = await fetch(`${functionsBase}/migrate-ping`);
+        if (res.ok) setFunctionsHealthy(true);
+        else setFunctionsHealthy(false);
+      } catch (err) {
+        setFunctionsHealthy(false);
+      }
+    };
+
     fetchGyms();
+    pingFunctions();
   }, []);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
@@ -66,7 +84,7 @@ export const MigrationDashboard: React.FC = () => {
         const content = event.target?.result as string;
         try {
           addLog('Parsing file (preview)...', 'info');
-          const res = await fetch('/functions/v1/migrate-preview', {
+          const res = await fetch(`${functionsBase}/migrate-preview`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sql: content, gymId: selectedGymId })
@@ -134,7 +152,7 @@ export const MigrationDashboard: React.FC = () => {
     const content = await file.text();
 
     try {
-      const res = await fetch('/functions/v1/migrate-run', {
+      const res = await fetch(`${functionsBase}/migrate-run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql: content, gymId: selectedGymId, dryRun: isDryRun })
@@ -257,7 +275,9 @@ export const MigrationDashboard: React.FC = () => {
             </div>
             <div className="flex items-center gap-3">
               <span className="px-2 py-1 rounded bg-gray-100 text-sm">Env: {env}</span>
-              <span className="px-2 py-1 rounded bg-green-50 text-green-700 text-sm">Connection: {gyms.length > 0 ? 'OK' : 'Unknown'}</span>
+              <span className={`px-2 py-1 rounded text-sm ${functionsHealthy === null ? 'bg-yellow-50 text-yellow-700' : functionsHealthy ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                Functions: {functionsHealthy === null ? 'Checking...' : functionsHealthy ? 'Reachable' : 'Unavailable'}
+              </span>
             </div>
           </div>
 

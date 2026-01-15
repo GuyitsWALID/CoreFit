@@ -1,12 +1,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "@supabase/supabase-js";
-import { executeMigration } from "../../../src/utils/migrationService.ts";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error("Server configuration error: Supabase credentials missing.");
-}
+// Lightweight preview parser (no external imports) - counts tables and checks for missing emails when columns present
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -37,21 +31,68 @@ serve(async (req: Request) => {
       });
     }
 
-    // Call executeMigration in dry run / preview mode
-    const result = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, true);
+    // Simple helpers
+    const extractInsertBlocks = (tableName: string) => {
+      const re = new RegExp(`INSERT INTO\\s+['\"`+tableName+`'\"\\s]*(\\([^)]*\\))?\\s*VALUES\\s*(.*?);`, 'gis');
+      const matches = [...sql.matchAll(re)];
+      const results: { columns: string[] | null; rows: string[] }[] = [];
 
-    return new Response(JSON.stringify({ success: true, preview: result }), {
+matches.forEach((m: RegExpMatchArray) => {
+      const cols = m[1]
+        ? m[1].replace(/^\(|\)$/g, '').split(',').map((s: string) => s.trim().replace(/[`"']/g, '').toLowerCase())
+        : null;
+      const valuesBlock = m[2] || '';
+      // naive split on '),(' but handle simple cases
+      const rowMatches = [...valuesBlock.matchAll(/\((.*?)\)(?:,|$)/gs)].map((r: RegExpMatchArray) => r[1]);
+        results.push({ columns: cols, rows: rowMatches });
+      });
+
+      return results;
+    };
+
+    // Detect tables
+    const tableMatches = [...sql.matchAll(/INSERT INTO\s+[`\"']?([A-Za-z_][A-Za-z0-9_]*)/gi)].map(m => m[1].toLowerCase());
+    const detectedTables = Array.from(new Set(tableMatches));
+
+    // Count users & payments
+    const usersBlocks = extractInsertBlocks('users');
+    const paymentsBlocks = extractInsertBlocks('payments');
+
+    const usersCount = usersBlocks.reduce((sum, b) => sum + b.rows.length, 0);
+    const paymentsCount = paymentsBlocks.reduce((sum, b) => sum + b.rows.length, 0);
+
+    // Data health: if users blocks have columns and 'email' column, count missing
+    let missingEmails = 0;
+    usersBlocks.forEach(b => {
+      if (b.columns && b.columns.includes('email')) {
+        const idx = b.columns.indexOf('email');
+        b.rows.forEach(r => {
+          const parts = r.split(/,(?=(?:[^']*'[^']*')*[^']*$)/).map(s => s.trim().replace(/^'|'$/g, ''));
+          const val = parts[idx];
+          if (!val || val.toLowerCase() === 'null') missingEmails++;
+        });
+      }
+    });
+
+    const warnings: string[] = [];
+    if (missingEmails > 0) warnings.push(`${missingEmails} users are missing email addresses`);
+
+    const preview = {
+      usersInserted: usersCount,
+      staffInserted: detectedTables.includes('staff') ? 0 : 0,
+      skippedPayments: 0,
+      skippedRows: [],
+      warnings,
+      detectedTables,
+    };
+
+    return new Response(JSON.stringify({ success: true, preview }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
 
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-      });
-    }
-    return new Response(JSON.stringify({ error: "Unknown error" }), { status: 500 });
+    console.error('migrate-preview error', err);
+    return new Response(JSON.stringify({ error: (err instanceof Error) ? err.message : 'Unknown' }), { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
   }
 });

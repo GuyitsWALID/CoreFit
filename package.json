@@ -9,7 +9,10 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "clean": "rimraf dist node_modules/.vite"
+    "clean": "rimraf dist node_modules/.vite",
+    "serve:functions": "supabase functions serve",
+    "deploy:functions": "supabase functions deploy migrate-ping migrate-preview migrate-run",
+    "list:functions": "supabase functions list"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
