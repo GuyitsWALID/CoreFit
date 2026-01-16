@@ -136,6 +136,7 @@ export const MigrationDashboard: React.FC = () => {
 
   const runMigration = async () => {
     if (!file || !selectedGymId) return;
+    let finalConfirmValue: string | undefined = undefined;
     if (!isDryRun) {
       // Safety lock: simple prompt
       const confirm = window.prompt('Type MIGRATE to confirm final migration');
@@ -143,6 +144,7 @@ export const MigrationDashboard: React.FC = () => {
         addLog('Migration cancelled by user (confirmation failed).', 'warning');
         return;
       }
+      finalConfirmValue = 'MIGRATE';
     }
 
     setIsMigrating(true);
@@ -155,7 +157,7 @@ export const MigrationDashboard: React.FC = () => {
       const res = await fetch(`${functionsBase}/migrate-run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql: content, gymId: selectedGymId, dryRun: isDryRun })
+        body: JSON.stringify({ sql: content, gymId: selectedGymId, dryRun: isDryRun, finalConfirm: finalConfirmValue })
       });
 
       if (!res.ok) {
@@ -236,6 +238,45 @@ export const MigrationDashboard: React.FC = () => {
       setProgress(100);
     }
   };
+
+  // Generate migration SQL (no DB writes). Returns a downloadable SQL script.
+  const generateMigrationSql = async () => {
+    if (!file || !selectedGymId) return;
+    addLog('Generating migration SQL...', 'info');
+    try {
+      const content = await file.text();
+      const res = await fetch(`${functionsBase}/migrate-generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({ sql: content, gymId: selectedGymId })
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => 'No response body');
+        let errMsg = `Generate start failed (status ${res.status})`;
+        try { errMsg = JSON.parse(text).error || errMsg; } catch {}
+        addLog(errMsg, 'error');
+        return;
+      }
+
+      const { migrationSql, preview } = await res.json();
+      setPreview(preview);
+      addLog('Migration SQL generated', 'success');
+
+      // Download the SQL as a file
+      const blob = new Blob([migrationSql], { type: 'text/sql' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const now = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `migration_${selectedGymId}_${now}.sql`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+    } catch (err: any) {
+      addLog(`Generate failed: ${err.message}`, 'error');
+    }
+  };
+
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -369,6 +410,14 @@ export const MigrationDashboard: React.FC = () => {
         }`}
       >
         {isMigrating ? 'Processing...' : isDryRun ? 'Run Simulation' : 'Execute Final Migration'}
+      </button>
+
+      <button
+        onClick={generateMigrationSql}
+        disabled={!file || isMigrating || !selectedGymId}
+        className={`w-full mt-3 py-2 rounded-lg font-medium bg-gray-800 text-white hover:bg-gray-900 transition-colors ${!file || isMigrating ? 'opacity-50 cursor-not-allowed' : ''}`}
+      >
+        Generate Migration SQL (Download)
       </button>
 
       {/* Terminal Log */}

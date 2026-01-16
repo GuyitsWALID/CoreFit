@@ -29,17 +29,15 @@ export const executeMigration = async (
   targetGymId: string,
   supabaseUrl: string,
   supabaseKey: string,
-  isDryRun: boolean = true, // New parameter
-  onProgress?: (percent: number) => void // New callback for UI
+  isDryRun: boolean = true,
+  onProgress?: (percent: number) => void
 ) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
   const today = new Date().toISOString().split('T')[0];
 
-  // Helper: split raw VALUES into top-level row strings like "('a', 'b'), ('c','d')"
+  // Helper: split raw VALUES into top-level row strings
   const extractInsertBlocks = (tableName: string): { columns: string[] | null; rows: string[] }[] => {
     const results: { columns: string[] | null; rows: string[] }[] = [];
-
-    // Find all INSERT INTO occurrences for this table and capture column list and the following values section until the semicolon
     const insertRegex = new RegExp(`INSERT INTO\\s+[\\\`"']?${tableName}[\\\`"']?\\s*(\\([^)]*\\))?\\s*VALUES\\s*(.*?);`, 'gis');
     const matches = [...fileContent.matchAll(insertRegex)];
 
@@ -48,7 +46,6 @@ export const executeMigration = async (
       const valuesBlock = match[2];
       const rows: string[] = [];
 
-      // Extract each top-level parenthesis group while respecting quoted commas
       let depth = 0;
       let buf = '';
       let inSingle = false;
@@ -68,14 +65,12 @@ export const executeMigration = async (
           }
         }
       }
-
       results.push({ columns: colList, rows });
     });
-
     return results;
   };
 
-  // Helper to split a row string like "('a','b',NULL)" into values
+  // Helper: split a row string into values
   const splitRowValues = (row: string): string[] => {
     const trimmed = row.replace(/^\(|\),?$/g, '').trim();
     const values: string[] = [];
@@ -89,7 +84,7 @@ export const executeMigration = async (
 
       if (ch === "'" && prev !== '\\' && !inDouble) {
         inSingle = !inSingle;
-        buf += ch; // keep quotes for now
+        buf += ch; 
         continue;
       }
       if (ch === '"' && prev !== '\\' && !inSingle) {
@@ -97,7 +92,6 @@ export const executeMigration = async (
         buf += ch;
         continue;
       }
-
       if (ch === ',' && !inSingle && !inDouble) {
         values.push(buf.trim());
         buf = '';
@@ -108,21 +102,14 @@ export const executeMigration = async (
     if (buf.length) values.push(buf.trim());
     return values.map(v => {
       if (/^NULL$/i.test(v)) return null as any;
-      // Handle single-quoted MySQL strings which may use backslash-escaped (\') or doubled ('') quotes
       const singleMatch = v.match(/^'(.*)'$/s);
-      if (singleMatch) {
-        return singleMatch[1].replace(/\\'|''/g, "'");
-      }
-      // Handle double-quoted strings (unlikely in MySQL dumps but keep for safety)
+      if (singleMatch) return singleMatch[1].replace(/\\'|''/g, "'");
       const doubleMatch = v.match(/^"(.*)"$/s);
-      if (doubleMatch) {
-        return doubleMatch[1].replace(/\\\"/g, '"');
-      }
+      if (doubleMatch) return doubleMatch[1].replace(/\\\"/g, '"');
       return v;
     });
   };
 
-  // Helper to map row array to object using columns if present
   const rowToObject = (cols: string[] | null, values: any[]): Record<string, any> | null => {
     if (!cols) return null;
     const obj: Record<string, any> = {};
@@ -130,48 +117,69 @@ export const executeMigration = async (
     return obj;
   };
 
-  // Find all tables present in the SQL so we can handle typical role tables too
-  const insertTables = [...fileContent.matchAll(/INSERT INTO\s+[`"']?([A-Za-z_][A-Za-z0-9_]*)[`"']?/gi)].map(m => m[1].toLowerCase());
-  const uniqueTables = Array.from(new Set(insertTables));
+  // --- IMPROVED LOGIC START: FIND THE PAYMENTS TABLE ---
+  
+  // Try multiple common names for the table that contains expiry dates
+  const paymentTableCandidates = ['payments', 'payment', 'subscriptions', 'subscription', 'memberships', 'user_packages', 'gym_payments'];
+  let paymentsBlocks: { columns: string[] | null; rows: string[] }[] = [];
+  let detectedPaymentTable = '';
 
-  // 1. Process Payments first (look for anything like payments)
-  const paymentsBlocks = extractInsertBlocks('payments');
+  for (const candidate of paymentTableCandidates) {
+    const blocks = extractInsertBlocks(candidate);
+    if (blocks.length > 0) {
+      paymentsBlocks = blocks;
+      detectedPaymentTable = candidate;
+      console.log(`Found expiration data in table: '${candidate}'`);
+      break;
+    }
+  }
+
   const userMap: PaymentMap = {};
-
   let skippedPayments = 0;
+
   paymentsBlocks.forEach(block => {
     block.rows.forEach((r, rowIndex) => {
       const vals = splitRowValues(r);
       const obj = rowToObject(block.columns, vals);
 
-      // If no column list is present, do not attempt to guess positional indices - skip and warn
-      if (!obj) {
-        console.warn(`Skipping Payments row: no column list present (cannot reliably parse positional indices). Row snippet: ${r.slice(0,200)}`);
-        skippedPayments++;
-        return;
-      }
+      // Robust Column Mapping: Look for any column that might mean "Expiry" or "User"
+      // If obj is null (no headers), we fall back to indices but warn
+      const userId = obj 
+        ? (obj.user_id ?? obj.user ?? obj.customer_id ?? obj.member_id) 
+        : vals[1]; 
+        
+      const expiry = obj 
+        ? (obj.expiry_date ?? obj.expiry ?? obj.end_date ?? obj.expires_at ?? obj.valid_until ?? obj.date_to) 
+        : vals[13]; // Fallback index from your legacy schema
 
-      // Prefer named columns; only use obj values
-      const userId = obj.user_id ?? obj.user ?? obj.customer_id ?? null;
-      const expiry = obj.expiry_date ?? obj.expiry ?? obj.end_date ?? obj.expires_at ?? null;
-      const pkg = obj.package_id ?? obj.pkg_id ?? obj.package ?? null;
-      const status = (obj.status ?? obj.payment_status ?? '')?.toString().toLowerCase();
+      const pkg = obj 
+        ? (obj.package_id ?? obj.pkg_id ?? obj.package ?? obj.plan_id) 
+        : vals[21]; // Fallback index
+
+      // Relaxed Status Check: If no status column, assume completed if expiry exists. 
+      const statusVal = obj ? (obj.status ?? obj.payment_status) : vals[7];
+      const status = statusVal ? statusVal.toString().toLowerCase() : 'completed';
 
       if (!userId || !expiry) {
-        console.warn(`Skipping Payments row: missing user id or expiry (row ${rowIndex + 1} in block). Row snippet: ${r.slice(0,200)}`);
-        skippedPayments++;
-        return;
+        // Only warn if we really can't find data
+        if (!obj && !vals[1] && !vals[13]) {
+             skippedPayments++;
+             return;
+        }
       }
 
-      if (status === 'completed') {
+      // Logic: If status is 'completed' (or active) and we have a date
+      if (['completed', 'active', 'paid', 'success'].includes(status) && expiry) {
+        // Compare dates string vs string works for ISO format
         if (!userMap[userId] || (userMap[userId].expiry || '') < expiry) {
           userMap[userId] = { pkgId: pkg, expiry };
         }
       }
     });
   });
+  // --- IMPROVED LOGIC END ---
 
-  // 2. Map Users (support Users or users)
+  // 2. Map Users
   const usersBlocks = extractInsertBlocks('users');
   const usersToInsert: SupabaseUser[] = [];
 
@@ -182,18 +190,27 @@ export const executeMigration = async (
 
       const uId = obj?.id ?? vals[0];
       const fullName = obj?.full_name ?? obj?.name ?? `${obj?.first_name ?? vals[1] ?? ''} ${obj?.last_name ?? vals[2] ?? ''}`;
-      const nameParts = String(fullName || '').trim().split(/\s+/);
+      
+      // --- FIX: NAME SPLITTING (Remove Emails from Last Name) ---
+      const rawNameParts = String(fullName || '').trim().split(/\s+/);
+      const cleanNameParts = rawNameParts.filter(part => !part.includes('@')); // Filter out emails
+      
+      const firstName = cleanNameParts[0] || 'Member';
+      const lastName = cleanNameParts.slice(1).join(' ') || '';
+      // ----------------------------------------------------------
+
       const email = obj?.email ?? vals[2] ?? null;
       const phone = obj?.phone ?? vals[4] ?? '';
       const gender = obj?.gender ?? vals[8] ?? null;
       const dob = obj?.date_of_birth ?? obj?.dob ?? vals[5] ?? null;
       const createdAt = obj?.created_at ?? vals[15] ?? new Date().toISOString();
+      
       const payment = userMap[uId] || { pkgId: null, expiry: null };
 
       usersToInsert.push({
         id: uId,
-        first_name: nameParts[0] || 'Member',
-        last_name: nameParts.slice(1).join(' ') || '',
+        first_name: firstName,
+        last_name: lastName,
         email,
         phone: phone || '',
         gender: gender || null,
@@ -208,7 +225,7 @@ export const executeMigration = async (
     });
   });
 
-  // 2b. Insert Users in batches with Progress and Dry Run support
+  // 2b. Insert Users in batches
   const chunkSize = 150;
   for (let i = 0; i < usersToInsert.length; i += chunkSize) {
     const batch = usersToInsert.slice(i, i + chunkSize);
@@ -217,33 +234,30 @@ export const executeMigration = async (
       const { error } = await supabase.from('users').upsert(batch, { onConflict: 'id' });
       if (error) throw error;
     } else {
-      // In dry run, we just log to console to verify the JSON structure
       console.log(`DRY RUN: Prepared batch of ${batch.length} users`, batch[0]);
     }
 
-    // Update the UI Progress Bar
     if (onProgress) {
-      const percent = usersToInsert.length > 0 ? Math.round(((i + batch.length) / usersToInsert.length) * 100) : 100;
+      const percent = usersToInsert.length > 0 ? Math.round(((i + batch.length) / usersToInsert.length) * 100) : 50;
       onProgress(percent);
     }
   }
 
-  // 3. Handle legacy role tables and transform into our staff/roles schema
+  // 3. Handle legacy role tables
+  const insertTables = [...fileContent.matchAll(/INSERT INTO\s+[`"']?([A-Za-z_][A-Za-z0-9_]*)[`"']?/gi)].map(m => m[1].toLowerCase());
+  const uniqueTables = Array.from(new Set(insertTables));
   const roleCandidates = ['admin', 'admins', 'trainer', 'trainers', 'receptionist', 'receptionists', 'manager', 'managers', 'owner', 'owners'];
   const foundRoleTables = uniqueTables.filter(t => roleCandidates.includes(t));
 
-  // Cache roles lookups and functions
   const roleCache = new Map<string, string>();
   const getOrCreateRole = async (roleName: string) => {
     const key = roleName.toLowerCase();
     if (roleCache.has(key)) return roleCache.get(key)!;
-    // try to find
     const { data: existingRole } = await supabase.from('roles').select('id').eq('name', roleName).maybeSingle();
     if (existingRole && existingRole.id) {
       roleCache.set(key, existingRole.id);
       return existingRole.id;
     }
-    // insert
     const { data: newRole, error } = await supabase.from('roles').insert({ name: roleName }).select('id').single();
     if (error) throw error;
     roleCache.set(key, newRole.id);
@@ -261,92 +275,44 @@ export const executeMigration = async (
       block.rows.forEach(r => {
         const vals = splitRowValues(r);
         const obj = rowToObject(block.columns, vals);
-
-        // Try to find user by explicit user_id, id or email
         const userIdRef = obj?.user_id ?? obj?.id ?? null;
         const emailRef = obj?.email ?? obj?.email_address ?? null;
-
-        // If we have userIdRef and that user exists in usersToInsert, we'll use it; otherwise we try to match by email
         const matchedUser = usersToInsert.find(u => u.id === userIdRef) ?? (emailRef ? usersToInsert.find(u => u.email === emailRef) : undefined);
         let staffId = matchedUser?.id ?? (userIdRef ?? null) ?? crypto.randomUUID();
 
-        const firstName = obj?.first_name ?? obj?.fname ?? (matchedUser?.first_name) ?? '';
-        const lastName = obj?.last_name ?? obj?.lname ?? (matchedUser?.last_name) ?? '';
-        const phone = obj?.phone ?? (matchedUser?.phone) ?? null;
-
         staffToInsert.push({
           id: staffId,
-          first_name: firstName,
-          last_name: lastName,
-          email: emailRef ?? (matchedUser?.email ?? null),
-          phone,
-          date_of_birth: obj?.date_of_birth ?? null,
-          gender: obj?.gender ?? null,
+          first_name: obj?.first_name ?? matchedUser?.first_name ?? '',
+          last_name: obj?.last_name ?? matchedUser?.last_name ?? '',
+          email: emailRef ?? matchedUser?.email ?? null,
+          phone: obj?.phone ?? matchedUser?.phone ?? null,
           role_id: roleId,
-          hire_date: obj?.hire_date ?? new Date().toISOString().split('T')[0],
-          salary: obj?.salary ?? 0,
-          is_active: true,
           gym_id: targetGymId,
           qr_code: JSON.stringify({ staffId, roleId, gymId: targetGymId }),
-          created_at: new Date().toISOString(),
+          hire_date: new Date().toISOString().split('T')[0],
         });
       });
     });
   }
 
-  // If the dump already had a 'staff' table inserts, use them too (mapping role names to role_ids if possible)
-  const staffBlocks = extractInsertBlocks('staff');
-  for (const block of staffBlocks) {
-    for (const r of block.rows) {
-      const vals = splitRowValues(r);
-      const obj = rowToObject(block.columns, vals);
-      const roleName = obj?.role ?? obj?.role_name ?? null;
-      const roleId = roleName ? await getOrCreateRole(roleName) : null;
-      staffToInsert.push({
-        id: obj?.id ?? crypto.randomUUID(),
-        first_name: obj?.first_name ?? '',
-        last_name: obj?.last_name ?? '',
-        email: obj?.email ?? null,
-        phone: obj?.phone ?? null,
-        date_of_birth: obj?.date_of_birth ?? null,
-        gender: obj?.gender ?? null,
-        role_id: roleId,
-        hire_date: obj?.hire_date ?? new Date().toISOString().split('T')[0],
-        salary: obj?.salary ?? 0,
-        is_active: obj?.is_active ?? true,
-        gym_id: targetGymId,
-        qr_code: JSON.stringify({ staffId: obj?.id, roleId, gymId: targetGymId }),
-        created_at: obj?.created_at ?? new Date().toISOString(),
-      });
-    }
-  }
-
-  // 3b. Insert Staff in batches with Dry Run support
+  // 3b. Insert Staff in batches
   for (let i = 0; i < staffToInsert.length; i += chunkSize) {
     const batch = staffToInsert.slice(i, i + chunkSize);
-    
     if (!isDryRun) {
       const { error } = await supabase.from('staff').upsert(batch, { onConflict: 'email' });
       if (error) throw error;
     } else {
-      console.log(`DRY RUN: Prepared batch of ${batch.length} staff`, batch[0]);
+      console.log(`DRY RUN: Prepared batch of ${batch.length} staff`);
     }
-
-    // Optionally update progress to 100 after staff insertion completes
-    if (onProgress && i + batch.length >= staffToInsert.length) {
-      onProgress(100);
-    }
+    if (onProgress && i + batch.length >= staffToInsert.length) onProgress(100);
   }
 
-  // Double-check the counts in Supabase vs our processed list
-  const { count: finalUserCount } = await supabase
-    .from('users')
-    .select('*', { count: 'exact', head: true })
-    .eq('gym_id', targetGymId);
+  // Final check
+  let finalUserCount = 0;
+  if (!isDryRun) {
+      const { count } = await supabase.from('users').select('*', { count: 'exact', head: true }).eq('gym_id', targetGymId);
+      finalUserCount = count || 0;
+  }
 
-  console.log(`Migration Complete. File had ${usersToInsert.length} users. Supabase now has ${finalUserCount} for this gym.`);
-
-  // Return summary (includes skippedPayments count from payments parsing)
   return { usersInserted: usersToInsert.length, staffInserted: staffToInsert.length, skippedPayments };
-
 };

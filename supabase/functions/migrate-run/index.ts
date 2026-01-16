@@ -3,9 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 import { executeMigration } from "../../../src/utils/migrationService.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error("Server configuration error: Supabase credentials missing.");
+// Accept either SUPABASE_SERVICE_ROLE_KEY or a project secret named SERVICE_ROLE_KEY
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY");
+// Optional anon key for preview reads when service key is not present
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("VITE_SUPABASE_ANON_KEY");
+if (!SUPABASE_URL) {
+  throw new Error("Server configuration error: SUPABASE_URL is missing.");
 }
 
 serve(async (req: Request) => {
@@ -29,12 +32,30 @@ serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { sql, gymId, dryRun = false } = body;
+    const { sql, gymId, dryRun = false, finalConfirm = '' } = body;
     if (!sql || !gymId) {
       return new Response(JSON.stringify({ error: "Missing required fields: sql, gymId" }), {
         status: 400,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
       });
+    }
+
+    // Safety: require explicit confirmation for non-dry runs
+    if (!dryRun) {
+      if (!finalConfirm || String(finalConfirm) !== 'MIGRATE') {
+        return new Response(JSON.stringify({ error: "Final confirmation required for full migration. Include { finalConfirm: 'MIGRATE' } in the request body." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+        });
+      }
+
+      // Ensure service role key is present before allowing writes
+      if (!SUPABASE_SERVICE_ROLE_KEY) {
+        return new Response(JSON.stringify({ error: "Full migration not enabled: SUPABASE_SERVICE_ROLE_KEY is not configured in this environment." }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+        });
+      }
     }
 
     // Create a streaming response with SSE
@@ -51,7 +72,8 @@ serve(async (req: Request) => {
 
         try {
           // Run a quick preview first so the UI gets immediate feedback
-          const preview = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, true);
+          const keyForPreview = SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY;
+          const preview = await executeMigration(sql, gymId, SUPABASE_URL, keyForPreview, true);
           send({ type: 'preview', preview });
 
           if (dryRun) {
@@ -62,7 +84,7 @@ serve(async (req: Request) => {
           }
 
           // Now run the actual migration and stream progress
-          const result = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, false, (percent: number) => {
+          const result = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY!, false, (percent: number) => {
             send({ type: 'progress', percent });
           });
 
