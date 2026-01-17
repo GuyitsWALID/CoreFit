@@ -86,7 +86,7 @@ export const MigrationDashboard: React.FC = () => {
           addLog('Parsing file (preview)...', 'info');
           const res = await fetch(`${functionsBase}/migrate-preview`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
             body: JSON.stringify({ sql: content, gymId: selectedGymId })
           });
           if (!res.ok) {
@@ -156,7 +156,7 @@ export const MigrationDashboard: React.FC = () => {
     try {
       const res = await fetch(`${functionsBase}/migrate-run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
         body: JSON.stringify({ sql: content, gymId: selectedGymId, dryRun: isDryRun, finalConfirm: finalConfirmValue })
       });
 
@@ -216,6 +216,15 @@ export const MigrationDashboard: React.FC = () => {
               if (obj.result?.skippedRows && obj.result.skippedRows.length) addLog(`Skipped rows: ${obj.result.skippedRows.length}`, 'warning');
               // if preview was included in result
               if (obj.result?.preview) setPreview(obj.result.preview);
+              // Show run diagnostics (packages created, attempted upserts, batch errors)
+              if (obj.result?.runDiagnostics) {
+                const rd = obj.result.runDiagnostics;
+                addLog(`Packages created: ${rd.packagesCreated} (map size: ${rd.packageMapSize})`, 'info');
+                addLog(`Users attempted: ${rd.usersAttempted}, batches: ${rd.userUpsertBatches}, errors: ${rd.userUpsertErrors?.length || 0}`, 'info');
+                addLog(`Staff attempted: ${rd.staffAttempted}, batches: ${rd.staffUpsertBatches}, errors: ${rd.staffUpsertErrors?.length || 0}`, 'info');
+                if (rd.userUpsertErrors && rd.userUpsertErrors.length) rd.userUpsertErrors.forEach((e: any) => addLog(`User upsert error: ${typeof e.error === 'string' ? e.error : JSON.stringify(e.error)}`, 'error'));
+                if (rd.staffUpsertErrors && rd.staffUpsertErrors.length) rd.staffUpsertErrors.forEach((e: any) => addLog(`Staff upsert error: ${typeof e.error === 'string' ? e.error : JSON.stringify(e.error)}`, 'error'));
+              }
             } else if (obj.type === 'error') {
               addLog(`Error: ${obj.message}`, 'error');
             } else {

@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { executeMigration } from "../../../src/utils/migrationService.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -73,7 +73,8 @@ serve(async (req: Request) => {
         try {
           // Run a quick preview first so the UI gets immediate feedback
           const keyForPreview = SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY;
-          const preview = await executeMigration(sql, gymId, SUPABASE_URL, keyForPreview, true);
+          const previewClient = createClient(SUPABASE_URL!, keyForPreview ?? '');
+          const preview = await executeMigration(sql, gymId, previewClient, true);
           send({ type: 'preview', preview });
 
           if (dryRun) {
@@ -84,7 +85,8 @@ serve(async (req: Request) => {
           }
 
           // Now run the actual migration and stream progress
-          const result = await executeMigration(sql, gymId, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY!, false, (percent: number) => {
+          const svcClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+          const result = await executeMigration(sql, gymId, svcClient, false, (percent: number) => {
             send({ type: 'progress', percent });
           });
 

@@ -16,6 +16,8 @@ import CheckIns from '@/pages/CheckIns';
 import AdminLogin from '@/pages/AdminLogin';
 import Logout from '@/pages/Logout';
 import NotFound from '@/pages/NotFound';
+import ResetPassword from '@/pages/ResetPassword';
+import ResetPasswordComplete from '@/pages/ResetPasswordComplete';
 import OnboardingForm from '@/pages/admin/onboard/index.tsx';
 import AdminGyms from '@/pages/admin/gyms';
 import Analytics from '@/pages/admin/analytics';
@@ -42,6 +44,8 @@ function App() {
         <Routes>
           {/* Admin routes (no gym context needed) */}
           <Route path="/login" element={<AdminLogin />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/reset-password/complete" element={<ResetPasswordComplete />} />
           <Route path="/admin" element={<div>Admin Overview</div>} />
           <Route path="/admin/gyms" element={<AdminGyms />} />
           <Route path="/admin/onboard" element={<OnboardingForm />} />

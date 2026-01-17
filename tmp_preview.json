@@ -1,4 +1,0 @@
-{"sql":"INSERT INTO users (id, email, full_name) VALUES (\
-u1\, NULL, \Alice
-Jones\),(\u2\, \bob@example.com\, \Bob
-Smith\); INSERT INTO admins (id, full_name) VALUES (\a1\, \Admin\) ;","gymId":"test-gym"}
