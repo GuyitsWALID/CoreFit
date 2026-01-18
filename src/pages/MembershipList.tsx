@@ -113,6 +113,7 @@ export default function MembershipList() {
         });
       }
       await fetchMembershipData();
+      await fetchCounts();
     } catch (err: any) {
       toast({ title: 'Error', description: err?.message || 'Unknown error', variant: 'destructive' });
     } finally {
@@ -216,6 +217,43 @@ export default function MembershipList() {
       });
     }
   };
+
+  const fetchCounts = async () => {
+    if (!gym || gym.id === 'default') return;
+    try {
+      const { count: usersCount, error: usersErr } = await supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .eq('gym_id', gym.id);
+      if (!usersErr && typeof usersCount === 'number') setDbTotalCount(usersCount || 0);
+
+      const { count: activeCnt } = await supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .eq('gym_id', gym.id)
+        .ilike('status', 'active%')
+        .gte('membership_expiry', new Date().toISOString());
+      if (typeof activeCnt === 'number') setDbActiveCount(activeCnt || 0);
+
+      const { count: expCnt } = await supabase
+        .from('user_combined_costs')
+        .select('id', { count: 'exact', head: true })
+        .eq('gym_id', gym.id)
+        .lte('days_left', 10)
+        .gt('days_left', 0);
+      if (typeof expCnt === 'number') setDbExpiringCount(expCnt || 0);
+
+      const { count: expiredCnt } = await supabase
+        .from('user_combined_costs')
+        .select('id', { count: 'exact', head: true })
+        .eq('gym_id', gym.id)
+        .lte('days_left', 0);
+      if (typeof expiredCnt === 'number') setDbExpiredCount(expiredCnt || 0);
+    } catch (e) {
+      console.error('fetchCounts error', e);
+    }
+  };
+
   useEffect(() => {
     
   const loadAllData = async () => {
@@ -223,7 +261,8 @@ export default function MembershipList() {
     try {
       await Promise.all([
         fetchMembershipData(),
-        loadTrainers()
+        loadTrainers(),
+        fetchCounts()
       ]);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -239,12 +278,17 @@ export default function MembershipList() {
   // Computed values - Update all counts to use frontend logic
   const packageTypes = Array.from(new Set(members.map((m) => m.package_name))).sort();
   
-  // Use frontend logic for all counts
-  const allMembersCount = members.length;
-  const expiringCount = members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
-  const expiredCount = members.filter((m) => m.days_left <= 0).length;
-  // Active = days_left > 0 and not paused
-  const activeCount = members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
+  // Use DB-driven counts for accuracy (keeps Dashboard and Membership counts consistent)
+  const [dbTotalCount, setDbTotalCount] = useState<number>(0);
+  const [dbActiveCount, setDbActiveCount] = useState<number>(0);
+  const [dbExpiringCount, setDbExpiringCount] = useState<number>(0);
+  const [dbExpiredCount, setDbExpiredCount] = useState<number>(0);
+
+  // Fallback client-side calculations kept for local UI but display uses DB counts
+  const allMembersCount = dbTotalCount || members.length;
+  const expiringCount = dbExpiringCount || members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
+  const expiredCount = dbExpiredCount || members.filter((m) => m.days_left <= 0).length;
+  const activeCount = dbActiveCount || members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
 
   // Filtering and sorting logic - Update all tab filters to use frontend logic
   const filteredMembers = members.filter((member) => {
@@ -387,7 +431,8 @@ export default function MembershipList() {
         title: "Membership renewed",
         description: `${member.full_name}'s membership has been renewed successfully.`,
       });
-      fetchMembershipData();
+      await fetchMembershipData();
+      await fetchCounts();
     }
   } catch (err: any) {
     toast({
@@ -418,6 +463,7 @@ const handleUnfreeze = async (member: MembershipInfo) => {
       description: `${member.full_name} is now active again.`,
     });
     await fetchMembershipData();
+    await fetchCounts();
   } catch (error: any) {
     toast({
       title: 'Unfreeze Failed',
@@ -483,8 +529,7 @@ const handleUpgradeSubmit = async () => {
     setUpgradeMember(null);
 
     // refresh list to reflect updated expiry/status/days_left
-    await fetchMembershipData();
-  } catch (err: any) {
+    await fetchMembershipData();    await fetchCounts();  } catch (err: any) {
     toast({
       title: "Upgrade failed",
       description: `Unexpected error: ${err?.message ?? "Unknown error"}`,
@@ -538,7 +583,8 @@ const handleUpgradeSubmit = async () => {
           });
           setCoachingDialog(false);
           setCoachingMember(null);
-          fetchMembershipData(); // Refresh to show updated data
+          await fetchMembershipData(); // Refresh to show updated data
+          await fetchCounts();
         }
       } catch (error: any) {
         console.error('handleCoachingSubmit: Unexpected error during insert:', error);
