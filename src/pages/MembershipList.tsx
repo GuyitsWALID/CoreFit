@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Users, Clock, AlertTriangle } from "lucide-react";
+import { Users, Clock, AlertTriangle, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 import { useGym } from "@/contexts/GymContext";
@@ -42,6 +42,10 @@ export default function MembershipList() {
   const [members, setMembers] = useState<MembershipInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | 'none'>('none');
+
+  // Client-side pagination
+  const PAGE_SIZE = 60;
+  const [currentPage, setCurrentPage] = useState(1);
   
   // Modal states
   const [notifyDialog, setNotifyDialog] = useState(false);
@@ -239,6 +243,8 @@ export default function MembershipList() {
   const allMembersCount = members.length;
   const expiringCount = members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
   const expiredCount = members.filter((m) => m.days_left <= 0).length;
+  // Active = days_left > 0 and not paused
+  const activeCount = members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
 
   // Filtering and sorting logic - Update all tab filters to use frontend logic
   const filteredMembers = members.filter((member) => {
@@ -247,7 +253,15 @@ export default function MembershipList() {
       member.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       member.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       member.phone.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === "all" || member.status.toLowerCase() === statusFilter;
+
+    // Compute status from data to avoid relying on possibly stale 'status' strings
+    const computedStatus = (m: MembershipInfo) => {
+      if (m.days_left <= 0) return 'expired';
+      if (m.status && m.status.toLowerCase() === 'paused') return 'paused';
+      return 'active';
+    };
+
+    const matchesStatus = statusFilter === "all" || computedStatus(member) === statusFilter;
     const matchesPackage = packageFilter === "all" || member.package_name === packageFilter;
     
     let matchesTab = true;
@@ -264,6 +278,15 @@ export default function MembershipList() {
     }
     return 0;
   });
+
+  // Client-side pagination derived from filtered results
+  const totalPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
+  const paginatedMembers = filteredMembers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  // Reset to first page whenever filters/search/sort change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, packageFilter, activeTab, sortOrder, members.length]);
 
   const handleSort = () => {
     if (sortOrder === 'none') {
@@ -596,7 +619,7 @@ const handleUpgradeSubmit = async () => {
               </div>
               
               {/* Stats Cards with dynamic colors */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <div 
                   className="rounded-lg p-0.5"
                   style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
@@ -604,8 +627,20 @@ const handleUpgradeSubmit = async () => {
                   <StatsCard
                     title="All Members"
                     value={allMembersCount}
-                    description="Total active memberships"
+                    description="Total memberships"
                     icon={<Users className="h-4 w-4" />}
+                  />
+                </div>
+                <div 
+                  className="rounded-lg p-0.5"
+                  style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
+                >
+                  <StatsCard
+                    title="Active"
+                    value={activeCount}
+                    description="Currently active memberships"
+                    icon={<CheckCircle className="h-4 w-4" />}
+                    iconColor="text-green-600"
                   />
                 </div>
                 <div 
@@ -660,7 +695,7 @@ const handleUpgradeSubmit = async () => {
                     No members found for {gym?.name || 'this gym'}
                   </div>
                 ) : (
-                  filteredMembers.map((member) => (
+                  paginatedMembers.map((member) => (
                     <MemberCard
                       key={member.user_id}
                       member={member}
@@ -678,6 +713,32 @@ const handleUpgradeSubmit = async () => {
                       onCoaching={handleCoaching}
                     />
                   ))
+                )}
+
+                {/* Pagination controls */}
+                {filteredMembers.length > PAGE_SIZE && (
+                  <div className="mt-6 flex items-center justify-between">
+                    <div className="text-sm text-gray-500">
+                      Showing {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filteredMembers.length)} of {filteredMembers.length}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={currentPage === 1}
+                        className={`px-3 py-1 rounded border ${currentPage === 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+                      >
+                        Previous
+                      </button>
+                      <span className="text-sm text-gray-600">Page {currentPage} / {totalPages}</span>
+                      <button
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={currentPage === totalPages}
+                        className={`px-3 py-1 rounded border ${currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100'}`}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

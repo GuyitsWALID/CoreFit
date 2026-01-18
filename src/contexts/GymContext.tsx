@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchGymBySlug, GymConfig } from '@/lib/gymApi';
 
 interface GymContextType {
@@ -51,6 +51,7 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [error, setError] = useState<string | null>(null);
   const [isDefaultGym, setIsDefaultGym] = useState(true);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const loadGym = async (slug: string) => {
     if (slug === 'default' || !slug) {
@@ -89,6 +90,22 @@ export const GymProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       
       // Apply dynamic theme
       applyTheme(gymWithDefaults);
+
+      // If the user visited with a UUID in the URL (legacy links), replace it with the readable slug
+      const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i;
+      const gymSlug = (gymWithDefaults as any).slug;
+      if (uuidRegex.test(slug) && gymSlug && gymSlug !== slug) {
+        try {
+          const pathSegments = location.pathname.split('/').filter(Boolean);
+          if (pathSegments.length > 0 && pathSegments[0] === slug) {
+            pathSegments[0] = gymSlug;
+            const newPath = '/' + pathSegments.join('/');
+            navigate(newPath, { replace: true });
+          }
+        } catch (e) {
+          // ignore navigation errors
+        }
+      }
       
     } catch (err: any) {
       console.error('Unexpected error loading gym:', err);

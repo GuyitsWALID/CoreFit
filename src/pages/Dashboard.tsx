@@ -515,6 +515,12 @@ export default function Dashboard() {
     );
   }
 
+  // Helper to build paths prefixed with gym slug when applicable
+  const getGymPath = (href: string) => {
+    if (!gym || gym.id === 'default') return href;
+    return `/${(gym as any).slug || gym.id}${href}`;
+  };
+
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar />
@@ -533,7 +539,7 @@ export default function Dashboard() {
 
             {/* Stat cards - with dynamic colors */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <div onClick={() => navigate('/memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
+              <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
                 <div 
                   className="rounded-lg p-0.5"
                   style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
@@ -546,7 +552,7 @@ export default function Dashboard() {
                   />
                 </div>
               </div>
-              <div onClick={() => navigate('/check-ins')} className="cursor-pointer transition hover:-translate-y-0.5">
+              <div onClick={() => navigate(getGymPath('/check-ins'))} className="cursor-pointer transition hover:-translate-y-0.5">
                 <div 
                   className="rounded-lg p-0.5"
                   style={{ backgroundColor: `${dynamicStyles.accentColor}10` }}
@@ -559,7 +565,7 @@ export default function Dashboard() {
                   />
                 </div>
               </div>
-              <div onClick={() => navigate('/memberships')} className="cursor-pointer transition hover:-translate-y-0.5">
+              <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
                 <div 
                   className="rounded-lg p-0.5"
                   style={{ backgroundColor: `${dynamicStyles.secondaryColor}10` }}
@@ -654,7 +660,7 @@ export default function Dashboard() {
                     <CardTitle>Memberships Expiring Soon</CardTitle>
                     <CardDescription>Members expiring within 10 days</CardDescription>
                   </div>
-                  <Button variant="outline" onClick={() => navigate('/memberships')}>
+                  <Button variant="outline" onClick={() => navigate(getGymPath('/memberships'))}>
                     View All
                   </Button>
                 </CardHeader>
@@ -704,7 +710,7 @@ export default function Dashboard() {
                     <CardTitle>Expired Memberships</CardTitle>
                     <CardDescription>Members with expired memberships</CardDescription>
                   </div>
-                  <Button variant="outline" onClick={() => navigate('/memberships')}>
+                  <Button variant="outline" onClick={() => navigate(getGymPath('/memberships'))}>
                     View All
                   </Button>
                 </CardHeader>

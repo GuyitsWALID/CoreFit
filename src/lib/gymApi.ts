@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabaseClient';
 
 export interface GymConfig {
   id: string;
+  slug?: string;
   name: string;
   owner_name: string;
   owner_phone?: string;

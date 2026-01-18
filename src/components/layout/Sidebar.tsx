@@ -145,12 +145,13 @@ export function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
 
   const gymRoutePrefix = useMemo(() => {
     if (!gym || gym.id === 'default') return '';
-    return `/${gym.id}`;
+    // Prefer slug when available
+    return `/${(gym as any).slug || gym.id}`;
   }, [gym]);
 
   const getNavPath = (href: string) => {
     if (gym && gym.id !== 'default') {
-      return `/${gym.id}${href}`;
+      return `/${(gym as any).slug || gym.id}${href}`;
     }
     return href;
   };
