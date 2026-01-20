@@ -150,10 +150,99 @@ export default function MembershipList() {
   }, [gym]);
 
   // Filter members by gym if gym context is available
-  const fetchMembershipData = async () => {
+  // This version performs DB-side filtering so selecting a status/tab triggers an API query
+  const fetchMembershipData = async (opts?: { searchTerm?: string; statusFilter?: string; packageFilter?: string; activeTab?: string; page?: number; }) => {
     setIsLoading(true);
+    const sTerm = opts?.searchTerm ?? searchTerm;
+    const stFilter = opts?.statusFilter ?? statusFilter;
+    const pkFilter = opts?.packageFilter ?? packageFilter;
+    const tab = opts?.activeTab ?? activeTab;
     try {
-      let query = supabase
+      // If active filter — query users and merge membership info from user_combined_costs
+      // Trigger when either the status dropdown or the Active tab is selected
+      if (stFilter === 'active' || tab === 'active') {
+        const nowIso = new Date().toISOString();
+        const safe = sTerm ? sTerm.replace(/[%_]/g, "\\$&") : '';
+
+        // Fetch users only (avoid embedded relation select which fails if FK not present)
+        let usersQuery: any = supabase
+          .from('users')
+          .select('id, full_name, email, phone, status, created_at, membership_expiry')
+          .gt('membership_expiry', nowIso);
+
+        if (gym && gym.id !== 'default') usersQuery = usersQuery.eq('gym_id', gym.id);
+        if (safe) usersQuery = usersQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
+
+        const { data: userRows, error: usersError } = await usersQuery;
+        const usersFetched = !usersError;
+        const fetchedUsers = usersFetched ? (userRows || []) : [];
+        if (!usersFetched) {
+          console.warn('users query failed, falling back to combined view:', usersError?.message || usersError);
+        } else {
+          // If we got users, fetch their combined membership info separately (no FK required)
+          const userIds = fetchedUsers.map((u: any) => u.id);
+          let combinedRows: any[] = [];
+          if (userIds.length > 0) {
+            try {
+              let combQ: any = supabase.from('user_combined_costs').select('*').in('user_id', userIds);
+              if (gym && gym.id !== 'default') combQ = combQ.eq('gym_id', gym.id);
+              const { data: cr, error: crErr } = await combQ;
+              if (!crErr && cr) combinedRows = cr;
+            } catch (e) {
+              console.warn('Error fetching combined rows for active users:', e);
+            }
+          }
+
+          // Merge users and their combinedRows (if any)
+          const merged: any[] = [];
+          (fetchedUsers || []).forEach((u: any) => {
+            const combForUser = combinedRows.filter((c: any) => c.user_id === u.id);
+
+            if (combForUser.length > 0) {
+              combForUser.forEach((c: any) => {
+                const daysLeft = c.membership_expiry ? Math.ceil((new Date(c.membership_expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : Number.MAX_SAFE_INTEGER;
+                merged.push({
+                  user_id: u.id,
+                  full_name: u.full_name,
+                  email: u.email,
+                  phone: u.phone,
+                  package_id: c.package_id,
+                  package_name: c.package_name,
+                  created_at: c.created_at || u.created_at,
+                  membership_expiry: c.membership_expiry ?? u.membership_expiry,
+                  status: u.status,
+                  days_left: daysLeft,
+                  duration_unit: c.duration_unit ?? 'days',
+                  duration_value: c.duration_value ?? 0,
+                });
+              });
+            } else {
+              const daysLeft = u.membership_expiry ? Math.ceil((new Date(u.membership_expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : Number.MAX_SAFE_INTEGER;
+              merged.push({
+                user_id: u.id,
+                full_name: u.full_name,
+                email: u.email,
+                phone: u.phone,
+                package_id: null,
+                package_name: null,
+                created_at: u.created_at,
+                membership_expiry: u.membership_expiry,
+                status: u.status,
+                days_left: daysLeft,
+                duration_unit: 'days',
+                duration_value: 0,
+              });
+            }
+          });
+
+          setMembers(merged);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Non-active path: fetch full set from user_combined_costs and apply client-side status filtering
+      let query: any = supabase
         .from("user_combined_costs")
         .select("*");
 
@@ -162,8 +251,38 @@ export default function MembershipList() {
         query = query.eq('gym_id', gym.id);
       }
 
-      const { data, error } = await query.order("days_left", { ascending: true });
-      
+      // Search across name/email/phone (server-side)
+      if (sTerm && sTerm.trim() !== "") {
+        const safe = sTerm.replace(/[%_]/g, "\\$&");
+        query = query.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
+      }
+
+      // Package filter
+      if (pkFilter && pkFilter !== 'all') {
+        query = query.eq('package_name', pkFilter);
+      }
+
+      // Tab filters (expiring/expired) - applied in addition to status filter
+      if (tab && tab !== 'all') {
+        if (tab === 'expiring') {
+          query = query.lte('days_left', 10).gt('days_left', 0);
+        }
+        if (tab === 'expired') {
+          query = query.lte('days_left', 0);
+        }
+      }
+
+      // Sorting
+      if (sortOrder === 'asc') {
+        query = query.order('full_name', { ascending: true });
+      } else if (sortOrder === 'desc') {
+        query = query.order('full_name', { ascending: false });
+      } else {
+        query = query.order('days_left', { ascending: true });
+      }
+
+      const { data, error } = await query;
+
       if (error) {
         // Fallback to the original view if the new one doesn't exist yet
         let fallbackQuery = supabase
@@ -184,6 +303,7 @@ export default function MembershipList() {
             variant: "destructive"
           });
         } else {
+          setMembers(fallbackData || []);
           setMembers(fallbackData || []);
         }
       } else {
@@ -225,30 +345,35 @@ export default function MembershipList() {
         .from('users')
         .select('*', { count: 'exact', head: true })
         .eq('gym_id', gym.id);
-      if (!usersErr && typeof usersCount === 'number') setDbTotalCount(usersCount || 0);
+      if (!usersErr && typeof usersCount === 'number') setDbTotalCount(usersCount ?? 0);
 
+      const nowIso = new Date().toISOString();
+
+      // Active users: membership_expiry > NOW()
       const { count: activeCnt } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
         .eq('gym_id', gym.id)
-        .ilike('status', 'active%')
-        .gte('membership_expiry', new Date().toISOString());
-      if (typeof activeCnt === 'number') setDbActiveCount(activeCnt || 0);
+        .gt('membership_expiry', nowIso);
+      if (typeof activeCnt === 'number') setDbActiveCount(activeCnt ?? 0);
 
+      // Expiring soon: membership_expiry > NOW() AND membership_expiry <= NOW() + INTERVAL '10 days'
+      const futureIso = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
       const { count: expCnt } = await supabase
-        .from('user_combined_costs')
-        .select('id', { count: 'exact', head: true })
+        .from('users')
+        .select('*', { count: 'exact', head: true })
         .eq('gym_id', gym.id)
-        .lte('days_left', 10)
-        .gt('days_left', 0);
-      if (typeof expCnt === 'number') setDbExpiringCount(expCnt || 0);
+        .gt('membership_expiry', nowIso)
+        .lte('membership_expiry', futureIso);
+      if (typeof expCnt === 'number') setDbExpiringCount(expCnt ?? 0);
 
+      // Expired: membership_expiry < NOW()
       const { count: expiredCnt } = await supabase
-        .from('user_combined_costs')
-        .select('id', { count: 'exact', head: true })
+        .from('users')
+        .select('*', { count: 'exact', head: true })
         .eq('gym_id', gym.id)
-        .lte('days_left', 0);
-      if (typeof expiredCnt === 'number') setDbExpiredCount(expiredCnt || 0);
+        .lt('membership_expiry', nowIso);
+      if (typeof expiredCnt === 'number') setDbExpiredCount(expiredCnt ?? 0);
     } catch (e) {
       console.error('fetchCounts error', e);
     }
@@ -284,46 +409,51 @@ export default function MembershipList() {
   const [dbExpiringCount, setDbExpiringCount] = useState<number>(0);
   const [dbExpiredCount, setDbExpiredCount] = useState<number>(0);
 
-  // Fallback client-side calculations kept for local UI but display uses DB counts
-  const allMembersCount = dbTotalCount || members.length;
-  const expiringCount = dbExpiringCount || members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
-  const expiredCount = dbExpiredCount || members.filter((m) => m.days_left <= 0).length;
-  const activeCount = dbActiveCount || members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
 
-  // Filtering and sorting logic - Update all tab filters to use frontend logic
+
+  // Fallback client-side calculations kept for local UI but display uses DB counts
+  // Use nullish coalescing (??) so a DB count of 0 is respected and not replaced by client fallback
+  const allMembersCount = dbTotalCount ?? members.length;
+  const expiringCount = dbExpiringCount ?? members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
+  const expiredCount = dbExpiredCount ?? members.filter((m) => m.days_left <= 0).length;
+  const activeCount = dbActiveCount ?? members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
+
+  // Client-side filtering for status (paused/inactive/expired). Active uses the DB-driven branch above.
+  const computeStatus = (m: MembershipInfo) => {
+    const st = (m.status ?? '').toLowerCase();
+    if (st === 'paused') return 'paused';
+    if (st === 'inactive') return 'inactive';
+    if (typeof m.days_left === 'number') {
+      if (m.days_left <= 0) return 'expired';
+      return 'active';
+    }
+    return 'active';
+  };
+
   const filteredMembers = members.filter((member) => {
     const matchesSearch =
       searchTerm === "" ||
-      member.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.phone.toLowerCase().includes(searchTerm.toLowerCase());
+      (member.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (member.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (member.phone || '').toLowerCase().includes(searchTerm.toLowerCase());
 
-    // Compute status from data to avoid relying on possibly stale 'status' strings
-    const computedStatus = (m: MembershipInfo) => {
-      if (m.days_left <= 0) return 'expired';
-      if (m.status && m.status.toLowerCase() === 'paused') return 'paused';
-      return 'active';
-    };
-
-    const matchesStatus = statusFilter === "all" || computedStatus(member) === statusFilter;
+    const matchesStatus = statusFilter === "all" || computeStatus(member) === statusFilter;
     const matchesPackage = packageFilter === "all" || member.package_name === packageFilter;
-    
+
     let matchesTab = true;
-    if (activeTab === "all") matchesTab = true; // All members
+    if (activeTab === "all") matchesTab = true;
+    if (activeTab === "active") matchesTab = (member.days_left > 0) || (member.membership_expiry === null);
     if (activeTab === "expiring") matchesTab = member.days_left <= 10 && member.days_left > 0;
     if (activeTab === "expired") matchesTab = member.days_left <= 0;
-    
+
     return matchesSearch && matchesStatus && matchesPackage && matchesTab;
   }).sort((a, b) => {
-    if (sortOrder === 'asc') {
-      return a.full_name.localeCompare(b.full_name);
-    } else if (sortOrder === 'desc') {
-      return b.full_name.localeCompare(a.full_name);
-    }
+    if (sortOrder === 'asc') return a.full_name.localeCompare(b.full_name);
+    if (sortOrder === 'desc') return b.full_name.localeCompare(a.full_name);
     return 0;
   });
 
-  // Client-side pagination derived from filtered results
+  // Pagination (client-side slicing for all filters)
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
   const paginatedMembers = filteredMembers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
@@ -331,6 +461,28 @@ export default function MembershipList() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter, packageFilter, activeTab, sortOrder, members.length]);
+
+  // When filters/search/sort change, perform a debounced server-side fetch to keep results accurate
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchMembershipData({ searchTerm, statusFilter, packageFilter, activeTab });
+      // refresh counts to reflect database state
+      fetchCounts();
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm, statusFilter, packageFilter, activeTab, sortOrder, gym?.id]);
+
+  // When filters/search/sort change, perform a debounced server-side fetch to keep results accurate
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchMembershipData({ searchTerm, statusFilter, packageFilter, activeTab });
+      // refresh counts to reflect database state
+      fetchCounts();
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm, statusFilter, packageFilter, activeTab, sortOrder, gym?.id]);
 
   const handleSort = () => {
     if (sortOrder === 'none') {
@@ -730,6 +882,7 @@ const handleUpgradeSubmit = async () => {
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
                 totalMembers={allMembersCount}
+                activeCount={activeCount}
                 expiringCount={expiringCount}
                 expiredCount={expiredCount}
               />
