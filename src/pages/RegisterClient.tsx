@@ -1,5 +1,5 @@
 // RegisterClient.tsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -72,6 +72,8 @@ export default function RegisterClient() {
   const [registeredUserId, setRegisteredUserId] = useState<string | null>(null);
   const [registeredClientName, setRegisteredClientName] = useState<string>("");
   const [qrCodeValue, setQrCodeValue] = useState<string | null>(null);
+  const [registeredClientEmail, setRegisteredClientEmail] = useState<string | null>(null);
+  const qrRef = useRef<HTMLDivElement | null>(null);
 
   // Dynamic styling based on gym configuration
   const dynamicStyles = useMemo(() => {
@@ -391,6 +393,7 @@ export default function RegisterClient() {
       });
       setRegisteredUserId(userId);
       setRegisteredClientName(`${values.first_name} ${values.last_name}`);
+      setRegisteredClientEmail(values.email);
       setQrCodeValue(qrData);
       form.reset();
       setSelectedPackage(null);
@@ -422,70 +425,175 @@ export default function RegisterClient() {
 
   const handleQrCodeDownload = () => {
     if (!qrCodeValue || !registeredClientName) return;
-    
-    // Create a canvas to render the QR code
+
+    const canvasWidth = 1400;
+    const canvasHeight = 700;
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
-    // Set canvas size
-    canvas.width = 256;
-    canvas.height = 256;
-    
-    // Create a new QR code SVG element
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', '256');
-    svg.setAttribute('height', '256');
-    
-    // Use QRCodeSVG to generate the QR code data
-    const qrElement = document.createElement('div');
-    const tempContainer = document.createElement('div');
-    tempContainer.style.position = 'absolute';
-    tempContainer.style.left = '-9999px';
-    document.body.appendChild(tempContainer);
-    
-    // Create QR code and extract as data URL
-    import('react-qr-code').then((QRCode) => {
-      // Create a temporary element to render QR code
-      const qrSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      qrSvg.setAttribute('width', '256');
-      qrSvg.setAttribute('height', '256');
-      
-      // Convert SVG to canvas and download
-      const svgData = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-        <rect width="256" height="256" fill="white"/>
-      </svg>`;
-      
-      const img = new Image();
-      const blob = new Blob([svgData], { type: 'image/svg+xml' });
-      const url = URL.createObjectURL(blob);
-      
-      img.onload = () => {
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, 256, 256);
-        ctx.drawImage(img, 0, 0);
-        
-        // Download the image
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const downloadUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = `${registeredClientName}-QRCode.png`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(downloadUrl);
-          }
-        }, 'image/png');
-        
-        URL.revokeObjectURL(url);
-        document.body.removeChild(tempContainer);
-      };
-      
-      img.src = url;
-    });
+
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    // Decorative top stripe using gym color (if available)
+    const stripeHeight = 90;
+    ctx.fillStyle = gym?.brand_color ?? '#2563eb';
+    ctx.fillRect(0, 0, canvasWidth, stripeHeight);
+
+    // Gym name on top stripe
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 28px Inter, Arial, sans-serif';
+    ctx.fillText(gym?.name ?? 'Gym', 40, 58);
+
+    // Retrieve SVG from displayed QR
+    const svgEl = qrRef.current?.querySelector('svg');
+    if (!svgEl) {
+      toast({ title: 'QR not available', description: 'QR code not found on the page.', variant: 'destructive' });
+      return;
+    }
+
+    // Serialize SVG and sanitize for crisp rasterization (avoid turning background black)
+    let svgData = new XMLSerializer().serializeToString(svgEl);
+
+    // Strip embedded styles that might interfere
+    svgData = svgData.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '');
+
+    // Render the SVG at a large explicit pixel size to preserve crispness when rasterizing
+    const desiredQrPx = 760; // large, will be downscaled for final canvas
+    // remove any existing explicit width/height attributes so we can set precise pixel size
+    svgData = svgData.replace(/\s(width|height)="[^"]*"/g, '');
+    svgData = svgData.replace(/<svg([^>]*)>/, `<svg$1 width="${desiredQrPx}" height="${desiredQrPx}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" image-rendering="pixelated">`);
+
+    // Convert strokes to fills and ensure modules are black
+    svgData = svgData.replace(/\sstroke="[^"]*"/g, '');
+    svgData = svgData.replace(/fill="(?!#ffffff)[^"]*"/g, 'fill="#000000"');
+
+    // Remove any existing full-size background rects then insert a guaranteed white background rect
+    svgData = svgData.replace(/<rect[^>]*width="100%"[^>]*>/g, '');
+    svgData = svgData.replace(/<svg([^>]*)>/, `<svg$1><rect width="100%" height="100%" fill="#ffffff"/>`);
+
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+      const qrSize = 380;
+      const padding = 60;
+      const qrX = canvasWidth - qrSize - padding;
+      const qrY = (canvasHeight - qrSize) / 2;
+
+      // Disable smoothing for pixel-perfect QR rendering and set high quality when downscaling
+      ctx.imageSmoothingEnabled = false;
+      try { ctx.imageSmoothingQuality = 'high'; } catch (e) { /* not supported in some browsers */ }
+
+      // Draw white rounded box for QR area with subtle border & shadow
+      const boxX = qrX - 10;
+      const boxY = qrY - 10;
+      const boxW = qrSize + 20;
+      const boxH = qrSize + 20;
+      const radius = 18;
+
+      // subtle shadow
+      ctx.save();
+      ctx.fillStyle = 'rgba(16,24,40,0.04)';
+      ctx.beginPath();
+      ctx.moveTo(boxX + radius, boxY);
+      ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, radius);
+      ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, radius);
+      ctx.arcTo(boxX, boxY + boxH, boxX, boxY, radius);
+      ctx.arcTo(boxX, boxY, boxX + boxW, boxY, radius);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // white rounded rect
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(boxX + radius, boxY);
+      ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, radius);
+      ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, radius);
+      ctx.arcTo(boxX, boxY + boxH, boxX, boxY, radius);
+      ctx.arcTo(boxX, boxY, boxX + boxW, boxY, radius);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#e6e6e6';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      // Draw QR image (black on white)
+      ctx.drawImage(img, qrX, qrY, qrSize, qrSize);
+
+      // Left-side content
+      const leftX = padding;
+      let textY = stripeHeight + 70;
+
+      // Main name
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 48px Inter, Arial, sans-serif';
+      wrapText(ctx, registeredClientName, leftX, textY, qrX - leftX - padding, 56);
+
+      // Email
+      textY += 90;
+      ctx.font = '26px Inter, Arial, sans-serif';
+      ctx.fillStyle = '#111111';
+      wrapText(ctx, registeredClientEmail ?? '', leftX, textY, qrX - leftX - padding, 34);
+
+      // Decorative subtitle
+      textY += 80;
+      ctx.font = '18px Inter, Arial, sans-serif';
+      ctx.fillStyle = '#6b7280';
+      ctx.fillText(`Registered to: ${gym?.name ?? ''}`, leftX, textY + 12);
+
+      // Export as PNG
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const sanitizedGym = (gym?.name ?? 'gym').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `${registeredClientName}-${sanitizedGym}-ID.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+      }, 'image/png');
+
+      URL.revokeObjectURL(url);
+    };
+
+    img.onerror = (e) => {
+      console.error('Error loading SVG into image for download', e);
+      toast({ title: 'Download failed', description: 'Could not prepare the image for download.', variant: 'destructive' });
+    };
+
+    img.src = url;
   };
+
+  // Helper: wrap text within max width
+  function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number) {
+    const words = text.split(' ');
+    let line = '';
+
+    for (let n = 0; n < words.length; n++) {
+      const testLine = line + words[n] + ' ';
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && n > 0) {
+        ctx.fillText(line, x, y);
+        line = words[n] + ' ';
+        y += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+    ctx.fillText(line, x, y);
+  }
 
   // Loading state
   if (gymLoading) {
@@ -810,25 +918,24 @@ export default function RegisterClient() {
                     </CardHeader>
                     <CardContent className="flex flex-col items-center justify-center p-6">
                       <div 
+                        ref={qrRef}
                         className="p-4 rounded-lg"
-                        style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
+                        style={{ backgroundColor: '#ffffff', border: `1px solid ${dynamicStyles.primaryColor}20`, boxShadow: '0 4px 12px rgba(16,24,40,0.04)' }}
                       >
                         <QRCodeSVG 
                           value={qrCodeValue} 
                           size={192} 
                           level="H" 
                           className="w-full max-w-xs h-auto"
-                          fgColor={dynamicStyles.primaryColor}
+                          fgColor="#000000"
+                          bgColor="#ffffff"
                         />
                       </div>
-                      <p className="text-sm text-muted-foreground mt-4 text-center break-all">
-                        User ID: {registeredUserId}
-                      </p>
                       <p className="text-xs text-muted-foreground mt-2 text-center">
                         Registered to: {gym.name}
                       </p>
                     </CardContent>
-                    <CardFooter className="flex justify-end">
+                    <CardFooter className="flex justify-end gap-3">
                       <Button 
                         onClick={handleQrCodeDone}
                         style={{ backgroundColor: dynamicStyles.primaryColor }}
