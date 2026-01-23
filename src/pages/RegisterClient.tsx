@@ -395,8 +395,12 @@ export default function RegisterClient() {
       form.reset();
       setSelectedPackage(null);
 
-      // 4. Send welcome SMS via Edge Function and show clear feedback
-      await sendWelcomeSmsAndNotify(values, userId);
+      // 4. Welcome SMS is a coming-soon feature — do not invoke the Edge Function during registration
+      console.info('Welcome SMS disabled: notifications are a coming soon feature. Skipping SMS invocation.');
+      toast({
+        title: 'Notifications disabled',
+        description: 'Welcome SMS is currently disabled. This feature will be available soon.',
+      });
 
     } catch (error: any) {
       console.error("Unexpected registration error", error);
@@ -626,7 +630,7 @@ export default function RegisterClient() {
                                 <FormControl>
                                   <div className="w-full">
                                     <PhoneInput
-                                      country={'us'}
+                                      country={'et'}
                                       value={field.value}
                                       onChange={field.onChange}
                                       inputProps={{
