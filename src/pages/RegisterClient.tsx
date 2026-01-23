@@ -71,6 +71,7 @@ export default function RegisterClient() {
   const [isLoading, setIsLoading] = useState(false);
   const [registeredUserId, setRegisteredUserId] = useState<string | null>(null);
   const [registeredClientName, setRegisteredClientName] = useState<string>("");
+  const [registeredClientDetails, setRegisteredClientDetails] = useState<{ phone?: string; gender?: string; emergency_name?: string; emergency_phone?: string } | null>(null);
   const [qrCodeValue, setQrCodeValue] = useState<string | null>(null);
   const [registeredClientEmail, setRegisteredClientEmail] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement | null>(null);
@@ -394,6 +395,12 @@ export default function RegisterClient() {
       setRegisteredUserId(userId);
       setRegisteredClientName(`${values.first_name} ${values.last_name}`);
       setRegisteredClientEmail(values.email);
+      setRegisteredClientDetails({
+        phone: values.phone,
+        gender: values.gender,
+        emergency_name: values.emergency_name || undefined,
+        emergency_phone: values.emergency_phone || undefined,
+      });
       setQrCodeValue(qrData);
       form.reset();
       setSelectedPackage(null);
@@ -420,6 +427,8 @@ export default function RegisterClient() {
   const handleQrCodeDone = () => {
     setRegisteredUserId(null);
     setRegisteredClientName("");
+    setRegisteredClientDetails(null);
+    setRegisteredClientEmail(null);
     setQrCodeValue(null);
   };
 
@@ -545,8 +554,22 @@ export default function RegisterClient() {
       ctx.fillStyle = '#111111';
       wrapText(ctx, registeredClientEmail ?? '', leftX, textY, qrX - leftX - padding, 34);
 
+      // Phone
+      textY += 48;
+      ctx.font = '20px Inter, Arial, sans-serif';
+      ctx.fillStyle = '#111111';
+      ctx.fillText(`Phone: ${registeredClientDetails?.phone ?? '-'}`, leftX, textY);
+
+      // Gender
+      textY += 36;
+      ctx.fillText(`Gender: ${registeredClientDetails?.gender ?? '-'}`, leftX, textY);
+
+      // Emergency contact
+      textY += 36;
+      ctx.fillText(`Emergency: ${registeredClientDetails?.emergency_name ?? '-'} (${registeredClientDetails?.emergency_phone ?? '-'})`, leftX, textY);
+
       // Decorative subtitle
-      textY += 80;
+      textY += 60;
       ctx.font = '18px Inter, Arial, sans-serif';
       ctx.fillStyle = '#6b7280';
       ctx.fillText(`Registered to: ${gym?.name ?? ''}`, leftX, textY + 12);
@@ -909,31 +932,39 @@ export default function RegisterClient() {
               </div>
               {qrCodeValue && (
                 <div className="flex flex-1 min-w-0 mt-8 md:mt-0">
-                  <Card className="w-full" style={{ borderColor: `${dynamicStyles.primaryColor}40` }}>
+                  <Card className="w-full" style={{ border: `2px solid ${dynamicStyles.primaryColor}`, borderRadius: 8 }}>
                     <CardHeader>
                       <CardTitle style={{ color: dynamicStyles.primaryColor }}>
                         QR Code for {registeredClientName}
                       </CardTitle>
                       <CardDescription>Scan this QR code for check-in at {gym.name}.</CardDescription>
                     </CardHeader>
-                    <CardContent className="flex flex-col items-center justify-center p-6">
-                      <div 
-                        ref={qrRef}
-                        className="p-4 rounded-lg"
-                        style={{ backgroundColor: '#ffffff', border: `1px solid ${dynamicStyles.primaryColor}20`, boxShadow: '0 4px 12px rgba(16,24,40,0.04)' }}
-                      >
-                        <QRCodeSVG 
-                          value={qrCodeValue} 
-                          size={192} 
-                          level="H" 
-                          className="w-full max-w-xs h-auto"
-                          fgColor="#000000"
-                          bgColor="#ffffff"
-                        />
+                    <CardContent className="flex flex-col md:flex-row items-center gap-6 p-6">
+                      <div className="flex-1 text-left">
+                        <p className="text-2xl font-bold text-black">Name: <span className="font-medium">{registeredClientName}</span></p>
+                        <p className="mt-3 text-base text-slate-800"><strong>Phone:</strong> <span className="font-medium">{registeredClientDetails?.phone ?? '—'}</span></p>
+                        <p className="mt-2 text-base text-slate-800"><strong>Email:</strong> <span className="font-medium">{registeredClientEmail ?? '—'}</span></p>
+                        <p className="mt-2 text-base text-slate-800"><strong>Gender:</strong> <span className="font-medium">{registeredClientDetails?.gender ?? '—'}</span></p>
+                        <p className="mt-2 text-base text-slate-800"><strong>Emergency name:</strong> <span className="font-medium">{registeredClientDetails?.emergency_name ?? '—'}</span></p>
+                        <p className="mt-2 text-base text-slate-800"><strong>Emergency Contact:</strong> <span className="font-medium">{registeredClientDetails?.emergency_phone ?? '—'}</span></p>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-2 text-center">
-                        Registered to: {gym.name}
-                      </p>
+
+                      <div className="w-full md:w-56 flex-shrink-0">
+                        <div 
+                          ref={qrRef}
+                          className="p-4 rounded-lg"
+                          style={{ backgroundColor: '#ffffff', border: `2px solid ${dynamicStyles.primaryColor}22`, boxShadow: '0 4px 12px rgba(16,24,40,0.04)', borderRadius: 12 }}
+                        >
+                          <QRCodeSVG 
+                            value={qrCodeValue} 
+                            size={240} 
+                            level="H" 
+                            className="w-full h-auto block"
+                            fgColor="#000000"
+                            bgColor="#ffffff"
+                          />
+                        </div>
+                      </div>
                     </CardContent>
                     <CardFooter className="flex justify-end gap-3">
                       <Button 
