@@ -241,28 +241,67 @@ export default function MembershipList() {
         }
       }
 
-      // Non-active path: fetch full set from user_combined_costs and apply client-side status filtering
+      // Non-active path: prefer the `users_with_membership_info` view, fall back to `user_combined_costs`
+      try {
+        let viewQuery: any = supabase.from('users_with_membership_info').select('*');
+
+        if (gym && gym.id !== 'default') viewQuery = viewQuery.eq('gym_id', gym.id);
+
+        if (sTerm && sTerm.trim() !== "") {
+          const safe = sTerm.replace(/[%_]/g, "\\$&");
+          viewQuery = viewQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
+        }
+
+        if (pkFilter && pkFilter !== 'all') {
+          viewQuery = viewQuery.eq('package_name', pkFilter);
+        }
+
+        if (tab && tab !== 'all') {
+          if (tab === 'expiring') {
+            viewQuery = viewQuery.lte('days_left', 10).gt('days_left', 0);
+          }
+          if (tab === 'expired') {
+            viewQuery = viewQuery.lte('days_left', 0);
+          }
+        }
+
+        if (sortOrder === 'asc') {
+          viewQuery = viewQuery.order('full_name', { ascending: true });
+        } else if (sortOrder === 'desc') {
+          viewQuery = viewQuery.order('full_name', { ascending: false });
+        } else {
+          viewQuery = viewQuery.order('days_left', { ascending: true });
+        }
+
+        const { data: viewData, error: viewErr } = await viewQuery;
+
+        if (!viewErr && Array.isArray(viewData)) {
+          setMembers(viewData || []);
+          setIsLoading(false);
+          return;
+        }
+      } catch (viewErr) {
+        console.warn('users_with_membership_info query failed, falling back to user_combined_costs:', viewErr?.message || viewErr);
+      }
+
+      // Fallback to querying user_combined_costs
       let query: any = supabase
         .from("user_combined_costs")
         .select("*");
 
-      // Filter by gym_id if gym context is available and not default
       if (gym && gym.id !== 'default') {
         query = query.eq('gym_id', gym.id);
       }
 
-      // Search across name/email/phone (server-side)
       if (sTerm && sTerm.trim() !== "") {
         const safe = sTerm.replace(/[%_]/g, "\\$&");
         query = query.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
       }
 
-      // Package filter
       if (pkFilter && pkFilter !== 'all') {
         query = query.eq('package_name', pkFilter);
       }
 
-      // Tab filters (expiring/expired) - applied in addition to status filter
       if (tab && tab !== 'all') {
         if (tab === 'expiring') {
           query = query.lte('days_left', 10).gt('days_left', 0);
@@ -272,7 +311,6 @@ export default function MembershipList() {
         }
       }
 
-      // Sorting
       if (sortOrder === 'asc') {
         query = query.order('full_name', { ascending: true });
       } else if (sortOrder === 'desc') {
@@ -284,28 +322,11 @@ export default function MembershipList() {
       const { data, error } = await query;
 
       if (error) {
-        // Fallback to the original view if the new one doesn't exist yet
-        let fallbackQuery = supabase
-          .from("users_with_membership_info")
-          .select("*");
-
-        if (gym && gym.id !== 'default') {
-          fallbackQuery = fallbackQuery.eq('gym_id', gym.id);
-        }
-
-        const { data: fallbackData, error: fallbackError } = await fallbackQuery
-          .order("days_left", { ascending: true });
-        
-        if (fallbackError) {
-          toast({
-            title: "Error loading data",
-            description: fallbackError.message,
-            variant: "destructive"
-          });
-        } else {
-          setMembers(fallbackData || []);
-          setMembers(fallbackData || []);
-        }
+        toast({
+          title: "Error loading data",
+          description: error.message,
+          variant: "destructive"
+        });
       } else {
         setMembers(data || []);
       }
