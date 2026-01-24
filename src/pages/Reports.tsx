@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 
 type UserGrowthPoint = { label: string; count: number };
-type PackageDistPoint = { name: string; value: number };
+type PackageDistPoint = { name: string; value: number; price?: number };
 type RevenueComparePoint = { name: string; value: number }; // Package / One-to-one / Total
 type StatusPoint = { name: string; value: number };
 type StaffRoleCount = { role: string; count: number };
@@ -28,22 +28,33 @@ const CTA_BG = '#6C9D9A'; // export & refresh button color requested
 export default function ReportsPage(): JSX.Element {
   const { gym, loading: gymLoading } = useGym();
   // Controls
-  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | 'custom'>('30d');
-  const [customFrom, setCustomFrom] = useState<string>('');
-  const [customTo, setCustomTo] = useState<string>('');
-  const [revenuePackageFilter, setRevenuePackageFilter] = useState<string>('__all__');
+  const [timeRange, setTimeRange] = useState<'lifetime'|'90d' | '60d' | '30d' | '7d'>('lifetime');
+  // revenuePackageFilter is now an array of package names; ['__all__'] means all packages
+  const [revenuePackageFilter, setRevenuePackageFilter] = useState<string[]>(['__all__']);
+  // selection state used by the dropdown; start with all
+  const [selectedPackages, setSelectedPackages] = useState<string[]>(['__all__']);
+  const [packagesOpen, setPackagesOpen] = useState<boolean>(false);
 
   // Data
   const [userGrowth, setUserGrowth] = useState<UserGrowthPoint[]>([]);
   const [packageDist, setPackageDist] = useState<PackageDistPoint[]>([]);
   const [revenueCompare, setRevenueCompare] = useState<RevenueComparePoint[]>([]);
   const [memberStatus, setMemberStatus] = useState<StatusPoint[]>([]);
+  const [memberStatusByPackage, setMemberStatusByPackage] = useState<Record<string, StatusPoint[]>>({});
   const [topPackages, setTopPackages] = useState<PackageDistPoint[]>([]);
+
+  // currency formatter for ETB (used for package price display)
+  const nfEtb = useMemo(() => new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB' }), []);
   const [staffBreakdown, setStaffBreakdown] = useState<StaffBreakdown>({ roles: [], counts: { total: 0, active: 0 } });
 
   // helpers
   const [packagesList, setPackagesList] = useState<string[]>([]);
   const [rolesMap, setRolesMap] = useState<Record<string, string>>({}); // role_id -> name
+
+  // derived active package filter (null = all)
+  const activePackageFilter = revenuePackageFilter.includes('__all__') ? null : revenuePackageFilter;
+
+
 
   // UI & drill
   const [loading, setLoading] = useState<boolean>(false);
@@ -60,19 +71,18 @@ export default function ReportsPage(): JSX.Element {
       fetchAllAnalytics();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gym, gymLoading, timeRange, customFrom, customTo, revenuePackageFilter]);
+  }, [gym, gymLoading, timeRange, revenuePackageFilter]);
 
   function rangeToDates(range: string) {
+    // lifetime returns null -> no date filters applied
+    if (range === 'lifetime') return null;
     const now = new Date();
     let fromDate = new Date();
     switch (range) {
       case '7d': fromDate.setDate(now.getDate() - 6); break;
       case '30d': fromDate.setDate(now.getDate() - 29); break;
+      case '60d': fromDate.setDate(now.getDate() - 59); break;
       case '90d': fromDate.setDate(now.getDate() - 89); break;
-      case 'custom':
-        if (!customFrom || !customTo) return null;
-        fromDate = new Date(customFrom + 'T00:00:00');
-        return { from: fromDate.toISOString(), to: new Date(customTo + 'T23:59:59').toISOString() };
       default: fromDate.setDate(now.getDate() - 29);
     }
     const to = new Date();
@@ -105,32 +115,75 @@ export default function ReportsPage(): JSX.Element {
     try {
       const range = rangeToDates(timeRange);
 
+      // package filter array (null = all)
+      const packageFilter = revenuePackageFilter.includes('__all__') ? null : revenuePackageFilter;
+
       // --- User growth ---
-      const usersQuery = supabase.from('users').select('id, created_at').eq('gym_id', gym?.id).order('created_at', { ascending: true });
-      if (range) usersQuery.gte('created_at', range.from).lte('created_at', range.to);
-      const { data: usersData, error: usersErr } = await usersQuery;
-      if (usersErr) throw usersErr;
-      const users = (usersData ?? []) as { created_at: string }[];
-      const growthMap: Record<string, number> = {};
-      users.forEach(u => {
-        const d = new Date(u.created_at);
-        const key = d.toISOString().slice(0, 10);
-        growthMap[key] = (growthMap[key] || 0) + 1;
-      });
-      const userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
+      // Use users_with_membership_info when filtering by package so growth matches selected packages
+      if (!packageFilter) {
+        const usersQuery = supabase.from('users').select('id, created_at').eq('gym_id', gym?.id).order('created_at', { ascending: true });
+        if (range) usersQuery.gte('created_at', range.from).lte('created_at', range.to);
+        const { data: usersData, error: usersErr } = await usersQuery;
+        if (usersErr) throw usersErr;
+        const users = (usersData ?? []) as { created_at: string }[];
+        const growthMap: Record<string, number> = {};
+        users.forEach(u => {
+          const d = new Date(u.created_at);
+          const key = d.toISOString().slice(0, 10);
+          growthMap[key] = (growthMap[key] || 0) + 1;
+        });
+        var userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
+      } else {
+        const usersPkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').eq('gym_id', gym?.id).in('package_name', packageFilter).order('created_at', { ascending: true });
+        if (range) usersPkgQuery.gte('created_at', range.from).lte('created_at', range.to);
+        const { data: usersData, error: usersErr } = await usersPkgQuery;
+        if (usersErr) throw usersErr;
+        const users = (usersData ?? []) as { created_at: string }[];
+        const growthMap: Record<string, number> = {};
+        users.forEach(u => {
+          const d = new Date(u.created_at);
+          const key = d.toISOString().slice(0, 10);
+          growthMap[key] = (growthMap[key] || 0) + 1;
+        });
+        var userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
+      }
 
       // --- Packages & member status ---
-      const pkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').eq('gym_id', gym?.id).order('created_at', { ascending: true });
-      if (range) pkgQuery.gte('created_at', range.from).lte('created_at', range.to);
-      const { data: pkgData, error: pkgErr } = await pkgQuery;
-      if (pkgErr) throw pkgErr;
-      const usersWithPkg = (pkgData ?? []) as UserWithPkg[];
+      // Accurate active-user counts per package (matches SQL: packages LEFT JOIN users ON u.membership_expiry > now())
+      // Fetch packages for gym and initialize counts (so packages with zero active users are shown)
+      const { data: pkgsForCount, error: pkgsForCountErr } = await supabase.from('packages').select('id, name, price').eq('gym_id', gym?.id).order('name');
+      if (pkgsForCountErr) throw pkgsForCountErr;
+      const packageNamesAll = (pkgsForCount ?? []).map((p: any) => p.name);
       const pkgCounts: Record<string, number> = {};
-      usersWithPkg.forEach(r => {
-        const name = r.package_name || 'Unassigned';
-        pkgCounts[name] = (pkgCounts[name] || 0) + 1;
+      packageNamesAll.forEach(n => { pkgCounts[n] = 0; });
+      pkgCounts['Unassigned'] = 0;
+      // build name->price map
+      const packageNameToPrice: Record<string, number> = {};
+      (pkgsForCount ?? []).forEach((p: any) => { packageNameToPrice[p.name] = Number(p.price || 0); });
+
+      // Count active users (membership_expiry > now()) grouped by package_name
+      const nowIso = new Date().toISOString();
+      // build package id -> name map
+      const pkgIdToName: Record<string, string> = {};
+      (pkgsForCount ?? []).forEach((p: any) => { pkgIdToName[p.id] = p.name; });
+
+      const { data: activeUsers, error: activeErr } = await supabase
+        .from('users')
+        .select('id, package_id')
+        .eq('gym_id', gym?.id)
+        .gt('membership_expiry', nowIso);
+      if (activeErr) throw activeErr;
+      (activeUsers ?? []).forEach((u: any) => {
+        const name = (u.package_id && pkgIdToName[u.package_id]) ? pkgIdToName[u.package_id] : 'Unassigned';
+        if (pkgCounts[name] === undefined) pkgCounts[name] = 0;
+        pkgCounts[name] += 1;
       });
-      const packageDistArr = Object.entries(pkgCounts).map(([name, value]) => ({ name, value }));
+
+      // Apply packageFilter if present (only show selected packages)
+      let packageDistArr = Object.entries(pkgCounts).map(([name, value]) => ({ name, value, price: packageNameToPrice[name] }));
+      if (packageFilter) {
+        packageDistArr = packageDistArr.filter(p => (packageFilter as string[]).includes(p.name));
+      }
       const topPackagesArr = [...packageDistArr].sort((a, b) => b.value - a.value).slice(0, 10);
 
       // --- Revenue aggregation from user_combined_costs (NO created_at dependency) ---
@@ -144,15 +197,18 @@ export default function ReportsPage(): JSX.Element {
       console.error("Revenue fetch error:", revenueError);
       setRevenueData([]);
     } else {
-      const totalPackage = revenueRows.reduce(
+      const rows = revenueRows ?? [];
+      const filteredRows = (revenuePackageFilter.includes('__all__')) ? rows : rows.filter((r: any) => revenuePackageFilter.includes(r.package_name ?? ''));
+
+      const totalPackage = filteredRows.reduce(
         (sum, r) => sum + Number(r.package_price || 0),
         0
       );
-      const totalCoaching = revenueRows.reduce(
+      const totalCoaching = filteredRows.reduce(
         (sum, r) => sum + Number(r.one_to_one_coaching_cost || 0),
         0
       );
-      const totalBoth = revenueRows.reduce(
+      const totalBoth = filteredRows.reduce(
         (sum, r) => sum + Number(r.total_monthly_cost || 0),
         0
       );
@@ -165,12 +221,39 @@ export default function ReportsPage(): JSX.Element {
     }
 
       // --- Member status ---
+      const usersWithPkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').eq('gym_id', gym?.id).order('created_at', { ascending: true });
+      if (range) usersWithPkgQuery.gte('created_at', range.from).lte('created_at', range.to);
+      if (packageFilter) usersWithPkgQuery.in('package_name', packageFilter as string[]);
+      const { data: usersWithPkgData, error: usersWithPkgErr } = await usersWithPkgQuery;
+      if (usersWithPkgErr) throw usersWithPkgErr;
+      const usersWithPkg = (usersWithPkgData ?? []) as UserWithPkg[];
+
+      // overall member status counts
       const statusMap: Record<string, number> = {};
       usersWithPkg.forEach(r => {
         const st = r.status || 'unknown';
         statusMap[st] = (statusMap[st] || 0) + 1;
       });
       const memberStatusArr = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
+
+      // per-package member status breakdown
+      const msByPkg: Record<string, Record<string, number>> = {};
+      (usersWithPkg || []).forEach(r => {
+        const pkg = r.package_name || 'Unassigned';
+        msByPkg[pkg] = msByPkg[pkg] || {};
+        const st = r.status || 'unknown';
+        msByPkg[pkg][st] = (msByPkg[pkg][st] || 0) + 1;
+      });
+      const memberStatusByPackage: Record<string, StatusPoint[]> = {};
+      Object.entries(msByPkg).forEach(([pkg, map]) => {
+        memberStatusByPackage[pkg] = Object.entries(map).map(([name, value]) => ({ name, value }));
+      });
+      // ensure selected packages are present even if empty
+      (pkgsForCount ?? []).forEach((p: any) => {
+        if (!memberStatusByPackage[p.name]) memberStatusByPackage[p.name] = [];
+      });
+
+      setMemberStatusByPackage(memberStatusByPackage);
 
       // --- Staff breakdown (resolve role names) ---
       const { data: staffData, error: staffErr } = await supabase.from('staff').select('id, full_name, is_active, role_id').eq('gym_id', gym?.id).order('created_at', { ascending: true });
@@ -238,9 +321,22 @@ export default function ReportsPage(): JSX.Element {
     }
   }
 
+  // Toggle package selection when user clicks a slice in the package distribution pie
+  function handlePackageSliceClick(name?: string) {
+    if (!name) return;
+    setSelectedPackages(prev => {
+      // if prev contains '__all__' or is empty, start with the clicked package
+      const withoutAll = prev.filter(x => x !== '__all__');
+      if (prev.includes('__all__') || prev.length === 0) return [name];
+      if (withoutAll.includes(name)) return withoutAll.filter(x => x !== name);
+      return [...withoutAll, name];
+    });
+    setPackagesOpen(true);
+  }
+
   async function onDrillRevenue() {
     // show detailed rows from user_combined_costs matching current package filter — no created_at used
-    setActiveDrill({ type: 'revenue', id: revenuePackageFilter === '__all__' ? 'All packages' : revenuePackageFilter });
+    setActiveDrill({ type: 'revenue', id: revenuePackageFilter.includes('__all__') ? 'All packages' : revenuePackageFilter.join(', ') });
     setDrillTransactions([]);
     setDrillUsers([]);
     setLoading(true);
@@ -252,7 +348,7 @@ export default function ReportsPage(): JSX.Element {
         .limit(5000);
       if (error) throw error;
       const raw = (rows ?? []) as CombinedRow[];
-      const filtered = raw.filter(r => (revenuePackageFilter === '__all__') ? true : (r.package_name ?? '') === revenuePackageFilter);
+      const filtered = raw.filter(r => (revenuePackageFilter.includes('__all__')) ? true : revenuePackageFilter.includes(r.package_name ?? ''));
       setDrillTransactions(filtered.map(r => ({
         id: (r as any).id,
         user_id: (r as any).user_id,
@@ -300,32 +396,76 @@ export default function ReportsPage(): JSX.Element {
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center mb-6">
         <div>
-          <label className="block text-sm text-muted-foreground">Time range</label>
-          <select value={timeRange} onChange={e => setTimeRange(e.target.value as any)} className="border rounded px-3 py-1">
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="90d">Last 90 days</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-
-        {timeRange === 'custom' && (
-          <div className="flex gap-2">
-            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="border rounded px-2 py-1" />
-            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="border rounded px-2 py-1" />
+          <label className="block text-sm text-muted-foreground mb-1">Range</label>
+          <div className="inline-flex bg-white rounded-md border p-1">
+            {[
+              { key: 'lifetime', label: 'Lifetime' },
+              { key: '90d', label: '90d' },
+              { key: '60d', label: '60d' },
+              { key: '30d', label: '30d' },
+              { key: '7d', label: '7d' },
+            ].map((r) => (
+              <button
+                key={r.key}
+                onClick={() => { setTimeRange(r.key as any); fetchAllAnalytics(); }}
+                className={`px-3 py-1 text-sm rounded ${timeRange === r.key ? 'bg-sky-600 text-white' : 'bg-transparent'}`}
+              >{r.label}</button>
+            ))}
           </div>
-        )}
-
-        <div>
-          <label className="block text-sm text-muted-foreground">Revenue Package</label>
-          <select value={revenuePackageFilter} onChange={e => setRevenuePackageFilter(e.target.value)} className="border rounded px-3 py-1">
-            <option value="__all__">All packages</option>
-            {packagesList.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
         </div>
+
+        <div className="relative">
+          <label className="block text-sm text-muted-foreground mb-1">Revenue Package</label>
+          <div>
+            <button onClick={() => setPackagesOpen(!packagesOpen)} className="border rounded px-3 py-1 inline-flex items-center gap-2">
+              <span className="truncate">
+                {selectedPackages.includes('__all__') || selectedPackages.length === 0 ? 'All packages' : selectedPackages.join(', ')}
+              </span>
+              <span className="text-xs text-slate-500">({selectedPackages.includes('__all__') ? 'All' : selectedPackages.length})</span>
+            </button>
+
+            {packagesOpen && (
+              <div className="absolute z-20 mt-2 bg-white border rounded shadow p-3 w-64 max-h-64 overflow-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={selectedPackages.includes('__all__')} onChange={(e) => {
+                      if (e.target.checked) setSelectedPackages(['__all__']); else setSelectedPackages([]);
+                    }} />
+                    <span className="text-sm">All Packages</span>
+                  </label>
+                  <div className="text-sm">
+                    <button className="text-sky-600" onClick={() => setSelectedPackages(packagesList.slice())}>Select all</button>
+                    <button className="ml-2 text-slate-600" onClick={() => setSelectedPackages([])}>Clear</button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  {packagesList.map(p => (
+                    <label key={p} className="flex items-center gap-2">
+                      <input type="checkbox" checked={selectedPackages.includes(p)} onChange={() => {
+                        setSelectedPackages(prev => {
+                          // remove '__all__' if present when selecting specific packages
+                          const withoutAll = prev.filter(x => x !== '__all__');
+                          if (withoutAll.includes(p)) return withoutAll.filter(x => x !== p);
+                          return [...withoutAll, p];
+                        });
+                      }} />
+                      <span className="truncate text-sm">{p}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <button className="px-3 py-1 bg-sky-600 text-white rounded text-sm" onClick={() => { setRevenuePackageFilter(selectedPackages.length ? selectedPackages : ['__all__']); setPackagesOpen(false); fetchAllAnalytics(); }}>Compare</button>
+                  <button className="px-3 py-1 border rounded text-sm" onClick={() => { setSelectedPackages([]); setRevenuePackageFilter(['__all__']); setPackagesOpen(false); fetchAllAnalytics(); }}>Reset</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div> 
 
         <div className="ml-auto">
-          <button style={ctaStyle} className={ctaClass} onClick={() => fetchAllAnalytics()}>Refresh</button>
+          <button style={ctaStyle} className={ctaClass} onClick={() => { setSelectedPackages([]); setRevenuePackageFilter(['__all__']); fetchAllAnalytics(); }}>Reset</button>
         </div>
       </div>
 
@@ -372,7 +512,7 @@ export default function ReportsPage(): JSX.Element {
                   outerRadius={78}
                   paddingAngle={6}
                   cornerRadius={8}
-                  onClick={(data: any) => onDrillPackage(data?.name)}
+                  onClick={(data: any) => handlePackageSliceClick(data?.name)}
                 >
                   {packageDist.map((entry, idx) => (
                     <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
@@ -416,15 +556,43 @@ export default function ReportsPage(): JSX.Element {
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(memberStatus, 'member-status.csv')}>Export CSV</button>
           </div>
           <div className="w-full h-72 sm:h-80 md:h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={memberStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70}>
-                  {memberStatus.map((entry, idx) => <Cell key={`cell-status-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
-                </Pie>
-                <Legend />
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {activePackageFilter && !activePackageFilter.includes('__all__') ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {(activePackageFilter as string[]).map((pkgName) => (
+                  <div key={pkgName} className="bg-white rounded p-2 shadow-sm">
+                    <div className="text-sm font-medium mb-2">{pkgName}</div>
+                    <div className="h-44">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={memberStatusByPackage[pkgName] ?? []}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={56}
+                            paddingAngle={4}
+                          >
+                            {(memberStatusByPackage[pkgName] ?? []).map((entry, idx) => <Cell key={`cell-ms-${pkgName}-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
+                          </Pie>
+                          <Tooltip formatter={(value: any, name: any) => [value, name]} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={memberStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70}>
+                    {memberStatus.map((entry, idx) => <Cell key={`cell-status-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
+                  </Pie>
+                  <Legend />
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </section>
 
@@ -440,7 +608,17 @@ export default function ReportsPage(): JSX.Element {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" type="category" tick={{ fontSize: 12 }} interval={0} />
                 <YAxis type="number" />
-                <Tooltip formatter={(value: any) => nf.format(Number(value))} />
+                <Tooltip content={({ active, payload }: any) => {
+                  if (!active || !payload || !payload.length) return null;
+                  const d = payload[0].payload as PackageDistPoint;
+                  return (
+                    <div className="bg-white p-2 border rounded shadow">
+                      <div className="font-semibold">{d.name}</div>
+                      <div>Count: {d.value}</div>
+                      <div>Price: {d.price ? nfEtb.format(Number(d.price)) : 'N/A'}</div>
+                    </div>
+                  );
+                }} />
                 <Bar dataKey="value" fill="#FFBB28" barSize={20} />
               </BarChart>
             </ResponsiveContainer>
