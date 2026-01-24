@@ -29,7 +29,7 @@ import {
   CardTitle,
   CardFooter
 } from "@/components/ui/card";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Menu } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
@@ -69,6 +69,7 @@ export default function RegisterClient() {
   const [selectedPackage, setSelectedPackage] = useState<{id: string, name: string, requires_trainer: boolean} | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [registeredUserId, setRegisteredUserId] = useState<string | null>(null);
   const [registeredClientName, setRegisteredClientName] = useState<string>("");
   const [registeredClientDetails, setRegisteredClientDetails] = useState<{ phone?: string; gender?: string; emergency_name?: string; emergency_phone?: string } | null>(null);
@@ -622,8 +623,14 @@ export default function RegisterClient() {
   if (gymLoading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+        <div className="flex-1 flex items-center justify-center relative">
+          <div className="md:hidden p-2 absolute top-4 left-4 z-50">
+            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
+              <Menu size={20} />
+            </Button>
+          </div>
+
           <div className="animate-pulse">
             <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -640,8 +647,13 @@ export default function RegisterClient() {
   if (!gym || gym.id === 'default') {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="md:hidden p-2">
+            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
+              <Menu size={20} />
+            </Button>
+          </div>
           <DynamicHeader />
           <main className="flex-1 flex items-center justify-center">
             <Card className="max-w-md">
@@ -663,9 +675,15 @@ export default function RegisterClient() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile menu button */}
+        <div className="md:hidden p-2">
+          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
+            <Menu size={20} />
+          </Button>
+        </div>
         <DynamicHeader />
         
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
@@ -939,8 +957,8 @@ export default function RegisterClient() {
                       </CardTitle>
                       <CardDescription>Scan this QR code for check-in at {gym.name}.</CardDescription>
                     </CardHeader>
-                    <CardContent className="flex flex-col md:flex-row items-center gap-6 p-6">
-                      <div className="flex-1 text-left">
+                    <CardContent className="flex flex-col md:flex-row items-start md:items-center gap-6 p-6">
+                      <div className="flex-1 text-left break-words">
                         <p className="text-2xl font-bold text-black">Name: <span className="font-medium">{registeredClientName}</span></p>
                         <p className="mt-3 text-base text-slate-800"><strong>Phone:</strong> <span className="font-medium">{registeredClientDetails?.phone ?? '—'}</span></p>
                         <p className="mt-2 text-base text-slate-800"><strong>Email:</strong> <span className="font-medium">{registeredClientEmail ?? '—'}</span></p>
@@ -949,10 +967,10 @@ export default function RegisterClient() {
                         <p className="mt-2 text-base text-slate-800"><strong>Emergency Contact:</strong> <span className="font-medium">{registeredClientDetails?.emergency_phone ?? '—'}</span></p>
                       </div>
 
-                      <div className="w-full md:w-56 flex-shrink-0">
+                      <div className="w-full sm:max-w-[260px] md:w-56 flex-shrink-0 mx-auto">
                         <div 
                           ref={qrRef}
-                          className="p-4 rounded-lg"
+                          className="p-4 rounded-lg max-w-full"
                           style={{ backgroundColor: '#ffffff', border: `2px solid ${dynamicStyles.primaryColor}22`, boxShadow: '0 4px 12px rgba(16,24,40,0.04)', borderRadius: 12 }}
                         >
                           <QRCodeSVG 
@@ -966,21 +984,23 @@ export default function RegisterClient() {
                         </div>
                       </div>
                     </CardContent>
-                    <CardFooter className="flex justify-end gap-3">
-                      <Button 
-                        onClick={handleQrCodeDone}
-                        style={{ backgroundColor: dynamicStyles.primaryColor }}
-                        className="text-white"
-                      >
-                        Done
-                      </Button>
-                      <Button
-                        onClick={handleQrCodeDownload}
-                        style={{ backgroundColor: dynamicStyles.primaryColor }}
-                        className="text-white"
-                      >
-                        Download
-                      </Button>
+                    <CardFooter className="flex flex-col sm:flex-row justify-end sm:justify-end gap-3 w-full">
+                      <div className="flex flex-col sm:flex-row gap-3 sm:ml-auto w-full sm:w-auto">
+                        <Button 
+                          onClick={handleQrCodeDone}
+                          style={{ backgroundColor: dynamicStyles.primaryColor }}
+                          className="text-white w-full sm:w-auto"
+                        >
+                          Done
+                        </Button>
+                        <Button
+                          onClick={handleQrCodeDownload}
+                          style={{ backgroundColor: dynamicStyles.primaryColor }}
+                          className="text-white w-full sm:w-auto"
+                        >
+                          Download
+                        </Button>
+                      </div>
                     </CardFooter>
                   </Card>
                 </div>
