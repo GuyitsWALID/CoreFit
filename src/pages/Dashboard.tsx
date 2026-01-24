@@ -12,6 +12,9 @@ import { useGym } from '@/contexts/GymContext';
 import { DynamicHeader } from '@/components/layout/DynamicHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
 
+// Recharts
+import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+
 // Dashboard component
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -31,6 +34,40 @@ export default function Dashboard() {
   const [totalPackageRevenue, setTotalPackageRevenue] = useState<number>(0);
   const [totalCoachingRevenue, setTotalCoachingRevenue] = useState<number>(0);
   const [combinedRevenue, setCombinedRevenue] = useState<number>(0);
+
+  // Revenue time-series chart (daily) for packages, coaching, and total
+  const [revenueSeries, setRevenueSeries] = useState<Array<{ date: string; packages: number; coaching: number; total: number }>>([]);
+  const [revenueSeriesLoading, setRevenueSeriesLoading] = useState<boolean>(false);
+  const [revenueRangeDays, setRevenueRangeDays] = useState<number>(90);
+
+  // Chart series toggles
+  const [showPackages, setShowPackages] = useState<boolean>(true);
+  const [showCoaching, setShowCoaching] = useState<boolean>(true);
+  const [showTotal, setShowTotal] = useState<boolean>(true);
+
+  // For visibility: compute max total and add padding so small values are visible
+  const revenueMax = useMemo(() => {
+    if (!revenueSeries || revenueSeries.length === 0) return 1;
+    const max = Math.max(...revenueSeries.map(r => Number(r.total || 0)));
+    return Math.max(1, max);
+  }, [revenueSeries]);
+
+  // Custom tooltip uses the date label to look up exact values from `revenueSeries` so it can show figures
+  const RevenueTooltip = (props: any) => {
+    const { active, label } = props;
+    if (!active) return null;
+    // find the row for this date
+    const row = revenueSeries.find((r) => r.date === label);
+    if (!row) return null;
+    return (
+      <div className="bg-white p-3 rounded shadow-md text-sm border">
+        <div className="font-medium mb-1">{new Date(label).toLocaleDateString()}</div>
+        {showPackages && <div>Packages: <strong>{nf.format(Number(row.packages || 0))}</strong></div>}
+        {showCoaching && <div>1:1 Coaching: <strong>{nf.format(Number(row.coaching || 0))}</strong></div>}
+        {showTotal && <div style={{ color: dynamicStyles.secondaryColor }}>Total: <strong>{nf.format(Number(row.total || 0))}</strong></div>}
+      </div>
+    );
+  };
 
   // Expiring soon
   type ExpiringMember = {
@@ -65,7 +102,7 @@ export default function Dashboard() {
 
   // Growth chart state
   type GrowthRange = '1d' | '7d' | '30d' | '90d' | '12m';
-  const [growthRange, setGrowthRange] = useState<GrowthRange>('30d');
+  const [growthRange, setGrowthRange] = useState<GrowthRange>('7d');
   const [growthPoints, setGrowthPoints] = useState<Array<{ label: string; value: number; raw: string }>>([]);
   const [growthLoading, setGrowthLoading] = useState(false);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -105,8 +142,15 @@ export default function Dashboard() {
       // Load staff recent check-ins as well
       loadRecentStaffCheckIns();
       loadTemplates();
+      // revenue series
+      loadRevenueSeries();
     }
   }, [gym, gymLoading]);
+
+  // Reload revenue series when the selected range changes
+  useEffect(() => {
+    if (gym && !gymLoading) loadRevenueSeries();
+  }, [gym, gymLoading, revenueRangeDays]);
 
   useEffect(() => {
     loadGrowthData(growthRange);
@@ -243,49 +287,37 @@ export default function Dashboard() {
         return sum + (Number.isFinite(n) ? n : 0);
       }, 0);
 
-      // Today's one-to-one coaching (approximate daily cost): compute weekly cost then divide by 7
-      // First try coaching rows that explicitly have gym_id set
-      // Prefer explicit daily fields if present: daily_cost, daily_price, daily_revenue
+      // Today's one-to-one coaching: sum explicit daily fields only (daily_cost | daily_price | daily_revenue)
+      // We coerce values to Number because Supabase can return numeric fields as strings.
       const { data: activeCoachingToday } = await supabase
         .from('one_to_one_coaching')
-        .select('hourly_rate, days_per_week, hours_per_session, status, daily_cost, daily_price, daily_revenue')
+        .select('daily_cost, daily_price, daily_revenue, status')
         .eq('gym_id', gym?.id)
         .eq('status', 'active');
 
       let coachingDaily = (activeCoachingToday || []).reduce((sum: number, r: any) => {
-        // If any explicit daily field exists, prefer it (pick the first non-null)
-        const explicit = (r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue);
-        if (typeof explicit === 'number' && Number.isFinite(explicit)) return sum + explicit;
-
-        // Fallback: compute from weekly schedule
-        const hr = Number(r?.hourly_rate || 0);
-        const d = Number(r?.days_per_week || 0);
-        const hps = Number(r?.hours_per_session || 0);
-        const weekly = hr * d * hps; // weekly cost
-        const dailyEstimate = weekly / 7; // average per day
-        return sum + (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+        const explicitRaw = r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue;
+        const explicit = explicitRaw == null ? NaN : Number(explicitRaw);
+        if (!Number.isNaN(explicit) && Number.isFinite(explicit)) return sum + explicit;
+        // Do not estimate from weekly schedule for the "today" card; prefer explicit daily values only.
+        return sum;
       }, 0);
 
-      // Fallback: if none found (or you want to include coaching rows without gym_id), try joining users' gym_id
-      if ((activeCoachingToday || []).length === 0) {
+      // Fallback: if nothing found for this gym (rows may be missing gym_id), try joining users' gym_id and sum explicit daily fields
+      if (coachingDaily === 0) {
         try {
           const { data: coachingByUserGym } = await supabase
             .from('one_to_one_coaching')
-            .select('hourly_rate, days_per_week, hours_per_session, status, daily_cost, daily_price, daily_revenue, users(gym_id)')
+            .select('daily_cost, daily_price, daily_revenue, status, users(gym_id)')
             .eq('status', 'active');
 
           coachingDaily = (coachingByUserGym || [])
             .filter((r: any) => r.users?.gym_id === gym?.id)
             .reduce((sum: number, r: any) => {
-              const explicit = (r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue);
-              if (typeof explicit === 'number' && Number.isFinite(explicit)) return sum + explicit;
-
-              const hr = Number(r?.hourly_rate || 0);
-              const d = Number(r?.days_per_week || 0);
-              const hps = Number(r?.hours_per_session || 0);
-              const weekly = hr * d * hps;
-              const dailyEstimate = weekly / 7;
-              return sum + (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+              const explicitRaw = r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue;
+              const explicit = explicitRaw == null ? NaN : Number(explicitRaw);
+              if (!Number.isNaN(explicit) && Number.isFinite(explicit)) return sum + explicit;
+              return sum;
             }, 0);
         } catch (e) {
           // ignore, leave coachingDaily as computed
@@ -339,6 +371,115 @@ export default function Dashboard() {
       setTotalPackageRevenue(0);
       setTotalCoachingRevenue(0);
       setCombinedRevenue(0);
+    }
+  };
+
+  // Load revenue time-series (daily buckets)
+  const loadRevenueSeries = async () => {
+    setRevenueSeriesLoading(true);
+    try {
+      const now = new Date();
+      const start = new Date();
+      start.setDate(now.getDate() - (revenueRangeDays - 1));
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+
+      // Fetch per-user package and coaching values from user_combined_costs view and aggregate per day
+      const { data: combinedRows } = await supabase
+        .from('user_combined_costs')
+        .select('created_at, package_price, one_to_one_coaching_cost, total_monthly_cost, gym_id')
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString())
+        .eq('gym_id', gym?.id);
+
+      console.debug('loadRevenueSeries: combinedRows count', (combinedRows || []).length, (combinedRows || []).slice?.(0,3));
+
+      // Build day buckets
+      const days: Array<{ date: string; packages: number; coaching: number; total: number }> = [];
+      const copy = new Date(start);
+      for (let i = 0; i < revenueRangeDays; i++) {
+        const iso = copy.toISOString().slice(0, 10);
+        days.push({ date: iso, packages: 0, coaching: 0, total: 0 });
+        copy.setDate(copy.getDate() + 1);
+      }
+
+
+
+      if ((combinedRows || []).length === 0) {
+        // Fallback: build packages & coaching from users and one_to_one_coaching
+        const { data: usersCreated } = await supabase
+          .from('users')
+          .select('created_at, package_id, packages(price), gym_id')
+          .gte('created_at', start.toISOString())
+          .lte('created_at', end.toISOString())
+          .eq('gym_id', gym?.id)
+          .not('package_id', 'is', null);
+
+        const { data: coachingRows } = await supabase
+          .from('one_to_one_coaching')
+          .select('start_date, end_date, hourly_rate, days_per_week, hours_per_session, daily_cost, daily_price, daily_revenue, status, gym_id, users(gym_id)')
+          .eq('status', 'active');
+
+        (usersCreated || []).forEach((u: any) => {
+          if (!u?.created_at) return;
+          const day = (new Date(u.created_at)).toISOString().slice(0, 10);
+          const price = u?.packages?.price;
+          const n = price == null ? 0 : Number(price);
+          const idx = days.findIndex(d => d.date === day);
+          if (idx >= 0 && Number.isFinite(n)) days[idx].packages += n;
+        });
+
+        (coachingRows || []).forEach((r: any) => {
+          const rowGymId = r.gym_id ?? r?.users?.gym_id ?? null;
+          if (rowGymId !== gym?.id) return;
+          const startDate = r.start_date ? new Date(r.start_date).toISOString().slice(0, 10) : null;
+          const endDate = r.end_date ? new Date(r.end_date).toISOString().slice(0, 10) : null;
+          const explicitRaw = r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue;
+          const explicit = explicitRaw == null ? NaN : Number(explicitRaw);
+          const hr = Number(r?.hourly_rate || 0);
+          const d = Number(r?.days_per_week || 0);
+          const hps = Number(r?.hours_per_session || 0);
+          const weekly = hr * d * hps;
+          const dailyEstimate = Number.isFinite(weekly) ? (weekly / 7) : NaN;
+
+          for (let i = 0; i < days.length; i++) {
+            const day = days[i].date;
+            if (startDate && day < startDate) continue;
+            if (endDate && day > endDate) continue;
+            const val = (!Number.isNaN(explicit) && Number.isFinite(explicit)) ? explicit : (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+            days[i].coaching += val;
+          }
+        });
+
+        days.forEach(d => d.total = d.packages + d.coaching);
+        const normalizedFallback = days.map(d => ({ date: d.date, packages: d.packages, coaching: d.coaching, total: d.total }));
+        console.debug('loadRevenueSeries: fallback normalized sample', normalizedFallback.slice(0, 6));
+        setRevenueSeries(normalizedFallback);
+        return;
+      }
+
+      // Aggregate combinedRows values into buckets
+      (combinedRows || []).forEach((u: any) => {
+        if (!u?.created_at) return;
+        const day = (new Date(u.created_at)).toISOString().slice(0, 10);
+        const pkg = u?.package_price == null ? 0 : Number(u.package_price);
+        const coach = u?.one_to_one_coaching_cost == null ? 0 : Number(u.one_to_one_coaching_cost);
+        const idx = days.findIndex(d => d.date === day);
+        if (idx >= 0) {
+          if (Number.isFinite(pkg)) days[idx].packages += pkg;
+          if (Number.isFinite(coach)) days[idx].coaching += coach;
+          days[idx].total = days[idx].packages + days[idx].coaching;
+        }
+      });
+
+      const normalized = days.map(d => ({ date: d.date, packages: d.packages, coaching: d.coaching, total: d.total }));
+      console.debug('loadRevenueSeries: normalized sample', normalized.slice(0, 6));
+      setRevenueSeries(normalized);
+    } catch (e) {
+      setRevenueSeries([]);
+    } finally {
+      setRevenueSeriesLoading(false);
     }
   };
 
@@ -592,7 +733,7 @@ export default function Dashboard() {
             </h2>
 
             {/* Stat cards - with dynamic colors */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
                 <div 
                   className="rounded-lg p-0.5"
@@ -648,20 +789,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Revenue Today - 1:1 Coaching */}
-              <div className="cursor-default transition">
-                <div 
-                  className="rounded-lg p-0.5"
-                  style={{ background: `${dynamicStyles.accentColor}10` }}
-                >
-                  <StatCard
-                    title="Revenue Today (1:1 Coaching)"
-                    value={nf.format(revenueTodayCoaching)}
-                    icon={DollarSign}
-                    trend={{ value: '1:1 coaching only (daily avg)', positive: true }}
-                  />
-                </div>
-              </div>
+
             </div>
 
             {/* Revenue summary with dynamic colors */}
@@ -718,7 +846,126 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="text-xs text-gray-600 mt-2">
-                  Note: Revenue calculations for {gym?.name || 'this gym'}. Today's cards show packages and estimated one-to-one coaching (daily average shown separately). Combined totals are in the summary above.
+                  Note: Revenue calculations for {gym?.name || 'this gym'}. Combined totals are in the summary above.
+                </div>
+
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className="text-sm font-medium">Revenue over last {revenueRangeDays} days</div>
+                      <div className="inline-flex rounded-md border bg-white p-0.5">
+                        {[7,30,60,90].map((d) => (
+                          <button
+                            key={d}
+                            onClick={() => setRevenueRangeDays(d)}
+                            className={`px-2 py-1 text-xs font-medium ${revenueRangeDays === d ? 'bg-gray-100' : 'bg-transparent'}`}
+                          >{d}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${showPackages ? '' : 'opacity-40'}`}
+                        onClick={() => setShowPackages((s) => !s)}
+                        aria-pressed={showPackages}
+                      >
+                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dynamicStyles.primaryColor }} />
+                        Packages
+                      </button>
+
+                      <button
+                        className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${showCoaching ? '' : 'opacity-40'}`}
+                        onClick={() => setShowCoaching((s) => !s)}
+                        aria-pressed={showCoaching}
+                      >
+                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dynamicStyles.accentColor }} />
+                        1:1 Coaching
+                      </button>
+
+                      <button
+                        className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${showTotal ? '' : 'opacity-40'}`}
+                        onClick={() => setShowTotal((s) => !s)}
+                        aria-pressed={showTotal}
+                      >
+                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dynamicStyles.secondaryColor }} />
+                        Total
+                      </button>
+                    </div>
+                  </div>
+
+                  {revenueSeriesLoading ? (
+                    <div className="text-sm text-gray-500 py-6">Loading chart...</div>
+                  ) : revenueSeries.length === 0 ? (
+                    <div className="text-sm text-gray-500 py-6">No revenue data available for the selected range.</div>
+                  ) : (
+                    <div className="w-full" style={{ height: 260 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={revenueSeries} margin={{ top: 12, right: 24, left: 0, bottom: 6 }}>
+                          <defs>
+                            <linearGradient id="pkgFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={dynamicStyles.primaryColor} stopOpacity="0.42" />
+                              <stop offset="100%" stopColor={dynamicStyles.primaryColor} stopOpacity="0.08" />
+                            </linearGradient>
+                            <linearGradient id="coachFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={dynamicStyles.accentColor} stopOpacity="0.36" />
+                              <stop offset="100%" stopColor={dynamicStyles.accentColor} stopOpacity="0.06" />
+                            </linearGradient>
+                            <linearGradient id="totalFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={dynamicStyles.secondaryColor} stopOpacity="0.48" />
+                              <stop offset="100%" stopColor={dynamicStyles.secondaryColor} stopOpacity="0.18" />
+                            </linearGradient>
+                          </defs>
+
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis
+                            dataKey="date"
+                            tickFormatter={(d: string) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            tick={{ fontSize: 11, fill: '#374151' }}
+                            padding={{ left: 8, right: 8 }}
+                          />
+                          <YAxis domain={[0, Math.max(1, Math.ceil(revenueMax * 1.15))]} tickFormatter={(v) => nf.format(Number(v))} tick={{ fontSize: 11, fill: '#374151' }} />
+
+                          <Tooltip
+                            content={<RevenueTooltip />}
+                            labelFormatter={(label: string) => new Date(label).toLocaleDateString()}
+                            wrapperStyle={{ borderRadius: 8 }}
+                            cursor={{ stroke: dynamicStyles.secondaryColor, strokeDasharray: '3 3' }}
+                          />
+
+                          {/* Areas */}
+                          {showPackages && (
+                            <>
+                              <Area type="monotone" dataKey="packages" name="Packages" stroke={dynamicStyles.primaryColor} strokeOpacity={0.18} strokeWidth={1} fill="url(#pkgFill)" fillOpacity={1} isAnimationActive={false} />
+                              <Line type="monotone" dataKey="packages" name="Packages" stroke={dynamicStyles.primaryColor} dot={false} activeDot={{ r: 5 }} strokeWidth={2} isAnimationActive={false} />
+                            </>
+                          )}
+                          {showCoaching && (
+                            <>
+                              <Area type="monotone" dataKey="coaching" name="1:1 Coaching" stroke={dynamicStyles.accentColor} strokeOpacity={0.18} strokeWidth={1} fill="url(#coachFill)" fillOpacity={1} isAnimationActive={false} />
+                              <Line type="monotone" dataKey="coaching" name="1:1 Coaching" stroke={dynamicStyles.accentColor} dot={false} activeDot={{ r: 5 }} strokeWidth={2} isAnimationActive={false} />
+                            </>
+                          )}
+                          {showTotal && (
+                            <>
+                              <Area type="monotone" dataKey="total" name="Total" stroke={dynamicStyles.secondaryColor} strokeOpacity={0.18} strokeWidth={1} fill="url(#totalFill)" fillOpacity={1} isAnimationActive={false} />
+                              <Line type="monotone" dataKey="total" name="Total" stroke={dynamicStyles.secondaryColor} dot={false} activeDot={{ r: 7, stroke: '#fff', strokeWidth: 2 }} strokeWidth={3} isAnimationActive={false} />
+                            </>
+                          )}
+
+                        </ComposedChart>
+                      </ResponsiveContainer>
+
+                      {/* Debug: show recent series values for verification */}
+                      <div className="mt-2 text-xs text-gray-700">
+                        <div className="font-medium mb-1">Debug (recent totals)</div>
+                        {revenueSeries.length === 0 ? (
+                          <div className="text-xs text-gray-500">No series data (check your `user_combined_costs` view or use shorter date range)</div>
+                        ) : (
+                          <pre className="max-h-36 overflow-auto bg-gray-50 p-2 rounded text-xs">{JSON.stringify(revenueSeries.slice(-14), null, 2)}</pre>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
