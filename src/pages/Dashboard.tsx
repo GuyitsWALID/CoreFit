@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Users, Calendar, BadgeCheck, DollarSign, Bell } from 'lucide-react';
+import { Users, Calendar, BadgeCheck, DollarSign, Bell, Menu } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { supabase } from '@/lib/supabaseClient';
 import { useNavigate } from 'react-router-dom';
@@ -523,9 +523,15 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile menu button */}
+        <div className="md:hidden p-2">
+          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
+            <Menu size={20} />
+          </Button>
+        </div>
         <DynamicHeader />
         
         <main className="flex-1 overflow-x-hidden overflow-y-auto">

@@ -59,7 +59,7 @@ interface SidebarProps {
   onToggle?: () => void;
 }
 
-export function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
+export function Sidebar({ isOpen = false, onToggle }: SidebarProps) {
   const { gym } = useGym();
   const location = useLocation();
   const [collapsed, setCollapsed] = React.useState(false);
