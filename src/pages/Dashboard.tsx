@@ -24,6 +24,8 @@ export default function Dashboard() {
   const [todayCheckIns, setTodayCheckIns] = useState<number>(0);
   const [activeMembers, setActiveMembers] = useState<number>(0);
   const [revenueTodayPackages, setRevenueTodayPackages] = useState<number>(0);
+  const [revenueTodayCoaching, setRevenueTodayCoaching] = useState<number>(0);
+  const [revenueTodayTotal, setRevenueTodayTotal] = useState<number>(0);
 
   // Revenues (overall) from user_combined_costs
   const [totalPackageRevenue, setTotalPackageRevenue] = useState<number>(0);
@@ -240,7 +242,59 @@ export default function Dashboard() {
         const n = typeof price === 'number' ? price : Number(price || 0);
         return sum + (Number.isFinite(n) ? n : 0);
       }, 0);
+
+      // Today's one-to-one coaching (approximate daily cost): compute weekly cost then divide by 7
+      // First try coaching rows that explicitly have gym_id set
+      // Prefer explicit daily fields if present: daily_cost, daily_price, daily_revenue
+      const { data: activeCoachingToday } = await supabase
+        .from('one_to_one_coaching')
+        .select('hourly_rate, days_per_week, hours_per_session, status, daily_cost, daily_price, daily_revenue')
+        .eq('gym_id', gym?.id)
+        .eq('status', 'active');
+
+      let coachingDaily = (activeCoachingToday || []).reduce((sum: number, r: any) => {
+        // If any explicit daily field exists, prefer it (pick the first non-null)
+        const explicit = (r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue);
+        if (typeof explicit === 'number' && Number.isFinite(explicit)) return sum + explicit;
+
+        // Fallback: compute from weekly schedule
+        const hr = Number(r?.hourly_rate || 0);
+        const d = Number(r?.days_per_week || 0);
+        const hps = Number(r?.hours_per_session || 0);
+        const weekly = hr * d * hps; // weekly cost
+        const dailyEstimate = weekly / 7; // average per day
+        return sum + (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+      }, 0);
+
+      // Fallback: if none found (or you want to include coaching rows without gym_id), try joining users' gym_id
+      if ((activeCoachingToday || []).length === 0) {
+        try {
+          const { data: coachingByUserGym } = await supabase
+            .from('one_to_one_coaching')
+            .select('hourly_rate, days_per_week, hours_per_session, status, daily_cost, daily_price, daily_revenue, users(gym_id)')
+            .eq('status', 'active');
+
+          coachingDaily = (coachingByUserGym || [])
+            .filter((r: any) => r.users?.gym_id === gym?.id)
+            .reduce((sum: number, r: any) => {
+              const explicit = (r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue);
+              if (typeof explicit === 'number' && Number.isFinite(explicit)) return sum + explicit;
+
+              const hr = Number(r?.hourly_rate || 0);
+              const d = Number(r?.days_per_week || 0);
+              const hps = Number(r?.hours_per_session || 0);
+              const weekly = hr * d * hps;
+              const dailyEstimate = weekly / 7;
+              return sum + (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+            }, 0);
+        } catch (e) {
+          // ignore, leave coachingDaily as computed
+        }
+      }
+
       setRevenueTodayPackages(pkgSum);
+      setRevenueTodayCoaching(coachingDaily);
+      setRevenueTodayTotal(pkgSum + coachingDaily);
     } catch {
       // swallow
     }
@@ -538,7 +592,7 @@ export default function Dashboard() {
             </h2>
 
             {/* Stat cards - with dynamic colors */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
               <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
                 <div 
                   className="rounded-lg p-0.5"
@@ -578,6 +632,8 @@ export default function Dashboard() {
                   />
                 </div>
               </div>
+
+              {/* Revenue Today - Packages */}
               <div className="cursor-default transition">
                 <div 
                   className="rounded-lg p-0.5"
@@ -588,6 +644,21 @@ export default function Dashboard() {
                     value={nf.format(revenueTodayPackages)}
                     icon={DollarSign}
                     trend={{ value: 'Packages only', positive: true }}
+                  />
+                </div>
+              </div>
+
+              {/* Revenue Today - 1:1 Coaching */}
+              <div className="cursor-default transition">
+                <div 
+                  className="rounded-lg p-0.5"
+                  style={{ background: `${dynamicStyles.accentColor}10` }}
+                >
+                  <StatCard
+                    title="Revenue Today (1:1 Coaching)"
+                    value={nf.format(revenueTodayCoaching)}
+                    icon={DollarSign}
+                    trend={{ value: '1:1 coaching only (daily avg)', positive: true }}
                   />
                 </div>
               </div>
@@ -647,7 +718,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="text-xs text-gray-600 mt-2">
-                  Note: Revenue calculations for {gym?.name || 'this gym'}. Today's revenue counts package registrations today only.
+                  Note: Revenue calculations for {gym?.name || 'this gym'}. Today's cards show packages and estimated one-to-one coaching (daily average shown separately). Combined totals are in the summary above.
                 </div>
               </CardContent>
             </Card>

@@ -739,7 +739,8 @@ const handleUpgradeSubmit = async () => {
             hours_per_session: coachingData.hours_per_session,
             start_date: coachingData.start_date,
             end_date: coachingData.end_date,
-            status: coachingData.status || 'active'
+            status: coachingData.status || 'active',
+            gym_id: gym?.id || null // ensure gym association so Dashboard queries can filter by gym
           }]);
 
         if (error) {
