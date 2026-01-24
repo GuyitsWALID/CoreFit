@@ -624,13 +624,7 @@ export default function RegisterClient() {
     return (
       <div className="flex h-screen bg-gray-50">
         <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-        <div className="flex-1 flex items-center justify-center relative">
-          <div className="md:hidden p-2 absolute top-4 left-4 z-50">
-            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
-              <Menu size={20} />
-            </Button>
-          </div>
-
+        <div className="flex-1 flex items-center justify-center">
           <div className="animate-pulse">
             <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -649,12 +643,7 @@ export default function RegisterClient() {
       <div className="flex h-screen bg-gray-50">
         <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="md:hidden p-2">
-            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
-              <Menu size={20} />
-            </Button>
-          </div>
-          <DynamicHeader />
+          <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
           <main className="flex-1 flex items-center justify-center">
             <Card className="max-w-md">
               <CardContent className="p-6 text-center">
@@ -678,13 +667,7 @@ export default function RegisterClient() {
       <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile menu button */}
-        <div className="md:hidden p-2">
-          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
-            <Menu size={20} />
-          </Button>
-        </div>
-        <DynamicHeader />
+        <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
         
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
           <div className="animate-fade-in px-2 sm:px-4 py-6">

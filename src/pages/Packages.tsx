@@ -478,7 +478,7 @@ export default function Packages() {
   if (gymLoading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex items-center justify-center">
           <div className="animate-pulse">
             <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
@@ -496,9 +496,9 @@ export default function Packages() {
   if (!gym || gym.id === 'default') {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DynamicHeader />
+          <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
           <main className="flex-1 flex items-center justify-center">
             <Card className="max-w-md">
               <CardContent className="p-6 text-center">
@@ -520,9 +520,9 @@ export default function Packages() {
   if (isLoading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DynamicHeader />
+          <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
           <main className="flex-1 flex items-center justify-center">
             <div className="animate-pulse text-center text-gray-500">
               Loading packages for {gym?.name || 'gym'}...
@@ -535,10 +535,10 @@ export default function Packages() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <DynamicHeader />
+        <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
         
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
           <div className="animate-fade-in p-6">

@@ -118,6 +118,7 @@ export default function TeamManagement() {
 
   // --- state fixes ---
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'all' | string>('all');
@@ -537,7 +538,7 @@ export default function TeamManagement() {
   if (gymLoading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex items-center justify-center">
           <div className="animate-pulse">
             <div className="h-8 bg-gray-200 rounded w-64 mb-4"></div>
@@ -555,9 +556,9 @@ export default function TeamManagement() {
   if (!gym || gym.id === 'default') {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DynamicHeader />
+          <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
           <main className="flex-1 flex items-center justify-center">
             <Card className="max-w-md">
               <CardContent className="p-6 text-center">
@@ -579,9 +580,9 @@ export default function TeamManagement() {
   if (isLoading) {
     return (
       <div className="flex h-screen bg-gray-50">
-        <Sidebar />
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DynamicHeader />
+          <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
           <main className="flex-1 flex items-center justify-center">
             <div className="animate-pulse text-center text-gray-500">
               Loading team members for {gym?.name || 'gym'}...
@@ -594,10 +595,10 @@ export default function TeamManagement() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <DynamicHeader />
+        <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
         
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
           <div className="space-y-6 p-6">

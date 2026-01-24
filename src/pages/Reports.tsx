@@ -48,6 +48,7 @@ export default function ReportsPage(): JSX.Element {
   // UI & drill
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeDrill, setActiveDrill] = useState<{ type: 'package' | 'revenue'; id: string } | null>(null);
   const [drillUsers, setDrillUsers] = useState<UserWithPkg[]>([]);
   const [drillTransactions, setDrillTransactions] = useState<any[]>([]);
@@ -286,9 +287,9 @@ export default function ReportsPage(): JSX.Element {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <DynamicHeader />
+        <DynamicHeader onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
           <div className="p-6">
             <h1 className="text-2xl font-bold mb-4">Admin — Analytics & Reports</h1>
