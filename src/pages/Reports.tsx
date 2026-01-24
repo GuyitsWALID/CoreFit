@@ -1,5 +1,5 @@
 // src/pages/Reports.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useGym } from '@/contexts/GymContext';
 import { DynamicHeader } from '@/components/layout/DynamicHeader';
@@ -285,6 +285,9 @@ export default function ReportsPage(): JSX.Element {
   const ctaClass = 'text-white px-3 py-1 rounded';
   const ctaStyle: React.CSSProperties = { backgroundColor: CTA_BG, color: 'white' };
 
+  // Number formatter for currency (used by chart tooltips)
+  const nf = useMemo(() => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }), []);
+
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
@@ -330,15 +333,15 @@ export default function ReportsPage(): JSX.Element {
       {error && <div className="text-red-600 mb-4">Error: {error}</div>}
 
       {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         {/* User Growth */}
         <section className="bg-white rounded shadow p-4">
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
             <h3 className="font-semibold">User Growth</h3>
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(userGrowth, 'user-growth.csv')}>Export CSV</button>
           </div>
-          <div style={{ width: '100%', height: 220 }}>
-            <ResponsiveContainer>
+          <div className="w-full h-72 sm:h-80 md:h-96">
+            <ResponsiveContainer width="100%" height="100%">
               <LineChart data={userGrowth}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" />
@@ -352,18 +355,31 @@ export default function ReportsPage(): JSX.Element {
 
         {/* Package Distribution */}
         <section className="bg-white rounded shadow p-4">
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
             <h3 className="font-semibold">Package Distribution</h3>
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(packageDist, 'package-distribution.csv')}>Export CSV</button>
           </div>
-          <div style={{ width: '100%', height: 220 }}>
-            <ResponsiveContainer>
+          <div className="w-full h-72 sm:h-80 md:h-96">
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={packageDist} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} onClick={(data: any) => onDrillPackage(data?.name)}>
-                  {packageDist.map((entry, idx) => <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
+                <Pie
+                  data={packageDist}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={48}
+                  outerRadius={78}
+                  paddingAngle={6}
+                  cornerRadius={8}
+                  onClick={(data: any) => onDrillPackage(data?.name)}
+                >
+                  {packageDist.map((entry, idx) => (
+                    <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
+                  ))}
                 </Pie>
-                <Legend />
-                <Tooltip />
+                <Legend verticalAlign="bottom" height={36} />
+                <Tooltip formatter={(value: any, name: any) => [value, name]} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -371,17 +387,17 @@ export default function ReportsPage(): JSX.Element {
 
         {/* Revenue: Horizontal bar compare (Package vs One-to-one vs Total) */}
         <section className="bg-white rounded shadow p-4 relative">
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
             <h3 className="font-semibold">Revenue — compare totals</h3>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(revenueCompare, 'revenue-compare.csv')}>Export CSV</button>
             </div>
           </div>
 
          
 
-          <div style={{ width: "100%", height: 320 }}>
-            <ResponsiveContainer>
+          <div className="w-full h-80 sm:h-96 md:h-96">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={revenueData} layout="horizontal">
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="category" dataKey="name" />
@@ -395,12 +411,12 @@ export default function ReportsPage(): JSX.Element {
 
         {/* Member Status */}
         <section className="bg-white rounded shadow p-4">
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
             <h3 className="font-semibold">Member Status</h3>
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(memberStatus, 'member-status.csv')}>Export CSV</button>
           </div>
-          <div style={{ width: '100%', height: 220 }}>
-            <ResponsiveContainer>
+          <div className="w-full h-72 sm:h-80 md:h-96">
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={memberStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70}>
                   {memberStatus.map((entry, idx) => <Cell key={`cell-status-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
@@ -413,26 +429,26 @@ export default function ReportsPage(): JSX.Element {
         </section>
 
         {/* Top Packages */}
-        <section className="bg-white rounded shadow p-4 md:col-span-2">
-          <div className="flex justify-between items-center mb-2">
+        <section className="bg-white rounded shadow p-4">
+          <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
             <h3 className="font-semibold">Top Packages</h3>
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(topPackages, 'top-packages.csv')}>Export CSV</button>
           </div>
-          <div style={{ width: '100%', height: 260 }}>
-            <ResponsiveContainer>
-              <BarChart layout="vertical" data={topPackages} margin={{ left: 40 }}>
+          <div className="w-full h-64 sm:h-72 md:h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topPackages} margin={{ top: 10, right: 16, left: 16, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="name" type="category" />
-                <Tooltip />
-                <Bar dataKey="value" fill="#FFBB28" />
+                <XAxis dataKey="name" type="category" tick={{ fontSize: 12 }} interval={0} />
+                <YAxis type="number" />
+                <Tooltip formatter={(value: any) => nf.format(Number(value))} />
+                <Bar dataKey="value" fill="#FFBB28" barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </section>
 
         {/* Staff */}
-        <section className="bg-white rounded shadow p-4 md:col-span-2">
+        <section className="bg-white rounded shadow p-4">
           <div className="flex justify-between items-center mb-2">
             <h3 className="font-semibold">Staff</h3>
             <div className="flex gap-2">
