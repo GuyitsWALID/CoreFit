@@ -6,7 +6,7 @@ import { DynamicHeader } from '@/components/layout/DynamicHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, BarChart, Bar
+  PieChart, Pie, Cell, Legend, BarChart, Bar, ComposedChart, Area
 } from 'recharts';
 
 type UserGrowthPoint = { label: string; count: number };
@@ -46,6 +46,30 @@ export default function ReportsPage(): JSX.Element {
   // currency formatter for ETB (used for package price display)
   const nfEtb = useMemo(() => new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB' }), []);
   const [staffBreakdown, setStaffBreakdown] = useState<StaffBreakdown>({ roles: [], counts: { total: 0, active: 0 } });
+
+  // Revenue time-series chart (same as Dashboard)
+  const [revenueSeries, setRevenueSeries] = useState<Array<{ date: string; packages: number; coaching: number; total: number }>>([]);
+  const [revenueSeriesLoading, setRevenueSeriesLoading] = useState<boolean>(false);
+  const [revenueRangeDays, setRevenueRangeDays] = useState<number>(90);
+  const [showPackages, setShowPackages] = useState<boolean>(true);
+  const [showCoaching, setShowCoaching] = useState<boolean>(true);
+  const [showTotal, setShowTotal] = useState<boolean>(true);
+
+  // Update styling based on gym configuration (used by revenue chart)
+  const dynamicStyles = useMemo(() => {
+    if (!gym) return {
+      primaryColor: '#2563eb',
+      secondaryColor: '#1e40af',
+      accentColor: '#f59e0b',
+    };
+    const primaryColor = gym.brand_color || '#2563eb';
+    return {
+      primaryColor: primaryColor,
+      secondaryColor: primaryColor,
+      accentColor: primaryColor,
+      gradientBg: `linear-gradient(135deg, ${primaryColor}10 0%, ${primaryColor}20 100%)`,
+    };
+  }, [gym]);
 
   // helpers
   const [packagesList, setPackagesList] = useState<string[]>([]);
@@ -108,6 +132,134 @@ export default function ReportsPage(): JSX.Element {
     }
   }
 
+  // Currency formatter for revenue tooltip (ensure available before tooltip)
+  const nf = useMemo(() => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }), []);
+
+  // Tooltip for revenue series (mirrors Dashboard)
+  const RevenueTooltip = (props: any) => {
+    const { active, label } = props;
+    if (!active) return null;
+    const row = revenueSeries.find((r) => r.date === label);
+    if (!row) return null;
+    return (
+      <div className="bg-white p-3 rounded shadow-md text-sm border">
+        <div className="font-medium mb-1">{new Date(label).toLocaleDateString()}</div>
+        {showPackages && <div>Packages: <strong>{nf.format(Number(row.packages || 0))}</strong></div>}
+        {showCoaching && <div>1:1 Coaching: <strong>{nf.format(Number(row.coaching || 0))}</strong></div>}
+        {showTotal && <div style={{ color: dynamicStyles.secondaryColor }}>Total: <strong>{nf.format(Number(row.total || 0))}</strong></div>}
+      </div>
+    );
+  };
+
+  // Load revenue time-series (daily buckets) - copied from Dashboard for parity
+  const loadRevenueSeries = async () => {
+    setRevenueSeriesLoading(true);
+    try {
+      const now = new Date();
+      const start = new Date();
+      start.setDate(now.getDate() - (revenueRangeDays - 1));
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+
+      // Fetch per-user package and coaching values from user_combined_costs view and aggregate per day
+      const { data: combinedRows } = await supabase
+        .from('user_combined_costs')
+        .select('created_at, package_price, one_to_one_coaching_cost, total_monthly_cost, gym_id')
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString())
+        .eq('gym_id', gym?.id);
+
+      // Build day buckets
+      const days: Array<{ date: string; packages: number; coaching: number; total: number }> = [];
+      const copy = new Date(start);
+      for (let i = 0; i < revenueRangeDays; i++) {
+        const iso = copy.toISOString().slice(0, 10);
+        days.push({ date: iso, packages: 0, coaching: 0, total: 0 });
+        copy.setDate(copy.getDate() + 1);
+      }
+
+      if ((combinedRows || []).length === 0) {
+        // Fallback: build packages & coaching from users and one_to_one_coaching
+        const { data: usersCreated } = await supabase
+          .from('users')
+          .select('created_at, package_id, packages(price), gym_id')
+          .gte('created_at', start.toISOString())
+          .lte('created_at', end.toISOString())
+          .eq('gym_id', gym?.id)
+          .not('package_id', 'is', null);
+
+        const { data: coachingRows } = await supabase
+          .from('one_to_one_coaching')
+          .select('start_date, end_date, hourly_rate, days_per_week, hours_per_session, daily_cost, daily_price, daily_revenue, status, gym_id, users(gym_id)')
+          .eq('status', 'active');
+
+        (usersCreated || []).forEach((u: any) => {
+          if (!u?.created_at) return;
+          const day = (new Date(u.created_at)).toISOString().slice(0, 10);
+          const price = u?.packages?.price;
+          const n = price == null ? 0 : Number(price);
+          const idx = days.findIndex(d => d.date === day);
+          if (idx >= 0 && Number.isFinite(n)) days[idx].packages += n;
+        });
+
+        (coachingRows || []).forEach((r: any) => {
+          const rowGymId = r.gym_id ?? r?.users?.gym_id ?? null;
+          if (rowGymId !== gym?.id) return;
+          const startDate = r.start_date ? new Date(r.start_date).toISOString().slice(0, 10) : null;
+          const endDate = r.end_date ? new Date(r.end_date).toISOString().slice(0, 10) : null;
+          const explicitRaw = r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue;
+          const explicit = explicitRaw == null ? NaN : Number(explicitRaw);
+          const hr = Number(r?.hourly_rate || 0);
+          const d = Number(r?.days_per_week || 0);
+          const hps = Number(r?.hours_per_session || 0);
+          const weekly = hr * d * hps;
+          const dailyEstimate = Number.isFinite(weekly) ? (weekly / 7) : NaN;
+
+          for (let i = 0; i < days.length; i++) {
+            const day = days[i].date;
+            if (startDate && day < startDate) continue;
+            if (endDate && day > endDate) continue;
+            const val = (!Number.isNaN(explicit) && Number.isFinite(explicit)) ? explicit : (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+            days[i].coaching += val;
+          }
+        });
+
+        days.forEach(d => d.total = d.packages + d.coaching);
+        const normalizedFallback = days.map(d => ({ date: d.date, packages: d.packages, coaching: d.coaching, total: d.total }));
+        setRevenueSeries(normalizedFallback);
+        return;
+      }
+
+      // Aggregate combinedRows values into buckets
+      (combinedRows || []).forEach((u: any) => {
+        if (!u?.created_at) return;
+        const day = (new Date(u.created_at)).toISOString().slice(0, 10);
+        const pkg = u?.package_price == null ? 0 : Number(u.package_price);
+        const coach = u?.one_to_one_coaching_cost == null ? 0 : Number(u.one_to_one_coaching_cost);
+        const idx = days.findIndex(d => d.date === day);
+        if (idx >= 0) {
+          if (Number.isFinite(pkg)) days[idx].packages += pkg;
+          if (Number.isFinite(coach)) days[idx].coaching += coach;
+          days[idx].total = days[idx].packages + days[idx].coaching;
+        }
+      });
+
+      const normalized = days.map(d => ({ date: d.date, packages: d.packages, coaching: d.coaching, total: d.total }));
+      setRevenueSeries(normalized);
+    } catch (err: any) {
+      console.error('loadRevenueSeries error', err);
+      setRevenueSeries([]);
+    } finally {
+      setRevenueSeriesLoading(false);
+    }
+  };
+
+  // ensure revenue series loads when gym or range changes
+  useEffect(() => {
+    if (gym && !gymLoading) loadRevenueSeries();
+  }, [gym, gymLoading, revenueRangeDays]);
+
   async function fetchAllAnalytics() {
     setLoading(true);
     setError(null);
@@ -148,8 +300,6 @@ export default function ReportsPage(): JSX.Element {
         var userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
       }
 
-      // --- Packages & member status ---
-      // Accurate active-user counts per package (matches SQL: packages LEFT JOIN users ON u.membership_expiry > now())
       // Fetch packages for gym and initialize counts (so packages with zero active users are shown)
       const { data: pkgsForCount, error: pkgsForCountErr } = await supabase.from('packages').select('id, name, price').eq('gym_id', gym?.id).order('name');
       if (pkgsForCountErr) throw pkgsForCountErr;
@@ -381,8 +531,6 @@ export default function ReportsPage(): JSX.Element {
   const ctaClass = 'text-white px-3 py-1 rounded';
   const ctaStyle: React.CSSProperties = { backgroundColor: CTA_BG, color: 'white' };
 
-  // Number formatter for currency (used by chart tooltips)
-  const nf = useMemo(() => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }), []);
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -536,17 +684,114 @@ export default function ReportsPage(): JSX.Element {
 
          
 
-          <div className="w-full h-80 sm:h-96 md:h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={revenueData} layout="horizontal">
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="category" dataKey="name" />
-                <YAxis type="number" />
-                <Tooltip />
-                <Bar dataKey="value" fill="#6C9D9A" />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="flex items-center justify-between mb-3 gap-3">
+            <div className="inline-flex items-center gap-2">
+              <label className="text-sm text-muted-foreground">Range</label>
+              <div className="inline-flex bg-white rounded-md border p-1">
+                {[{ key: 7, label: '7d' }, { key: 30, label: '30d' }, { key: 90, label: '90d' }, { key: 180, label: '180d' }].map((r) => (
+                  <button
+                    key={r.key}
+                    onClick={() => { setRevenueRangeDays(r.key); loadRevenueSeries(); }}
+                    className={`px-3 py-1 text-sm rounded ${revenueRangeDays === r.key ? 'bg-sky-600 text-white' : 'bg-transparent'}`}
+                  >{r.label}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${showPackages ? '' : 'opacity-40'}`}
+                onClick={() => setShowPackages((s) => !s)}
+                aria-pressed={showPackages}
+              >
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dynamicStyles.primaryColor }} />
+                Packages
+              </button>
+
+              <button
+                className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${showCoaching ? '' : 'opacity-40'}`}
+                onClick={() => setShowCoaching((s) => !s)}
+                aria-pressed={showCoaching}
+              >
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dynamicStyles.accentColor }} />
+                1:1 Coaching
+              </button>
+
+              <button
+                className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${showTotal ? '' : 'opacity-40'}`}
+                onClick={() => setShowTotal((s) => !s)}
+                aria-pressed={showTotal}
+              >
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: dynamicStyles.secondaryColor }} />
+                Total
+              </button>
+            </div>
           </div>
+
+          {revenueSeriesLoading ? (
+            <div className="text-sm text-gray-500 py-6">Loading chart...</div>
+          ) : revenueSeries.length === 0 ? (
+            <div className="text-sm text-gray-500 py-6">No revenue data available for the selected range.</div>
+          ) : (
+            <div className="w-full h-80 sm:h-96 md:h-96">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={revenueSeries} margin={{ top: 12, right: 24, left: 0, bottom: 6 }}>
+                  <defs>
+                    <linearGradient id="pkgFill_reports" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={dynamicStyles.primaryColor} stopOpacity="0.42" />
+                      <stop offset="100%" stopColor={dynamicStyles.primaryColor} stopOpacity="0.08" />
+                    </linearGradient>
+                    <linearGradient id="coachFill_reports" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={dynamicStyles.accentColor} stopOpacity="0.36" />
+                      <stop offset="100%" stopColor={dynamicStyles.accentColor} stopOpacity="0.06" />
+                    </linearGradient>
+                    <linearGradient id="totalFill_reports" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={dynamicStyles.secondaryColor} stopOpacity="0.48" />
+                      <stop offset="100%" stopColor={dynamicStyles.secondaryColor} stopOpacity="0.18" />
+                    </linearGradient>
+                  </defs>
+
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(d: string) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    tick={{ fontSize: 11, fill: '#374151' }}
+                    padding={{ left: 8, right: 8 }}
+                  />
+                  <YAxis domain={[0, Math.max(1, Math.ceil(Math.max(...revenueSeries.map(r => Number(r.total || 0))) * 1.15))]} tickFormatter={(v) => nf.format(Number(v))} tick={{ fontSize: 11, fill: '#374151' }} />
+
+                  <Tooltip
+                    content={<RevenueTooltip />}
+                    labelFormatter={(label: string) => new Date(label).toLocaleDateString()}
+                    wrapperStyle={{ borderRadius: 8 }}
+                    cursor={{ stroke: dynamicStyles.secondaryColor, strokeDasharray: '3 3' }}
+                  />
+
+                  {showPackages && (
+                    <>
+                      <Area type="monotone" dataKey="packages" name="Packages" stroke={dynamicStyles.primaryColor} strokeOpacity={0.18} strokeWidth={1} fill="url(#pkgFill_reports)" fillOpacity={1} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="packages" name="Packages" stroke={dynamicStyles.primaryColor} dot={false} activeDot={{ r: 5 }} strokeWidth={2} isAnimationActive={false} />
+                    </>
+                  )}
+                  {showCoaching && (
+                    <>
+                      <Area type="monotone" dataKey="coaching" name="1:1 Coaching" stroke={dynamicStyles.accentColor} strokeOpacity={0.18} strokeWidth={1} fill="url(#coachFill_reports)" fillOpacity={1} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="coaching" name="1:1 Coaching" stroke={dynamicStyles.accentColor} dot={false} activeDot={{ r: 5 }} strokeWidth={2} isAnimationActive={false} />
+                    </>
+                  )}
+                  {showTotal && (
+                    <>
+                      <Area type="monotone" dataKey="total" name="Total" stroke={dynamicStyles.secondaryColor} strokeOpacity={0.18} strokeWidth={1} fill="url(#totalFill_reports)" fillOpacity={1} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="total" name="Total" stroke={dynamicStyles.secondaryColor} dot={false} activeDot={{ r: 7, stroke: '#fff', strokeWidth: 2 }} strokeWidth={3} isAnimationActive={false} />
+                    </>
+                  )}
+
+                </ComposedChart>
+              </ResponsiveContainer>
+
+
+            </div>
+          )}
         </section>
 
         {/* Member Status */}
