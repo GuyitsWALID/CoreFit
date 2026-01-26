@@ -405,34 +405,49 @@ export default function ReportsPage(): JSX.Element {
       // Use the users table membership_expiry (as-of now) to compute active/expired counts so they match MembershipList
       const nowIsoStatus = new Date().toISOString();
 
-      // Fetch users by expiry status
+      // Fetch paused users separately and exclude them from active/expired sets
+      const { data: pausedUsersRows, error: pausedErr } = await supabase
+        .from('users')
+        .select('id, package_id, status, membership_expiry')
+        .eq('gym_id', gym?.id)
+        .eq('status', 'paused');
+      if (pausedErr) throw pausedErr;
+
+      // Active (exclude paused)
       const { data: activeUsersRows, error: activeUsersErr } = await supabase
         .from('users')
         .select('id, package_id, status, membership_expiry')
         .eq('gym_id', gym?.id)
+        .neq('status', 'paused')
         .gt('membership_expiry', nowIsoStatus);
       if (activeUsersErr) throw activeUsersErr;
 
+      // Expired (exclude paused)
       const { data: expiredUsersRows, error: expiredUsersErr } = await supabase
         .from('users')
         .select('id, package_id, status, membership_expiry')
         .eq('gym_id', gym?.id)
+        .neq('status', 'paused')
         .lt('membership_expiry', nowIsoStatus);
       if (expiredUsersErr) throw expiredUsersErr;
 
+      // Unknown expiry (exclude paused)
       const { data: unknownExpiryRows } = await supabase
         .from('users')
         .select('id, package_id, status, membership_expiry')
         .eq('gym_id', gym?.id)
+        .neq('status', 'paused')
         .is('membership_expiry', null);
 
       const activeCountNow = (activeUsersRows ?? []).length;
       const expiredCountNow = (expiredUsersRows ?? []).length;
       const unknownCountNow = (unknownExpiryRows ?? []).length;
+      const pausedCountNow = (pausedUsersRows ?? []).length;
 
       const memberStatusArr: StatusPoint[] = [];
       if (activeCountNow > 0) memberStatusArr.push({ name: 'active', value: activeCountNow });
       if (expiredCountNow > 0) memberStatusArr.push({ name: 'expired', value: expiredCountNow });
+      if (pausedCountNow > 0) memberStatusArr.push({ name: 'paused', value: pausedCountNow });
       if (unknownCountNow > 0) memberStatusArr.push({ name: 'unknown', value: unknownCountNow });
 
       // Per-package breakdown using package_id -> name mapping
@@ -453,6 +468,7 @@ export default function ReportsPage(): JSX.Element {
 
       (activeUsersRows || []).forEach(r => addToPkg(r, 'active'));
       (expiredUsersRows || []).forEach(r => addToPkg(r, 'expired'));
+      (pausedUsersRows || []).forEach(r => addToPkg(r, 'paused'));
       (unknownExpiryRows || []).forEach(r => addToPkg(r, 'unknown'));
 
       const memberStatusByPackage: Record<string, StatusPoint[]> = {};
@@ -470,7 +486,7 @@ export default function ReportsPage(): JSX.Element {
 
       // Cross-check counts for consistency with users table counts
       const totalFromStatus = memberStatusArr.reduce((s,x)=>s+Number(x.value||0),0);
-      const totalFromUsers = (activeUsersRows?.length||0) + (expiredUsersRows?.length||0) + (unknownExpiryRows?.length||0);
+      const totalFromUsers = (activeUsersRows?.length||0) + (expiredUsersRows?.length||0) + (unknownExpiryRows?.length||0) + (pausedUsersRows?.length||0);
       if (totalFromStatus !== totalFromUsers) {
         console.warn('Member status counts mismatch', { totalFromStatus, totalFromUsers });
         setCountsMismatch(`Member status counts mismatch: reports=${totalFromStatus} vs users=${totalFromUsers}`);
