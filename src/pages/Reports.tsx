@@ -6,7 +6,7 @@ import { DynamicHeader } from '@/components/layout/DynamicHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, BarChart, Bar, ComposedChart, Area
+  PieChart, Pie, Cell, Legend, BarChart, Bar, ComposedChart, Area, AreaChart
 } from 'recharts';
 
 type UserGrowthPoint = { label: string; count: number };
@@ -531,6 +531,8 @@ export default function ReportsPage(): JSX.Element {
   const ctaClass = 'text-white px-3 py-1 rounded';
   const ctaStyle: React.CSSProperties = { backgroundColor: CTA_BG, color: 'white' };
 
+  // Derived total for package distribution (used for left-side percentage labels)
+  const packageTotal = packageDist.reduce((s, p) => s + Number(p.value || 0), 0);
   // Helper to generate safe IDs for gradient definitions (remove unsafe chars)
   const sanitizeId = (s?: string) => (s || '').toString().replace(/[^a-z0-9\-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase();
 
@@ -633,13 +635,32 @@ export default function ReportsPage(): JSX.Element {
           </div>
           <div className="w-full h-72 sm:h-80 md:h-96">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={userGrowth}>
+              <AreaChart data={userGrowth}>
+                <defs>
+                  <linearGradient id="userGrowthGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#0088FE" stopOpacity={0.6} />
+                    <stop offset="100%" stopColor="#0088FE" stopOpacity={0.08} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
+                <XAxis
+                  dataKey="label"
+                  tickFormatter={(d: string) => {
+                    const dt = new Date(d);
+                    return isNaN(dt.getTime()) ? d : dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                  }}
+                />
                 <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="count" stroke="#0088FE" strokeWidth={2} />
-              </LineChart>
+                <Tooltip labelFormatter={(label: string) => new Date(label).toLocaleDateString()} />
+                <Area
+                  type="monotone"
+                  dataKey="count"
+                  stroke="#0088FE"
+                  strokeWidth={2}
+                  fill="url(#userGrowthGrad)"
+                  isAnimationActive={false}
+                />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </section>
@@ -651,28 +672,55 @@ export default function ReportsPage(): JSX.Element {
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(packageDist, 'package-distribution.csv')}>Export CSV</button>
           </div>
           <div className="w-full h-72 sm:h-80 md:h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={packageDist}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={48}
-                  outerRadius={78}
-                  paddingAngle={6}
-                  cornerRadius={8}
-                  onClick={(data: any) => handlePackageSliceClick(data?.name)}
-                >
-                  {packageDist.map((entry, idx) => (
-                    <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Legend verticalAlign="bottom" height={36} />
-                <Tooltip formatter={(value: any, name: any) => [value, name]} />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="flex h-full">
+              {/* Left stacked labels (wider to allow longer package names) */}
+              <div className="w-66 p-3 border-r border-gray-100 overflow-auto">
+                {packageDist.length === 0 ? (
+                  <div className="text-sm text-gray-500">No packages available</div>
+                ) : (
+                  <div className="space-y-2">
+                    {packageDist.map((p, idx) => {
+                      const pct = packageTotal > 0 ? Math.round((Number(p.value || 0) / packageTotal) * 100) : 0;
+                      return (
+                        <div key={p.name} className="flex items-center gap-3">
+                          <span style={{ width: 12, height: 12, backgroundColor: COLORS[idx % COLORS.length], display: 'inline-block', borderRadius: 3 }} />
+                          <div className="flex-1 text-sm truncate">{p.name}</div>
+                          <div className="text-sm text-gray-600">{pct}%</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Pie chart without labels (clean) - made larger by increasing radii */}
+              <div className="flex-1 h-full flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={packageDist}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={48}
+                      outerRadius={96}
+                      paddingAngle={6}
+                      cornerRadius={8}
+                      onClick={(data: any) => handlePackageSliceClick(data?.name)}
+                      label={false}
+                      labelLine={false}
+                      stroke="transparent"
+                    >
+                      {packageDist.map((entry, idx) => (
+                        <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value: any, name: any) => [value, name]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </div>
         </section>
 
