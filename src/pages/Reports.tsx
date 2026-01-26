@@ -16,7 +16,7 @@ type StatusPoint = { name: string; value: number };
 type StaffRoleCount = { role: string; count: number };
 
 type StaffBreakdown = { roles: StaffRoleCount[]; counts: { total: number; active: number } };
-type UserWithPkg = { user_id: string; package_name?: string | null; created_at?: string; status?: string; full_name?: string; email?: string; days_left?: number };
+type UserWithPkg = { user_id: string; package_name?: string | null; created_at?: string; status?: string; full_name?: string; email?: string; days_left?: number; membership_expiry?: string };
 type StaffRow = { id: string; full_name: string; is_active: boolean; role_id?: string };
 type CombinedRow = { id?: string; user_id?: string; package_price?: number | null; one_to_one_coaching_cost?: number | null; package_name?: string | null; created_at?: string };
 
@@ -117,6 +117,8 @@ export default function ReportsPage(): JSX.Element {
   const [drillUsers, setDrillUsers] = useState<UserWithPkg[]>([]);
   const [drillTransactions, setDrillTransactions] = useState<any[]>([]);
   const [revenueData, setRevenueData] = useState<RevenuePoint[]>([]);
+  // Diagnostics for count mismatches
+  const [countsMismatch, setCountsMismatch] = useState<string | null>(null);
 
   useEffect(() => {
     if (gym && !gymLoading) {
@@ -400,39 +402,81 @@ export default function ReportsPage(): JSX.Element {
     }
 
       // --- Member status ---
-      const usersWithPkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').eq('gym_id', gym?.id).order('created_at', { ascending: true });
-      if (range) usersWithPkgQuery.gte('created_at', range.from).lte('created_at', range.to);
-      if (packageFilter) usersWithPkgQuery.in('package_name', packageFilter as string[]);
-      const { data: usersWithPkgData, error: usersWithPkgErr } = await usersWithPkgQuery;
-      if (usersWithPkgErr) throw usersWithPkgErr;
-      const usersWithPkg = (usersWithPkgData ?? []) as UserWithPkg[];
+      // Use the users table membership_expiry (as-of now) to compute active/expired counts so they match MembershipList
+      const nowIsoStatus = new Date().toISOString();
 
-      // overall member status counts
-      const statusMap: Record<string, number> = {};
-      usersWithPkg.forEach(r => {
-        const st = r.status || 'unknown';
-        statusMap[st] = (statusMap[st] || 0) + 1;
-      });
-      const memberStatusArr = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
+      // Fetch users by expiry status
+      const { data: activeUsersRows, error: activeUsersErr } = await supabase
+        .from('users')
+        .select('id, package_id, status, membership_expiry')
+        .eq('gym_id', gym?.id)
+        .gt('membership_expiry', nowIsoStatus);
+      if (activeUsersErr) throw activeUsersErr;
 
-      // per-package member status breakdown
+      const { data: expiredUsersRows, error: expiredUsersErr } = await supabase
+        .from('users')
+        .select('id, package_id, status, membership_expiry')
+        .eq('gym_id', gym?.id)
+        .lt('membership_expiry', nowIsoStatus);
+      if (expiredUsersErr) throw expiredUsersErr;
+
+      const { data: unknownExpiryRows } = await supabase
+        .from('users')
+        .select('id, package_id, status, membership_expiry')
+        .eq('gym_id', gym?.id)
+        .is('membership_expiry', null);
+
+      const activeCountNow = (activeUsersRows ?? []).length;
+      const expiredCountNow = (expiredUsersRows ?? []).length;
+      const unknownCountNow = (unknownExpiryRows ?? []).length;
+
+      const memberStatusArr: StatusPoint[] = [];
+      if (activeCountNow > 0) memberStatusArr.push({ name: 'active', value: activeCountNow });
+      if (expiredCountNow > 0) memberStatusArr.push({ name: 'expired', value: expiredCountNow });
+      if (unknownCountNow > 0) memberStatusArr.push({ name: 'unknown', value: unknownCountNow });
+
+      // Per-package breakdown using package_id -> name mapping
       const msByPkg: Record<string, Record<string, number>> = {};
-      (usersWithPkg || []).forEach(r => {
-        const pkg = r.package_name || 'Unassigned';
-        msByPkg[pkg] = msByPkg[pkg] || {};
-        const st = r.status || 'unknown';
-        msByPkg[pkg][st] = (msByPkg[pkg][st] || 0) + 1;
-      });
+      // initialize packages
+      (pkgsForCount ?? []).forEach((p: any) => { msByPkg[p.name] = msByPkg[p.name] || {}; });
+      msByPkg['Unassigned'] = msByPkg['Unassigned'] || {};
+
+      const pkgIdToNameLocal: Record<string, string> = {};
+      (pkgsForCount ?? []).forEach((p: any) => { pkgIdToNameLocal[p.id] = p.name; });
+
+      const addToPkg = (row: any, state: string) => {
+        const pkgName = (row?.package_id && pkgIdToNameLocal[row.package_id]) ? pkgIdToNameLocal[row.package_id] : 'Unassigned';
+        if (packageFilter && !packageFilter.includes(pkgName)) return; // respect selected package filter
+        msByPkg[pkgName] = msByPkg[pkgName] || {};
+        msByPkg[pkgName][state] = (msByPkg[pkgName][state] || 0) + 1;
+      };
+
+      (activeUsersRows || []).forEach(r => addToPkg(r, 'active'));
+      (expiredUsersRows || []).forEach(r => addToPkg(r, 'expired'));
+      (unknownExpiryRows || []).forEach(r => addToPkg(r, 'unknown'));
+
       const memberStatusByPackage: Record<string, StatusPoint[]> = {};
       Object.entries(msByPkg).forEach(([pkg, map]) => {
         memberStatusByPackage[pkg] = Object.entries(map).map(([name, value]) => ({ name, value }));
       });
+
       // ensure selected packages are present even if empty
       (pkgsForCount ?? []).forEach((p: any) => {
         if (!memberStatusByPackage[p.name]) memberStatusByPackage[p.name] = [];
       });
 
+      setMemberStatus(memberStatusArr);
       setMemberStatusByPackage(memberStatusByPackage);
+
+      // Cross-check counts for consistency with users table counts
+      const totalFromStatus = memberStatusArr.reduce((s,x)=>s+Number(x.value||0),0);
+      const totalFromUsers = (activeUsersRows?.length||0) + (expiredUsersRows?.length||0) + (unknownExpiryRows?.length||0);
+      if (totalFromStatus !== totalFromUsers) {
+        console.warn('Member status counts mismatch', { totalFromStatus, totalFromUsers });
+        setCountsMismatch(`Member status counts mismatch: reports=${totalFromStatus} vs users=${totalFromUsers}`);
+      } else {
+        setCountsMismatch(null);
+      }
 
       // --- Staff breakdown (resolve role names) ---
       const { data: staffData, error: staffErr } = await supabase.from('staff').select('id, full_name, is_active, role_id').eq('gym_id', gym?.id).order('created_at', { ascending: true });
@@ -564,6 +608,18 @@ export default function ReportsPage(): JSX.Element {
   const packageTotal = packageDist.reduce((s, p) => s + Number(p.value || 0), 0);
   // Helper to generate safe IDs for gradient definitions (remove unsafe chars)
   const sanitizeId = (s?: string) => (s || '').toString().replace(/[^a-z0-9\-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+
+  // Member status color mapping (ensure expired = red and active = neon green)
+  const getStatusColor = (status?: string) => {
+    const s = (status || '').toString().trim().toLowerCase();
+    const map: Record<string, string> = {
+      active: '#39FF14', // neon green
+      expired: '#E53935', // red
+      paused: '#FFB300', // amber
+      unknown: '#9E9E9E',
+    };
+    return map[s] || '#9575CD';
+  };
 
 
   return (
@@ -881,7 +937,10 @@ export default function ReportsPage(): JSX.Element {
         <section className="bg-white rounded shadow p-4">
           <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
             <h3 className="font-semibold">Member Status</h3>
-            <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(memberStatus, 'member-status.csv')}>Export CSV</button>
+            <div className="flex items-center gap-3">
+              {countsMismatch && <div className="text-sm text-yellow-600">⚠ {countsMismatch}</div>}
+              <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(memberStatus, 'member-status.csv')}>Export CSV</button>
+            </div>
           </div>
           <div className="w-full h-72 sm:h-80 md:h-96">
             {activePackageFilter && !activePackageFilter.includes('__all__') ? (
@@ -896,7 +955,7 @@ export default function ReportsPage(): JSX.Element {
                           <defs>
                             {(memberStatusByPackage[pkgName] ?? []).map((entry, idx) => {
                               const gid = `msGrad-${sanitizeId(pkgName)}-${idx}`;
-                              const color = COLORS[idx % COLORS.length];
+                              const color = getStatusColor(entry.name);
                               return (
                                 <linearGradient id={gid} key={gid} x1="0" y1="0" x2="1" y2="1">
                                   <stop offset="0%" stopColor={color} stopOpacity={0.98} />
@@ -936,7 +995,7 @@ export default function ReportsPage(): JSX.Element {
                   <defs>
                     {memberStatus.map((entry, idx) => {
                       const gid = `msGrad-${idx}`;
-                      const color = COLORS[idx % COLORS.length];
+                      const color = getStatusColor(entry.name);
                       return (
                         <linearGradient id={gid} key={gid} x1="0" y1="0" x2="1" y2="1">
                           <stop offset="0%" stopColor={color} stopOpacity={0.98} />

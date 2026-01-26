@@ -393,48 +393,10 @@ export default function MembershipList() {
 
       const nowIso = new Date().toISOString();
 
-      // Prefer using the `users_with_membership_info` view for counts (consistent with listing logic)
-      // If the view isn't available or any query fails, fall back to querying the `users` table directly.
+      // Prefer using the `users` table for counts so they match the Reports implementation
+      // If the users query fails for some reason, fall back to the users_with_membership_info view.
       const futureIso = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
       try {
-        // Total
-        const { count: totalCntView, error: totalErr } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id);
-        if (totalErr) throw totalErr;
-        if (typeof totalCntView === 'number') setDbTotalCount(totalCntView ?? 0);
-
-        // Active: membership_expiry > now
-        const { count: activeCntView, error: activeErr } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .gt('membership_expiry', nowIso);
-        if (activeErr) throw activeErr;
-        if (typeof activeCntView === 'number') setDbActiveCount(activeCntView ?? 0);
-
-        // Expiring soon: membership_expiry > now AND <= futureIso
-        const { count: expCntView, error: expErr } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .gt('membership_expiry', nowIso)
-          .lte('membership_expiry', futureIso);
-        if (expErr) throw expErr;
-        if (typeof expCntView === 'number') setDbExpiringCount(expCntView ?? 0);
-
-        // Expired: membership_expiry < now
-        const { count: expiredCntView, error: expiredErr } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .lt('membership_expiry', nowIso);
-        if (expiredErr) throw expiredErr;
-        if (typeof expiredCntView === 'number') setDbExpiredCount(expiredCntView ?? 0);
-      } catch (e) {
-        console.warn('users_with_membership_info count queries failed, falling back to users table:', e);
-
         // Total users
         const { count: usersCount, error: usersErr } = await supabase
           .from('users')
@@ -466,6 +428,37 @@ export default function MembershipList() {
           .eq('gym_id', gym.id)
           .lt('membership_expiry', nowIso);
         if (typeof expiredCnt === 'number') setDbExpiredCount(expiredCnt ?? 0);
+      } catch (e) {
+        console.warn('users table count queries failed, falling back to users_with_membership_info view:', e);
+
+        // Fallback to view
+        const { count: totalCntView, error: totalErr } = await supabase
+          .from('users_with_membership_info')
+          .select('*', { count: 'exact', head: true })
+          .eq('gym_id', gym.id);
+        if (!totalErr && typeof totalCntView === 'number') setDbTotalCount(totalCntView ?? 0);
+
+        const { count: activeCntView } = await supabase
+          .from('users_with_membership_info')
+          .select('*', { count: 'exact', head: true })
+          .eq('gym_id', gym.id)
+          .gt('membership_expiry', nowIso);
+        if (typeof activeCntView === 'number') setDbActiveCount(activeCntView ?? 0);
+
+        const { count: expCntView } = await supabase
+          .from('users_with_membership_info')
+          .select('*', { count: 'exact', head: true })
+          .eq('gym_id', gym.id)
+          .gt('membership_expiry', nowIso)
+          .lte('membership_expiry', futureIso);
+        if (typeof expCntView === 'number') setDbExpiringCount(expCntView ?? 0);
+
+        const { count: expiredCntView } = await supabase
+          .from('users_with_membership_info')
+          .select('*', { count: 'exact', head: true })
+          .eq('gym_id', gym.id)
+          .lt('membership_expiry', nowIso);
+        if (typeof expiredCntView === 'number') setDbExpiredCount(expiredCntView ?? 0);
       }
     } catch (e) {
       console.error('fetchCounts error', e);
