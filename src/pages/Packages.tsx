@@ -72,6 +72,7 @@ export default function Packages() {
   });
   const [isEditing, setIsEditing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Dynamic styling based on gym configuration
   const dynamicStyles = useMemo(() => {

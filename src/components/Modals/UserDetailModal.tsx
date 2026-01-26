@@ -57,6 +57,55 @@ export default function UserDetailModal({ userId, isOpen, onClose }: UserDetailM
   };
 
   const [generating, setGenerating] = useState(false);
+
+  // Consistency metrics derived from client_checkins (first/last check-in, months active using span between first & last month)
+  const [consistency, setConsistency] = useState<{
+    first_checkin?: string | null;
+    last_checkin?: string | null;
+    total_checkins: number;
+    months_active: number;
+    avg_per_month: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!(isOpen && userId && gym?.id)) { setConsistency(null); return; }
+
+    let mounted = true;
+    const fetchCheckins = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('client_checkins')
+          .select('id, checkin_time')
+          .eq('user_id', userId)
+          .eq('gym_id', gym.id)
+          .order('checkin_time', { ascending: true });
+        if (error) throw error;
+        if (!mounted) return;
+        const rows = data || [];
+        if (rows.length === 0) {
+          setConsistency({ first_checkin: null, last_checkin: null, total_checkins: 0, months_active: 0, avg_per_month: 0 });
+          return;
+        }
+        const first = rows[0].checkin_time || null;
+        const last = rows[rows.length - 1].checkin_time || null;
+        const total = rows.length;
+        const monthsBetween = (a: string, b: string) => {
+          const da = new Date(a);
+          const db = new Date(b);
+          return (db.getFullYear() - da.getFullYear()) * 12 + (db.getMonth() - da.getMonth()) + 1;
+        };
+        const months = (first && last) ? monthsBetween(first, last) : 0;
+        const avg = months > 0 ? total / months : 0;
+        setConsistency({ first_checkin: first, last_checkin: last, total_checkins: total, months_active: months, avg_per_month: avg });
+      } catch (err) {
+        console.error('Failed to fetch checkins', err);
+      }
+    };
+
+    fetchCheckins();
+    return () => { mounted = false; };
+  }, [isOpen, userId, gym?.id]);
+
   const copyQrToClipboard = async () => {
     if (!user?.qr_code_data) return;
     try {
@@ -193,6 +242,17 @@ export default function UserDetailModal({ userId, isOpen, onClose }: UserDetailM
               <div><strong>Package:</strong> {user.packages?.name || "-"}</div>
               <div><strong>Emergency Contact Name:</strong> {user.emergency_name || "-"}</div>
               <div><strong>Emergency Contact Phone:</strong> {user.emergency_phone || "-"}</div>
+            </div>
+
+            <div className="mt-4">
+              <h4 className="mb-2 font-medium">Consistency</h4>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div><strong>First check-in:</strong> {consistency?.first_checkin ? new Date(consistency.first_checkin).toLocaleDateString() : '-'}</div>
+                <div><strong>Last check-in:</strong> {consistency?.last_checkin ? new Date(consistency.last_checkin).toLocaleDateString() : '-'}</div>
+                <div><strong>Months active:</strong> {consistency ? (consistency.months_active || 0) : '-'}</div>
+                <div><strong>Total check-ins:</strong> {consistency ? consistency.total_checkins : '-'}</div>
+                <div className="col-span-2"><strong>Avg/month:</strong> {consistency ? consistency.avg_per_month.toFixed(1) : '-'}</div>
+              </div>
             </div>
 
             <div className="mt-4">
