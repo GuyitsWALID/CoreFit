@@ -44,13 +44,13 @@ const navigation: NavItem[] = [
 
 const navItemsByRole: Record<'admin' | 'receptionist', string[]> = {
   admin: navigation.map(item => item.name),
+  // Receptionists get a limited set of navigation items suitable for front-desk tasks
   receptionist: [
     "Dashboard",
+    "Memberships",
     "Register Client",
     "Check-ins",
     "Packages",
-    "Team",
-    "Trainer",
   ],
 };
 
