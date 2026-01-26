@@ -45,6 +45,13 @@ export default function ReportsPage(): JSX.Element {
 
   // currency formatter for ETB (used for package price display)
   const nfEtb = useMemo(() => new Intl.NumberFormat('en-ET', { style: 'currency', currency: 'ETB' }), []);
+  // Dynamic chart width for User Growth (allow horizontal scrolling when many points)
+  const growthChartWidth = useMemo(() => {
+    const perPoint = 36; // pixels per data point
+    const minWidth = 700; // minimum chart width
+    const calculated = Math.max(minWidth, (userGrowth?.length || 0) * perPoint);
+    return calculated;
+  }, [userGrowth]);
   const [staffBreakdown, setStaffBreakdown] = useState<StaffBreakdown>({ roles: [], counts: { total: 0, active: 0 } });
 
   // Revenue time-series chart (same as Dashboard)
@@ -633,35 +640,38 @@ export default function ReportsPage(): JSX.Element {
             <h3 className="font-semibold">User Growth</h3>
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(userGrowth, 'user-growth.csv')}>Export CSV</button>
           </div>
-          <div className="w-full h-72 sm:h-80 md:h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={userGrowth}>
-                <defs>
-                  <linearGradient id="userGrowthGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0088FE" stopOpacity={0.6} />
-                    <stop offset="100%" stopColor="#0088FE" stopOpacity={0.08} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  tickFormatter={(d: string) => {
-                    const dt = new Date(d);
-                    return isNaN(dt.getTime()) ? d : dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-                  }}
-                />
-                <YAxis allowDecimals={false} />
-                <Tooltip labelFormatter={(label: string) => new Date(label).toLocaleDateString()} />
-                <Area
-                  type="monotone"
-                  dataKey="count"
-                  stroke="#0088FE"
-                  strokeWidth={2}
-                  fill="url(#userGrowthGrad)"
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="w-full h-72 sm:h-80 md:h-96 overflow-x-auto scrollbar-thin">
+            {/* inner container uses a minWidth based on points so chart can scroll horizontally */}
+            <div style={{ minWidth: growthChartWidth }} className="h-full">
+              <ResponsiveContainer width={growthChartWidth} height="100%">
+                <AreaChart data={userGrowth}>
+                  <defs>
+                    <linearGradient id="userGrowthGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0088FE" stopOpacity={0.6} />
+                      <stop offset="100%" stopColor="#0088FE" stopOpacity={0.08} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="label"
+                    tickFormatter={(d: string) => {
+                      const dt = new Date(d);
+                      return isNaN(dt.getTime()) ? d : dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    }}
+                  />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip labelFormatter={(label: string) => new Date(label).toLocaleDateString()} />
+                  <Area
+                    type="monotone"
+                    dataKey="count"
+                    stroke="#0088FE"
+                    strokeWidth={2}
+                    fill="url(#userGrowthGrad)"
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </section>
 
