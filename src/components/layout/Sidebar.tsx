@@ -116,7 +116,8 @@ export function Sidebar({ isOpen = false, onToggle }: SidebarProps) {
       console.log('Staff data:', staffData); // Debug log
 
       if (staffData?.roles) {
-        const roleName = staffData.roles.name?.toLowerCase();
+        const _raw = Array.isArray(staffData.roles) ? staffData.roles[0]?.name : staffData.roles?.name;
+        const roleName = (_raw ?? '').toString().trim().toLowerCase();
         console.log('Role name:', roleName); // Debug log
         
         if (roleName === 'admin' || roleName === 'receptionist') {

@@ -143,7 +143,10 @@ export default function AdminLogin() {
       }
 
       // 3. Check if user has admin role or other authorized roles
-      const userRole = (staffRecord.roles as any)?.name?.toLowerCase();
+      // Normalize role: support roles being returned as array or object, trim whitespace and lowercase
+      const _rawRole = Array.isArray((staffRecord as any).roles) ? (staffRecord as any).roles[0]?.name : (staffRecord as any).roles?.name;
+      const userRole = (_rawRole ?? '').toString().trim().toLowerCase();
+      console.log('Detected user role on login:', userRole); // debug
       // Include 'receptionist' so front-desk staff can also access the admin dashboard when appropriate
       const authorizedRoles = ['admin', 'manager', 'owner', 'receptionist']; // Add roles that can access admin dashboard
       
