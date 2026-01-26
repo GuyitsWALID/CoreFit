@@ -159,17 +159,41 @@ export default function MembershipList() {
     const pkFilter = opts?.packageFilter ?? packageFilter;
     const tab = opts?.activeTab ?? activeTab;
     try {
-      // If active filter — query users and merge membership info from user_combined_costs
+      // If active filter — prefer the `users_with_membership_info` view (ensures package fields are populated)
       // Trigger when either the status dropdown or the Active tab is selected
       if (stFilter === 'active' || tab === 'active') {
         const nowIso = new Date().toISOString();
         const safe = sTerm ? sTerm.replace(/[%_]/g, "\\$&") : '';
 
-        // Fetch users only (avoid embedded relation select which fails if FK not present)
+        // First attempt: query the users_with_membership_info view which contains package and membership metadata
+        try {
+          let viewQuery: any = supabase.from('users_with_membership_info').select('*').gt('membership_expiry', nowIso);
+          if (gym && gym.id !== 'default') viewQuery = viewQuery.eq('gym_id', gym.id);
+          if (safe) viewQuery = viewQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
+          if (pkFilter && pkFilter !== 'all') viewQuery = viewQuery.eq('package_name', pkFilter);
+
+          if (sortOrder === 'asc') viewQuery = viewQuery.order('full_name', { ascending: true });
+          else if (sortOrder === 'desc') viewQuery = viewQuery.order('full_name', { ascending: false });
+          else viewQuery = viewQuery.order('days_left', { ascending: true });
+
+          const { data: viewData, error: viewErr } = await viewQuery;
+          if (!viewErr && Array.isArray(viewData)) {
+            setMembers(viewData || []);
+            setIsLoading(false);
+            return;
+          }
+
+          console.warn('users_with_membership_info active query failed, falling back to users+combined:', viewErr?.message || viewErr);
+        } catch (e) {
+          console.warn('users_with_membership_info active query threw error, falling back:', e);
+        }
+
+        // Fallback: query active users and merge combined info (legacy behavior)
+        const nowIsoFallback = new Date().toISOString();
         let usersQuery: any = supabase
           .from('users')
           .select('id, full_name, email, phone, status, created_at, membership_expiry')
-          .gt('membership_expiry', nowIso);
+          .gt('membership_expiry', nowIsoFallback);
 
         if (gym && gym.id !== 'default') usersQuery = usersQuery.eq('gym_id', gym.id);
         if (safe) usersQuery = usersQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
@@ -180,7 +204,6 @@ export default function MembershipList() {
         if (!usersFetched) {
           console.warn('users query failed, falling back to combined view:', usersError?.message || usersError);
         } else {
-          // If we got users, fetch their combined membership info separately (no FK required)
           const userIds = fetchedUsers.map((u: any) => u.id);
           let combinedRows: any[] = [];
           if (userIds.length > 0) {
@@ -194,7 +217,6 @@ export default function MembershipList() {
             }
           }
 
-          // Merge users and their combinedRows (if any)
           const merged: any[] = [];
           (fetchedUsers || []).forEach((u: any) => {
             const combForUser = combinedRows.filter((c: any) => c.user_id === u.id);
