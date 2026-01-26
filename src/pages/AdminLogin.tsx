@@ -144,7 +144,8 @@ export default function AdminLogin() {
 
       // 3. Check if user has admin role or other authorized roles
       const userRole = (staffRecord.roles as any)?.name?.toLowerCase();
-      const authorizedRoles = ['admin', 'manager', 'owner']; // Add roles that can access admin dashboard
+      // Include 'receptionist' so front-desk staff can also access the admin dashboard when appropriate
+      const authorizedRoles = ['admin', 'manager', 'owner', 'receptionist']; // Add roles that can access admin dashboard
       
       if (!authorizedRoles.includes(userRole)) {
         toast({
