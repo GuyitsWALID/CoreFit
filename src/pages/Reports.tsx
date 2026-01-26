@@ -52,6 +52,14 @@ export default function ReportsPage(): JSX.Element {
     const calculated = Math.max(minWidth, (userGrowth?.length || 0) * perPoint);
     return calculated;
   }, [userGrowth]);
+
+  // Dynamic chart width for Top Packages (horizontal scroll to view many packages)
+  const packageChartWidth = useMemo(() => {
+    const perPackage = 120; // pixels per package column (reduced to fit more bars)
+    const minWidth = 700;
+    return Math.max(minWidth, (topPackages?.length || 0) * perPackage);
+  }, [topPackages]);
+
   const [staffBreakdown, setStaffBreakdown] = useState<StaffBreakdown>({ roles: [], counts: { total: 0, active: 0 } });
 
   // Revenue time-series chart (same as Dashboard)
@@ -81,6 +89,20 @@ export default function ReportsPage(): JSX.Element {
   // helpers
   const [packagesList, setPackagesList] = useState<string[]>([]);
   const [rolesMap, setRolesMap] = useState<Record<string, string>>({}); // role_id -> name
+
+  // Custom rotated tick renderer for XAxis (works around Recharts TypeScript typing limitations)
+  const renderRotatedTick = (props: any) => {
+    const { x, y, payload } = props || {};
+    const label = payload?.value ?? '';
+    const display = (label && label.length > 18) ? `${label.slice(0, 18)}...` : label;
+    return (
+      <g transform={`translate(${x}, ${y})`}>
+        <text x={0} y={0} dy={16} textAnchor="end" transform="rotate(-45)" style={{ fontSize: 12 }}>
+          {display}
+        </text>
+      </g>
+    );
+  };
 
   // derived active package filter (null = all)
   const activePackageFilter = revenuePackageFilter.includes('__all__') ? null : revenuePackageFilter;
@@ -941,26 +963,62 @@ export default function ReportsPage(): JSX.Element {
             <h3 className="font-semibold">Top Packages</h3>
             <button style={ctaStyle} className={ctaClass} onClick={() => exportCSV(topPackages, 'top-packages.csv')}>Export CSV</button>
           </div>
-          <div className="w-full h-64 sm:h-72 md:h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topPackages} margin={{ top: 10, right: 16, left: 16, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" type="category" tick={{ fontSize: 12 }} interval={0} />
-                <YAxis type="number" />
-                <Tooltip content={({ active, payload }: any) => {
-                  if (!active || !payload || !payload.length) return null;
-                  const d = payload[0].payload as PackageDistPoint;
-                  return (
-                    <div className="bg-white p-2 border rounded shadow">
-                      <div className="font-semibold">{d.name}</div>
-                      <div>Count: {d.value}</div>
-                      <div>Price: {d.price ? nfEtb.format(Number(d.price)) : 'N/A'}</div>
-                    </div>
-                  );
-                }} />
-                <Bar dataKey="value" fill="#FFBB28" barSize={20} />
-              </BarChart>
-            </ResponsiveContainer>
+
+          {/* Horizontal scroll wrapper - allows viewing many packages */}
+          <div className="w-full h-80 sm:h-80 md:h-96 overflow-x-auto scrollbar-thin">
+            <div style={{ minWidth: packageChartWidth }} className="h-full flex">
+              {/* Chart area */}
+              <div className="flex-1 h-full">
+                <ResponsiveContainer width={packageChartWidth} height="100%">
+                  <BarChart data={topPackages} margin={{ top: 10, right: 16, left: 16, bottom: 80 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="name"
+                      type="category"
+                      tick={renderRotatedTick}
+                      interval={0}
+                    />
+                    <YAxis type="number" />
+                    <Tooltip content={({ active, payload }: any) => {
+                      if (!active || !payload || !payload.length) return null;
+                      const d = payload[0].payload as PackageDistPoint;
+                      return (
+                        <div className="bg-white p-2 border rounded shadow">
+                          <div className="font-semibold">{d.name}</div>
+                          <div>Count: {d.value}</div>
+                          <div>Price: {d.price ? nfEtb.format(Number(d.price)) : 'N/A'}</div>
+                        </div>
+                      );
+                    }} />
+                    <Bar dataKey="value" barSize={18}>
+                      {topPackages.map((entry, idx) => (
+                        <Cell key={`cell-top-${idx}`} fill={COLORS[idx % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Right-side labels */}
+              <div className="w-72 p-3 border-l border-gray-100 overflow-auto">
+                {topPackages.length === 0 ? (
+                  <div className="text-sm text-gray-500">No packages</div>
+                ) : (
+                  <div className="space-y-2">
+                    {topPackages.map((p, idx) => (
+                      <div key={p.name} className="flex items-center justify-between gap-3 py-1">
+                        <div className="flex items-center gap-2">
+                          <span style={{ width: 12, height: 12, backgroundColor: COLORS[idx % COLORS.length], display: 'inline-block', borderRadius: 3 }} />
+                          <div className="text-sm truncate">{p.name}</div>
+                        </div>
+                        <div className="text-sm font-medium">{p.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
           </div>
         </section>
 
