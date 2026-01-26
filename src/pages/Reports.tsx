@@ -531,6 +531,9 @@ export default function ReportsPage(): JSX.Element {
   const ctaClass = 'text-white px-3 py-1 rounded';
   const ctaStyle: React.CSSProperties = { backgroundColor: CTA_BG, color: 'white' };
 
+  // Helper to generate safe IDs for gradient definitions (remove unsafe chars)
+  const sanitizeId = (s?: string) => (s || '').toString().replace(/[^a-z0-9\-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -809,6 +812,20 @@ export default function ReportsPage(): JSX.Element {
                     <div className="h-44">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
+                          {/* Gradient defs per slice to create a soft gradient look */}
+                          <defs>
+                            {(memberStatusByPackage[pkgName] ?? []).map((entry, idx) => {
+                              const gid = `msGrad-${sanitizeId(pkgName)}-${idx}`;
+                              const color = COLORS[idx % COLORS.length];
+                              return (
+                                <linearGradient id={gid} key={gid} x1="0" y1="0" x2="1" y2="1">
+                                  <stop offset="0%" stopColor={color} stopOpacity={0.98} />
+                                  <stop offset="100%" stopColor={color} stopOpacity={0.28} />
+                                </linearGradient>
+                              );
+                            })}
+                          </defs>
+
                           <Pie
                             data={memberStatusByPackage[pkgName] ?? []}
                             dataKey="value"
@@ -817,9 +834,14 @@ export default function ReportsPage(): JSX.Element {
                             cy="50%"
                             outerRadius={56}
                             paddingAngle={4}
+                            stroke="transparent"
                           >
-                            {(memberStatusByPackage[pkgName] ?? []).map((entry, idx) => <Cell key={`cell-ms-${pkgName}-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
+                            {(memberStatusByPackage[pkgName] ?? []).map((entry, idx) => {
+                              const gid = `msGrad-${sanitizeId(pkgName)}-${idx}`;
+                              return <Cell key={`cell-ms-${pkgName}-${idx}`} fill={`url(#${gid})`} />;
+                            })}
                           </Pie>
+
                           <Tooltip formatter={(value: any, name: any) => [value, name]} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -830,8 +852,22 @@ export default function ReportsPage(): JSX.Element {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={memberStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70}>
-                    {memberStatus.map((entry, idx) => <Cell key={`cell-status-${idx}`} fill={COLORS[idx % COLORS.length]} />)}
+                  {/* Gradient defs for overall member status */}
+                  <defs>
+                    {memberStatus.map((entry, idx) => {
+                      const gid = `msGrad-${idx}`;
+                      const color = COLORS[idx % COLORS.length];
+                      return (
+                        <linearGradient id={gid} key={gid} x1="0" y1="0" x2="1" y2="1">
+                          <stop offset="0%" stopColor={color} stopOpacity={0.98} />
+                          <stop offset="100%" stopColor={color} stopOpacity={0.28} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
+
+                  <Pie data={memberStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} stroke="transparent">
+                    {memberStatus.map((entry, idx) => <Cell key={`cell-status-${idx}`} fill={`url(#msGrad-${idx})`} />)}
                   </Pie>
                   <Legend />
                   <Tooltip />
