@@ -29,6 +29,25 @@ export default function ReportsPage(): JSX.Element {
   const { gym, loading: gymLoading } = useGym();
   // Controls
   const [timeRange, setTimeRange] = useState<'lifetime'|'90d' | '60d' | '30d' | '7d'>('lifetime');
+
+  // Custom From / To date range (YYYY-MM-DD local values). When set, this overrides `timeRange`.
+  const [customFrom, setCustomFrom] = useState<string | null>(null);
+  const [customTo, setCustomTo] = useState<string | null>(null);
+  const [customRangeError, setCustomRangeError] = useState<string | null>(null);
+
+  // effectiveRange: if customFrom/customTo are set and valid they take precedence, otherwise use rangeToDates(timeRange)
+  const effectiveRange = useMemo(() => {
+    if (customFrom && customTo) {
+      const [fy, fm, fd] = customFrom.split('-').map(Number);
+      const [ty, tm, td] = customTo.split('-').map(Number);
+      const fromDate = new Date(fy, (fm || 1) - 1, fd || 1, 0, 0, 0, 0);
+      const toDate = new Date(ty, (tm || 1) - 1, td || 1, 23, 59, 59, 999);
+      if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime()) || fromDate > toDate) return null;
+      return { from: fromDate.toISOString(), to: toDate.toISOString() };
+    }
+    return rangeToDates(timeRange);
+  }, [customFrom, customTo, timeRange]);
+
   // revenuePackageFilter is now an array of package names; ['__all__'] means all packages
   const [revenuePackageFilter, setRevenuePackageFilter] = useState<string[]>(['__all__']);
   // selection state used by the dropdown; start with all
@@ -123,10 +142,12 @@ export default function ReportsPage(): JSX.Element {
   useEffect(() => {
     if (gym && !gymLoading) {
       fetchPackagesAndRoles();
-      fetchAllAnalytics();
+      // Only fetch analytics when custom range is valid (both dates) or no custom range is set
+      const customValid = !(customFrom || customTo) || (customFrom && customTo && new Date(customFrom) <= new Date(customTo));
+      if (customValid) fetchAllAnalytics();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gym, gymLoading, timeRange, revenuePackageFilter]);
+  }, [gym, gymLoading, timeRange, revenuePackageFilter, customFrom, customTo]);
 
   function rangeToDates(range: string) {
     // lifetime returns null -> no date filters applied
@@ -186,12 +207,19 @@ export default function ReportsPage(): JSX.Element {
   const loadRevenueSeries = async () => {
     setRevenueSeriesLoading(true);
     try {
-      const now = new Date();
-      const start = new Date();
-      start.setDate(now.getDate() - (revenueRangeDays - 1));
-      start.setHours(0, 0, 0, 0);
-      const end = new Date();
-      end.setHours(23, 59, 59, 999);
+      let start: Date;
+      let end: Date;
+      if (effectiveRange) {
+        start = new Date(effectiveRange.from);
+        end = new Date(effectiveRange.to);
+      } else {
+        const now = new Date();
+        start = new Date();
+        start.setDate(now.getDate() - (revenueRangeDays - 1));
+        start.setHours(0, 0, 0, 0);
+        end = new Date();
+        end.setHours(23, 59, 59, 999);
+      }
 
       // Fetch per-user package and coaching values from user_combined_costs view and aggregate per day
       const { data: combinedRows } = await supabase
@@ -204,7 +232,8 @@ export default function ReportsPage(): JSX.Element {
       // Build day buckets
       const days: Array<{ date: string; packages: number; coaching: number; total: number }> = [];
       const copy = new Date(start);
-      for (let i = 0; i < revenueRangeDays; i++) {
+      const daysCount = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      for (let i = 0; i < daysCount; i++) {
         const iso = copy.toISOString().slice(0, 10);
         days.push({ date: iso, packages: 0, coaching: 0, total: 0 });
         copy.setDate(copy.getDate() + 1);
@@ -288,15 +317,19 @@ export default function ReportsPage(): JSX.Element {
 
   // ensure revenue series loads when gym or range changes
   useEffect(() => {
-    if (gym && !gymLoading) loadRevenueSeries();
-  }, [gym, gymLoading, revenueRangeDays]);
+    if (gym && !gymLoading) {
+      // skip if custom range invalid
+      if (customFrom && customTo && new Date(customFrom) > new Date(customTo)) return;
+      loadRevenueSeries();
+    }
+  }, [gym, gymLoading, revenueRangeDays, customFrom, customTo]);
 
   async function fetchAllAnalytics() {
     setLoading(true);
     setError(null);
     
     try {
-      const range = rangeToDates(timeRange);
+      const effective = effectiveRange;
 
       // package filter array (null = all)
       const packageFilter = revenuePackageFilter.includes('__all__') ? null : revenuePackageFilter;
@@ -305,7 +338,7 @@ export default function ReportsPage(): JSX.Element {
       // Use users_with_membership_info when filtering by package so growth matches selected packages
       if (!packageFilter) {
         const usersQuery = supabase.from('users').select('id, created_at').eq('gym_id', gym?.id).order('created_at', { ascending: true });
-        if (range) usersQuery.gte('created_at', range.from).lte('created_at', range.to);
+        if (effective) usersQuery.gte('created_at', effective.from).lte('created_at', effective.to);
         const { data: usersData, error: usersErr } = await usersQuery;
         if (usersErr) throw usersErr;
         const users = (usersData ?? []) as { created_at: string }[];
@@ -315,10 +348,10 @@ export default function ReportsPage(): JSX.Element {
           const key = d.toISOString().slice(0, 10);
           growthMap[key] = (growthMap[key] || 0) + 1;
         });
-        var userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
+        var userGrowthArr = buildContinuousSeries(effective, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
       } else {
         const usersPkgQuery = supabase.from('users_with_membership_info').select('user_id, package_name, created_at, status').eq('gym_id', gym?.id).in('package_name', packageFilter).order('created_at', { ascending: true });
-        if (range) usersPkgQuery.gte('created_at', range.from).lte('created_at', range.to);
+        if (effective) usersPkgQuery.gte('created_at', effective.from).lte('created_at', effective.to);
         const { data: usersData, error: usersErr } = await usersPkgQuery;
         if (usersErr) throw usersErr;
         const users = (usersData ?? []) as { created_at: string }[];
@@ -328,7 +361,7 @@ export default function ReportsPage(): JSX.Element {
           const key = d.toISOString().slice(0, 10);
           growthMap[key] = (growthMap[key] || 0) + 1;
         });
-        var userGrowthArr = buildContinuousSeries(range, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
+        var userGrowthArr = buildContinuousSeries(effective, growthMap).map(x => ({ label: x.label, count: Number(x.count) })) as UserGrowthPoint[];
       }
 
       // Fetch packages for gym and initialize counts (so packages with zero active users are shown)
@@ -342,8 +375,8 @@ export default function ReportsPage(): JSX.Element {
       const packageNameToPrice: Record<string, number> = {};
       (pkgsForCount ?? []).forEach((p: any) => { packageNameToPrice[p.name] = Number(p.price || 0); });
 
-      // Count active users (membership_expiry > now()) grouped by package_name
-      const nowIso = new Date().toISOString();
+      // Count active users (membership_expiry > asOf) grouped by package_name
+      const asOf = effective ? effective.to : new Date().toISOString();
       // build package id -> name map
       const pkgIdToName: Record<string, string> = {};
       (pkgsForCount ?? []).forEach((p: any) => { pkgIdToName[p.id] = p.name; });
@@ -352,7 +385,7 @@ export default function ReportsPage(): JSX.Element {
         .from('users')
         .select('id, package_id')
         .eq('gym_id', gym?.id)
-        .gt('membership_expiry', nowIso);
+        .gt('membership_expiry', asOf);
       if (activeErr) throw activeErr;
       (activeUsers ?? []).forEach((u: any) => {
         const name = (u.package_id && pkgIdToName[u.package_id]) ? pkgIdToName[u.package_id] : 'Unassigned';
@@ -369,10 +402,15 @@ export default function ReportsPage(): JSX.Element {
 
       // --- Revenue aggregation from user_combined_costs (NO created_at dependency) ---
       // We'll fetch package_price and one_to_one_coaching_cost (no date filter) and aggregate totals.
-    const { data: revenueRows, error: revenueError } = await supabase
+    // Aggregate revenue from user_combined_costs — apply effective range if provided
+    let revenueQuery = supabase
       .from("user_combined_costs")
       .select("package_price, one_to_one_coaching_cost, total_monthly_cost")
       .eq('gym_id', gym?.id);
+    if (effective) {
+      revenueQuery = revenueQuery.gte('created_at', effective.from).lte('created_at', effective.to);
+    }
+    const { data: revenueRows, error: revenueError } = await revenueQuery;
 
     if (revenueError) {
       console.error("Revenue fetch error:", revenueError);
@@ -403,7 +441,6 @@ export default function ReportsPage(): JSX.Element {
 
       // --- Member status ---
       // Use the users table membership_expiry (as-of now) to compute active/expired counts so they match MembershipList
-      const nowIsoStatus = new Date().toISOString();
 
       // Fetch paused users separately and exclude them from active/expired sets
       const { data: pausedUsersRows, error: pausedErr } = await supabase
@@ -419,7 +456,7 @@ export default function ReportsPage(): JSX.Element {
         .select('id, package_id, status, membership_expiry')
         .eq('gym_id', gym?.id)
         .neq('status', 'paused')
-        .gt('membership_expiry', nowIsoStatus);
+        .gt('membership_expiry', asOf);
       if (activeUsersErr) throw activeUsersErr;
 
       // Expired (exclude paused)
@@ -428,7 +465,7 @@ export default function ReportsPage(): JSX.Element {
         .select('id, package_id, status, membership_expiry')
         .eq('gym_id', gym?.id)
         .neq('status', 'paused')
-        .lt('membership_expiry', nowIsoStatus);
+        .lt('membership_expiry', asOf);
       if (expiredUsersErr) throw expiredUsersErr;
 
       // Unknown expiry (exclude paused)
@@ -544,13 +581,17 @@ export default function ReportsPage(): JSX.Element {
     setDrillUsers([]);
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let usersQ = supabase
         .from('users_with_membership_info')
         .select('user_id, full_name, email, phone, created_at, membership_expiry, days_left, package_name')
         .eq('gym_id', gym?.id)
-        .eq('package_name', pkgName)
-        .order('created_at', { ascending: true })
-        .limit(1000);
+        .eq('package_name', pkgName);
+      if (effectiveRange) {
+        // package-distribution is treated as a point-in-time snapshot — show users active as-of `to`
+        usersQ = usersQ.gt('membership_expiry', effectiveRange.to);
+      }
+      usersQ = usersQ.order('created_at', { ascending: true }).limit(1000);
+      const { data, error } = await usersQ;
       if (error) throw error;
       setDrillUsers((data ?? []) as UserWithPkg[]);
     } catch (err: any) {
@@ -580,11 +621,13 @@ export default function ReportsPage(): JSX.Element {
     setDrillUsers([]);
     setLoading(true);
     try {
-      const { data: rows, error } = await supabase
+      let drillQ = supabase
         .from('user_combined_costs')
         .select('id, user_id, package_price, one_to_one_coaching_cost, package_name, created_at')
-        .eq('gym_id', gym?.id)
-        .limit(5000);
+        .eq('gym_id', gym?.id);
+      if (effectiveRange) drillQ = drillQ.gte('created_at', effectiveRange.from).lte('created_at', effectiveRange.to);
+      drillQ = drillQ.limit(5000);
+      const { data: rows, error } = await drillQ;
       if (error) throw error;
       const raw = (rows ?? []) as CombinedRow[];
       const filtered = raw.filter(r => (revenuePackageFilter.includes('__all__')) ? true : revenuePackageFilter.includes(r.package_name ?? ''));
@@ -670,54 +713,81 @@ export default function ReportsPage(): JSX.Element {
 
         <div className="relative">
           <label className="block text-sm text-muted-foreground mb-1">Revenue Package</label>
-          <div>
-            <button onClick={() => setPackagesOpen(!packagesOpen)} className="border rounded px-3 py-1 inline-flex items-center gap-2">
-              <span className="truncate">
-                {selectedPackages.includes('__all__') || selectedPackages.length === 0 ? 'All packages' : selectedPackages.join(', ')}
-              </span>
-              <span className="text-xs text-slate-500">({selectedPackages.includes('__all__') ? 'All' : selectedPackages.length})</span>
-            </button>
+          <div className="flex items-center gap-3">
+            <div>
+              <button onClick={() => setPackagesOpen(!packagesOpen)} className="border rounded px-3 py-1 inline-flex items-center gap-2">
+                <span className="truncate">
+                  {selectedPackages.includes('__all__') || selectedPackages.length === 0 ? 'All packages' : selectedPackages.join(', ')}
+                </span>
+                <span className="text-xs text-slate-500">({selectedPackages.includes('__all__') ? 'All' : selectedPackages.length})</span>
+              </button>
+            </div>
 
-            {packagesOpen && (
-              <div className="absolute z-20 mt-2 bg-white border rounded shadow p-3 w-64 max-h-64 overflow-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={selectedPackages.includes('__all__')} onChange={(e) => {
-                      if (e.target.checked) setSelectedPackages(['__all__']); else setSelectedPackages([]);
-                    }} />
-                    <span className="text-sm">All Packages</span>
-                  </label>
-                  <div className="text-sm">
-                    <button className="text-sky-600" onClick={() => setSelectedPackages(packagesList.slice())}>Select all</button>
-                    <button className="ml-2 text-slate-600" onClick={() => setSelectedPackages([])}>Clear</button>
-                  </div>
-                </div>
+            <div className="inline-flex items-center gap-2 bg-white rounded-md border p-1">
+              <input
+                type="date"
+                value={customFrom || ''}
+                onChange={(e) => setCustomFrom(e.target.value || null)}
+                className="px-2 py-1 text-sm border rounded"
+              />
+              <input
+                type="date"
+                value={customTo || ''}
+                onChange={(e) => setCustomTo(e.target.value || null)}
+                className="px-2 py-1 text-sm border rounded"
+              />
+              <button
+                className="px-2 py-1 text-sm border rounded"
+                onClick={() => { setCustomFrom(null); setCustomTo(null); setCustomRangeError(null); }}
+              >Clear</button>
+            </div>
+          </div>
 
-                <div className="space-y-1">
-                  {packagesList.map(p => (
-                    <label key={p} className="flex items-center gap-2">
-                      <input type="checkbox" checked={selectedPackages.includes(p)} onChange={() => {
-                        setSelectedPackages(prev => {
-                          // remove '__all__' if present when selecting specific packages
-                          const withoutAll = prev.filter(x => x !== '__all__');
-                          if (withoutAll.includes(p)) return withoutAll.filter(x => x !== p);
-                          return [...withoutAll, p];
-                        });
-                      }} />
-                      <span className="truncate text-sm">{p}</span>
-                    </label>
-                  ))}
-                </div>
+          {customFrom && customTo && new Date(customFrom) > new Date(customTo) && (
+            <div className="text-xs text-red-600 mt-1">Invalid range — 'From' must be before 'To'.</div>
+          )}
+          {customFrom && customTo && new Date(customFrom) <= new Date(customTo) && (
+            <div className="text-xs text-slate-600 mt-1">Applied: {new Date(customFrom).toLocaleDateString()} — {new Date(customTo).toLocaleDateString()}</div>
+          )}
 
-                <div className="mt-3 flex gap-2">
-                  <button className="px-3 py-1 bg-sky-600 text-white rounded text-sm" onClick={() => { setRevenuePackageFilter(selectedPackages.length ? selectedPackages : ['__all__']); setPackagesOpen(false); fetchAllAnalytics(); }}>Compare</button>
-                  <button className="px-3 py-1 border rounded text-sm" onClick={() => { setSelectedPackages([]); setRevenuePackageFilter(['__all__']); setPackagesOpen(false); fetchAllAnalytics(); }}>Reset</button>
+          {packagesOpen && (
+            <div className="absolute z-20 mt-2 bg-white border rounded shadow p-3 w-64 max-h-64 overflow-auto">
+              <div className="flex items-center justify-between mb-2">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={selectedPackages.includes('__all__')} onChange={(e) => {
+                    if (e.target.checked) setSelectedPackages(['__all__']); else setSelectedPackages([]);
+                  }} />
+                  <span className="text-sm">All Packages</span>
+                </label>
+                <div className="text-sm">
+                  <button className="text-sky-600" onClick={() => setSelectedPackages(packagesList.slice())}>Select all</button>
+                  <button className="ml-2 text-slate-600" onClick={() => setSelectedPackages([])}>Clear</button>
                 </div>
               </div>
-            )}
-          </div>
-        </div> 
 
+              <div className="space-y-1">
+                {packagesList.map(p => (
+                  <label key={p} className="flex items-center gap-2">
+                    <input type="checkbox" checked={selectedPackages.includes(p)} onChange={() => {
+                      setSelectedPackages(prev => {
+                        // remove '__all__' if present when selecting specific packages
+                        const withoutAll = prev.filter(x => x !== '__all__');
+                        if (withoutAll.includes(p)) return withoutAll.filter(x => x !== p);
+                        return [...withoutAll, p];
+                      });
+                    }} />
+                    <span className="truncate text-sm">{p}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button className="px-3 py-1 bg-sky-600 text-white rounded text-sm" onClick={() => { setRevenuePackageFilter(selectedPackages.length ? selectedPackages : ['__all__']); setPackagesOpen(false); fetchAllAnalytics(); }}>Compare</button>
+                <button className="px-3 py-1 border rounded text-sm" onClick={() => { setSelectedPackages([]); setRevenuePackageFilter(['__all__']); setPackagesOpen(false); fetchAllAnalytics(); }}>Reset</button>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="ml-auto">
           <button style={ctaStyle} className={ctaClass} onClick={() => { setSelectedPackages([]); setRevenuePackageFilter(['__all__']); fetchAllAnalytics(); }}>Reset</button>
         </div>
@@ -1198,8 +1268,9 @@ export default function ReportsPage(): JSX.Element {
         </div>
       )}
         </div>
-      </main>
+        </main>
+      </div>
     </div>
-  </div>
   );
+  
 }
