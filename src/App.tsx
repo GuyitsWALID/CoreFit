@@ -75,7 +75,7 @@ function App() {
           } />
           
           {/* Default route redirects to onboarding */}
-          <Route path="/" element={<Navigate to="/admin/onboard" replace />} />
+          <Route path="/" element={<Navigate to="/login" replace />} />
           
           {/* Catch all */}
           <Route path="*" element={<NotFound />} />
