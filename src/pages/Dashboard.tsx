@@ -30,6 +30,48 @@ export default function Dashboard() {
   const [revenueTodayCoaching, setRevenueTodayCoaching] = useState<number>(0);
   const [revenueTodayTotal, setRevenueTodayTotal] = useState<number>(0);
 
+  // Staff role (used to hide sensitive dashboard elements from receptionists)
+  const [staffRole, setStaffRole] = useState<'admin' | 'receptionist' | null>(null);
+
+  useEffect(() => {
+    const fetchStaffRole = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return setStaffRole('admin');
+
+        // Try to find a staff record by user id
+        let { data: staffData, error } = await supabase
+          .from('staff')
+          .select(`id, email, roles!inner ( name )`)
+          .eq('id', user.id)
+          .single();
+
+        // If not found by id, try by email
+        if (error || !staffData) {
+          const { data: emailData, error: emailError } = await supabase
+            .from('staff')
+            .select(`id, email, roles!inner ( name )`)
+            .eq('email', user.email)
+            .single();
+          if (!emailError && emailData) staffData = emailData;
+        }
+
+        if (staffData?.roles) {
+          const _raw = Array.isArray(staffData.roles) ? (staffData.roles as any)[0]?.name : (staffData.roles as any)?.name;
+          const roleName = (_raw ?? '').toString().trim().toLowerCase();
+          if (roleName === 'receptionist') setStaffRole('receptionist');
+          else setStaffRole('admin');
+        } else {
+          setStaffRole('admin');
+        }
+      } catch {
+        setStaffRole('admin');
+      }
+    };
+
+    fetchStaffRole();
+  }, []);
+
   // Revenues (overall) from user_combined_costs
   const [totalPackageRevenue, setTotalPackageRevenue] = useState<number>(0);
   const [totalCoachingRevenue, setTotalCoachingRevenue] = useState<number>(0);
@@ -734,19 +776,21 @@ export default function Dashboard() {
 
             {/* Stat cards - with dynamic colors */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
-                <div 
-                  className="rounded-lg p-0.5"
-                  style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
-                >
-                  <StatCard
-                    title="Total Members"
-                    value={String(totalMembers)}
-                    icon={Users}
-                    trend={{ value: '', positive: true }}
-                  />
+              {staffRole !== 'receptionist' && (
+                <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
+                  <div 
+                    className="rounded-lg p-0.5"
+                    style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
+                  >
+                    <StatCard
+                      title="Total Members"
+                      value={String(totalMembers)}
+                      icon={Users}
+                      trend={{ value: '', positive: true }}
+                    />
+                  </div>
                 </div>
-              </div>
+              )} 
               <div onClick={() => navigate(getGymPath('/check-ins'))} className="cursor-pointer transition hover:-translate-y-0.5">
                 <div 
                   className="rounded-lg p-0.5"
@@ -792,8 +836,10 @@ export default function Dashboard() {
 
             </div>
 
-            {/* Revenue summary with dynamic colors */}
-            <Card className="mb-6">
+            {staffRole !== 'receptionist' && (
+              <>
+                {/* Revenue summary with dynamic colors */}
+                <Card className="mb-6">
               <CardHeader>
                 <CardTitle style={{ color: dynamicStyles.primaryColor }}>Revenue Summary</CardTitle>
                 <CardDescription>
@@ -969,6 +1015,9 @@ export default function Dashboard() {
                 </div>
               </CardContent>
             </Card>
+
+              </>
+            )}
 
             {/* Expiring soon and Expired members side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -1287,8 +1336,8 @@ export default function Dashboard() {
 }
             
 
-      {/* Remove Notify Modal since we're showing coming soon toast */}
-      {/* {notifyOpen && notifyTarget && (
+/* Remove Notify Modal since we're showing coming soon toast */
+      /* {notifyOpen && notifyTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
           onClick={closeNotify}
@@ -1340,5 +1389,5 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      )} */}
+      )} */
 
