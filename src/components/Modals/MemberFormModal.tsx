@@ -422,7 +422,7 @@ export default function MemberFormModal({
                     <FormLabel>Phone Number</FormLabel>
                     <FormControl>
                       <PhoneInput
-                        country={'us'}
+                        country={'et'}
                         value={field.value}
                         onChange={field.onChange}
                         inputProps={{
