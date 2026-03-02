@@ -292,14 +292,8 @@ export default function MemberFormModal({
           description: `${values.first_name} ${values.last_name} has been added to ${gym.name} successfully.`,
         });
 
-        // Send welcome SMS
-        await sendWelcomeSmsAndNotify({
-          id: authData.user.id,
-          first_name: values.first_name,
-          last_name: values.last_name,
-          email: values.email,
-          phone: values.phone,
-        }, values.password);
+        // Welcome SMS is a coming-soon feature — skip sending to avoid error toasts
+        // await sendWelcomeSmsAndNotify({ ... }, values.password);
       }
 
       await onSave();
