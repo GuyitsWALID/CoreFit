@@ -422,10 +422,38 @@ export default function UserDetailModal({ userId, isOpen, onClose }: UserDetailM
     try {
       console.log('downloadPDF start', { userId, qrId, user });
       toast({ title: 'Preparing PDF', description: 'Generating PDF...', });
+
+      // Step 1: Build the card canvas (same as JPG)
       const canvas = await buildCardCanvas();
       if (!canvas) { toast({ title: 'Download failed', description: 'Could not build QR card.', variant: 'destructive' }); return; }
-      const pdf = new jsPDF({ unit: 'px', format: [canvas.width, canvas.height] });
-      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+
+      // Step 2: Convert the canvas to a JPG data URL
+      const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+
+      // Step 3: Load the JPG into an Image so we can get accurate dimensions
+      const img = new Image();
+      img.src = jpgDataUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = (e) => reject(e);
+      });
+
+      // Step 4: Create a PDF sized to the image (landscape card)
+      const imgWidthPx = img.width;
+      const imgHeightPx = img.height;
+      // Convert px to mm at 96 DPI for a nicely sized PDF
+      const pxToMm = 25.4 / 96;
+      const pdfWidth = imgWidthPx * pxToMm;
+      const pdfHeight = imgHeightPx * pxToMm;
+
+      const pdf = new jsPDF({
+        orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait',
+        unit: 'mm',
+        format: [pdfWidth, pdfHeight],
+      });
+
+      pdf.addImage(jpgDataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+
       const sanitizedGym = (gym?.name ?? 'gym').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
       const regName = `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim() || 'user';
       const filename = `${regName}-${sanitizedGym}-ID.pdf`;
