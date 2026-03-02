@@ -3,6 +3,7 @@ import { Users, Clock, AlertTriangle, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 import { useGym } from "@/contexts/GymContext";
+import { recordPayment } from '@/lib/gymApi';
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
 
@@ -670,6 +671,22 @@ export default function MembershipList() {
         variant: "destructive",
       });
     } else {
+      // Record the renewal payment
+      const pkg = availablePackages.find(p => p.id === member.package_id);
+      if (pkg && pkg.price > 0 && gym) {
+        try {
+          await recordPayment({
+            user_id: member.user_id,
+            gym_id: gym.id,
+            package_id: member.package_id,
+            amount: pkg.price,
+            payment_method: 'admin',
+            remarks: `Renewal: ${pkg.name}`,
+          });
+        } catch (payErr) {
+          console.warn('Payment recording failed (non-blocking):', payErr);
+        }
+      }
       toast({
         title: "Membership renewed",
         description: `${member.full_name}'s membership has been renewed successfully.`,
@@ -759,6 +776,23 @@ const handleUpgradeSubmit = async () => {
     // rpc that RETURNS TABLE will usually return an array of rows
     const result = Array.isArray(data) && data.length > 0 ? data[0] : data;
 
+    // Record the upgrade payment
+    const upgradePkg = availablePackages.find(p => p.id === selectedPackage);
+    if (upgradePkg && upgradePkg.price > 0 && gym) {
+      try {
+        await recordPayment({
+          user_id: upgradeMember.user_id,
+          gym_id: gym.id,
+          package_id: selectedPackage,
+          amount: upgradePkg.price,
+          payment_method: 'admin',
+          remarks: `Upgrade: ${upgradePkg.name}`,
+        });
+      } catch (payErr) {
+        console.warn('Payment recording failed (non-blocking):', payErr);
+      }
+    }
+
     // Show success toast — include returned values if available
     toast({
       title: "Package upgraded",
@@ -772,7 +806,8 @@ const handleUpgradeSubmit = async () => {
     setUpgradeMember(null);
 
     // refresh list to reflect updated expiry/status/days_left
-    await fetchMembershipData();    await fetchCounts();  } catch (err: any) {
+    await fetchMembershipData();
+    await fetchCounts();  } catch (err: any) {
     toast({
       title: "Upgrade failed",
       description: `Unexpected error: ${err?.message ?? "Unknown error"}`,

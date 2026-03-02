@@ -26,31 +26,62 @@ const sanitizeName = (fullName: string | null) => {
  * --------------------------*/
 export const extractInsertBlocks = (fileContent: string, tableName: string) => {
   const results: { columns: string[] | null; rows: string[] }[] = [];
-  const generalRe = /INSERT INTO\s+[`"']?([A-Za-z_][A-Za-z0-9_]*)[`"']?\s*(\([^)]*\))?\s*VALUES\s*([\s\S]*?);/gis;
-  const matches = [...fileContent.matchAll(generalRe)].filter(m => m[1].toLowerCase() === tableName.toLowerCase());
 
-  matches.forEach(match => {
-    const colList = match[2] ? match[2].replace(/^\(|\)$/g, '').split(',').map((c: string) => c.trim().replace(/['"`]/g, '').toLowerCase()) : null;
-    const valuesBlock = match[3] || '';
+  // Phase 1: find all INSERT INTO <tableName> ... VALUES positions using a prefix regex.
+  // We intentionally do NOT capture the VALUES block with the regex because
+  // `[\s\S]*?;` breaks when a quoted string value contains a semicolon.
+  const prefixRe = /INSERT\s+INTO\s+[`"']?([A-Za-z_][A-Za-z0-9_]*)[`"']?\s*(\([^)]*\))?\s*VALUES\s*/gis;
+  let prefixMatch: RegExpExecArray | null;
+
+  while ((prefixMatch = prefixRe.exec(fileContent)) !== null) {
+    if (prefixMatch[1].toLowerCase() !== tableName.toLowerCase()) continue;
+
+    const colList = prefixMatch[2]
+      ? prefixMatch[2].replace(/^\(|\)$/g, '').split(',').map((c: string) => c.trim().replace(/['"`]/g, '').toLowerCase())
+      : null;
+
+    // Phase 2: manually scan from the end of the prefix match to find the
+    // statement-ending semicolon, properly skipping semicolons inside strings.
+    const startIdx = prefixMatch.index + prefixMatch[0].length;
+    let inSingle = false;
+    let endIdx = startIdx;
+
+    for (let i = startIdx; i < fileContent.length; i++) {
+      const ch = fileContent[i];
+      if (ch === "'" && fileContent[i - 1] !== '\\') inSingle = !inSingle;
+      if (ch === ';' && !inSingle) {
+        endIdx = i;
+        break;
+      }
+      if (i === fileContent.length - 1) {
+        endIdx = i + 1; // no trailing semicolon, take rest
+      }
+    }
+
+    const valuesBlock = fileContent.slice(startIdx, endIdx);
+
+    // Phase 3: split the values block into individual row tuples
     const rows: string[] = [];
-    let depth = 0, buf = '', inSingle = false;
+    let depth = 0, buf = '', inQ = false;
 
     for (let i = 0; i < valuesBlock.length; i++) {
       const ch = valuesBlock[i];
-      if (ch === "'" && valuesBlock[i - 1] !== "\\") inSingle = !inSingle;
-      if (!inSingle) {
+      if (ch === "'" && valuesBlock[i - 1] !== '\\') inQ = !inQ;
+      if (!inQ) {
         if (ch === '(') depth++;
         if (ch === ')') depth--;
       }
       buf += ch;
-      if (depth === 0 && (ch === ',' || i === valuesBlock.length - 1) && !inSingle) {
+      if (depth === 0 && (ch === ',' || i === valuesBlock.length - 1) && !inQ) {
         const cleaned = buf.trim().replace(/^,|,$/g, '').trim();
         if (cleaned.startsWith('(')) rows.push(cleaned);
         buf = '';
       }
     }
+
     results.push({ columns: colList, rows });
-  });
+  }
+
   return results;
 };
 
@@ -233,6 +264,70 @@ export const buildMigrationPlan = (fileContent: string, targetGymId: string) => 
     });
   });
 
+  // --- Collect raw payment rows for insertion into the new payments table ---
+  const paymentsToInsert: any[] = [];
+  const _uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  paymentsBlocks.forEach(block => {
+    const cols = block.columns;
+    block.rows.forEach(r => {
+      const vals = splitRowValues(r);
+      const obj = rowToObject(cols, vals);
+      const get = (candidates: string[]) => {
+        const idx = findColumn(cols, candidates);
+        return idx >= 0 ? (obj ? obj[cols[idx]] : vals[idx]) : null;
+      };
+
+      const rawId          = get(['id']);
+      const rawUserId      = get(['user_id','user','customer_id','member_id','userid','client_id']);
+      const rawUserName    = get(['user_name','username','name','full_name','payer_name','client_name','customer_name']);
+      const rawPlanTitle   = get(['plan_title','plan_name','package_name','planTitle','product_name','title']);
+      const rawAmount      = get(['amount','price','total','cost','fee']);
+      const rawCurrency    = get(['currency']);
+      const rawStatus      = get(['status','payment_status','paymentstatus','state']);
+      const rawMethod      = get(['payment_method','method','paymentmethod','pay_method']);
+      const rawPaymentDate = get(['payment_date','paid_at','paymentdate','date','created_at','createdat']);
+      const rawExpiry      = get(['expiry_date','expiry','end_date','expires_at','valid_until','expirydate']);
+      const rawIsFrozen    = get(['is_frozen','isFrozen','frozen']);
+      const rawIsTemporary = get(['is_temporary','isTemporary','temporary']);
+      const rawGender      = get(['gender','sex']);
+      const rawProductId   = get(['product_id','productId','package_id','pkg_id','plan_id']);
+      const rawTxRef       = get(['tx_ref','txRef','transaction_ref','transaction_id','txid','reference']);
+      const rawQr          = get(['qr_code_data','qrcodedata','qrcode','qrdata','qr_payload']);
+      const rawUpdatedAt   = get(['updated_at','updatedAt','updated']);
+
+      // Build remarks JSON with extra legacy fields that don't map to the new schema
+      const remarksMeta: Record<string, any> = {};
+      if (rawPlanTitle)   remarksMeta.plan_title = String(rawPlanTitle).slice(0, 255);
+      if (rawUserName)    remarksMeta.user_name  = String(rawUserName).slice(0, 255);
+      if (rawCurrency && String(rawCurrency) !== 'ETB') remarksMeta.currency = String(rawCurrency);
+      if (rawGender)      remarksMeta.gender = String(rawGender).trim().toLowerCase();
+      const parsedExpDate = parsePossibleDate(rawExpiry);
+      if (parsedExpDate)  remarksMeta.expiry_date = parsedExpDate;
+      if (rawIsFrozen === 1 || rawIsFrozen === '1') remarksMeta.is_frozen = true;
+      if (rawIsTemporary === 1 || rawIsTemporary === '1') remarksMeta.is_temporary = true;
+      const remarksStr = Object.keys(remarksMeta).length > 0 ? JSON.stringify(remarksMeta) : (rawPlanTitle ? String(rawPlanTitle).slice(0, 255) : null);
+
+      const row: any = {
+        gym_id: targetGymId,
+        user_id: rawUserId && _uuidRe.test(String(rawUserId)) ? String(rawUserId) : null,
+        package_id: rawProductId && _uuidRe.test(String(rawProductId)) ? String(rawProductId) : null,
+        amount: rawAmount !== null && rawAmount !== undefined ? Number(rawAmount) || 0 : 0,
+        payment_status: rawStatus ? String(rawStatus).toLowerCase() : 'completed',
+        payment_method: rawMethod ? String(rawMethod) : 'admin',
+        transaction_id: rawTxRef ? String(rawTxRef) : null,
+        remarks: remarksStr,
+        created_at: parsePossibleDate(rawPaymentDate) || new Date().toISOString().split('T')[0],
+        updated_at: parsePossibleDate(rawUpdatedAt) || parsePossibleDate(rawPaymentDate) || new Date().toISOString().split('T')[0],
+        migrated_from_legacy: true,
+      };
+
+      // Preserve legacy UUID id when present (enables idempotent upsert on re-runs)
+      if (rawId && _uuidRe.test(String(rawId))) row.id = String(rawId);
+
+      paymentsToInsert.push(row);
+    });
+  });
+
   // Process users
   const usersBlocks = extractInsertBlocks(fileContent, 'Users').concat(extractInsertBlocks(fileContent, 'users'));
   const usersToInsert: any[] = [];
@@ -386,6 +481,7 @@ export const buildMigrationPlan = (fileContent: string, targetGymId: string) => 
   return {
     usersToInsert: dedupedUsers,
     staffToInsert,
+    paymentsToInsert,
     skippedPayments,
     skippedRows,
     warnings,
@@ -431,6 +527,25 @@ const genUpsertSql = (table: string, rows: any[], conflictCols: string[]) => {
   const updates = cols.filter(c => !conflictCols.includes(c)).map(c => `${c} = EXCLUDED.${c}`).join(', ');
   const conflict = `ON CONFLICT (${conflictCols.join(', ')}) DO UPDATE SET ${updates};`;
   return `${insertHeader}\n${conflict}`;
+};
+
+/**
+ * genPlainInsertSql: plain INSERT without ON CONFLICT (for temp tables)
+ */
+const genPlainInsertSql = (table: string, rows: any[]) => {
+  if (!rows || rows.length === 0) return '';
+  const validRows = rows.filter(r => Object.keys(r).length > 0);
+  if (validRows.length === 0) return '';
+  const cols = Array.from(new Set(validRows.flatMap(r => Object.keys(r))));
+  const valueToSql = (val: any) => {
+    if (val === null || val === undefined) return 'NULL';
+    if (typeof val === 'object' && val.__raw) return val.__raw;
+    if (typeof val === 'boolean') return val ? 'true' : 'false';
+    if (typeof val === 'number') return String(val);
+    return `'${String(val).replace(/'/g, "''")}'`;
+  };
+  const lines = validRows.map(r => `(${cols.map(c => valueToSql(r[c])).join(', ')})`);
+  return `INSERT INTO ${table} (${cols.join(', ')}) VALUES\n${lines.join(',\n')};`;
 };
 
 /** -------------------------
@@ -578,13 +693,59 @@ export const generateMigrationSql = (fileContent: string, targetGymId: string) =
   const usersSql = genUpsertSql('users', usersPrepared, ['email']);
   const staffSql = genUpsertSql('staff', plan.staffToInsert, ['email']);
 
-  // Combine in order: packages first, then users & staff
+  // --- Generate payments SQL: use temp table + filtered insert to handle orphaned user_id FK references ---
+  const paymentsRowsForSql = (plan.paymentsToInsert || []).map((p: any) => {
+    const row = { ...p };
+    if (!row.id) row.id = { __raw: 'gen_random_uuid()' };
+    return row;
+  });
+  let paymentsSql = '-- (no payments to migrate)';
+  if (paymentsRowsForSql.length > 0) {
+    // Build the raw INSERT for a staging temp table (same columns, no FK constraints)
+    const tmpInsertSql = genPlainInsertSql('_tmp_payments_staging', paymentsRowsForSql);
+    if (tmpInsertSql) {
+      const cols = Array.from(new Set(paymentsRowsForSql.flatMap((r: any) => Object.keys(r))));
+      const colList = cols.join(', ');
+      paymentsSql = [
+        `-- Remove previously migrated payments for this gym to allow clean re-run`,
+        `DELETE FROM payments WHERE gym_id = '${targetGymId}' AND migrated_from_legacy = TRUE;`,
+        ``,
+        `-- Stage payments in a temp table to filter out orphaned user_id references`,
+        `CREATE TEMP TABLE _tmp_payments_staging (LIKE payments INCLUDING DEFAULTS);`,
+        `ALTER TABLE _tmp_payments_staging DROP CONSTRAINT IF EXISTS _tmp_payments_staging_pkey;`,
+        `ALTER TABLE _tmp_payments_staging DROP CONSTRAINT IF EXISTS _tmp_payments_staging_user_id_fkey;`,
+        `ALTER TABLE _tmp_payments_staging DROP CONSTRAINT IF EXISTS _tmp_payments_staging_package_id_fkey;`,
+        `ALTER TABLE _tmp_payments_staging DROP CONSTRAINT IF EXISTS _tmp_payments_staging_gym_id_fkey;`,
+        `ALTER TABLE _tmp_payments_staging ALTER COLUMN user_id DROP NOT NULL;`,
+        `ALTER TABLE _tmp_payments_staging ALTER COLUMN gym_id DROP NOT NULL;`,
+        `ALTER TABLE _tmp_payments_staging ALTER COLUMN amount DROP NOT NULL;`,
+        `ALTER TABLE _tmp_payments_staging ALTER COLUMN payment_method DROP NOT NULL;`,
+        `ALTER TABLE _tmp_payments_staging ALTER COLUMN payment_status DROP NOT NULL;`,
+        `ALTER TABLE _tmp_payments_staging ALTER COLUMN migrated_from_legacy DROP NOT NULL;`,
+        ``,
+        tmpInsertSql,
+        ``,
+        `-- Null out user_id for rows referencing users not in the users table`,
+        `UPDATE _tmp_payments_staging SET user_id = NULL WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT id FROM users);`,
+        ``,
+        `-- Insert only rows with valid user_id into real payments table (skip orphaned)`,
+        `INSERT INTO payments (${colList})`,
+        `SELECT ${colList} FROM _tmp_payments_staging WHERE user_id IS NOT NULL`,
+        `ON CONFLICT (id) DO UPDATE SET ${cols.filter(c => c !== 'id').map(c => `${c} = EXCLUDED.${c}`).join(', ')};`,
+        ``,
+        `DROP TABLE _tmp_payments_staging;`
+      ].join('\n');
+    }
+  }
+
+  // Combine in order: packages, users, staff, then payments
   const migrationSqlParts = [
     `-- Migration generated by migrate-generate`,
     `BEGIN;`,
     packagesSql || '-- (no packages to create)',
     usersSql || '-- (no users to create)',
     staffSql || '-- (no staff to create)',
+    paymentsSql,
     `COMMIT;`
   ].filter(Boolean);
 
@@ -596,6 +757,7 @@ export const generateMigrationSql = (fileContent: string, targetGymId: string) =
       usersInserted: plan.usersToInsert.length,
       staffInserted: plan.staffToInsert.length,
       packagesCreated: packagesRows.length,
+      paymentsInserted: (plan.paymentsToInsert || []).length,
       skippedPayments: plan.skippedPayments,
       skippedRows: plan.skippedRows,
       warnings: plan.warnings,
@@ -611,6 +773,7 @@ export const generatePreview = (fileContent: string, targetGymId: string) => {
   return {
     usersInserted: plan.usersToInsert.length,
     staffInserted: plan.staffToInsert.length,
+    paymentsInserted: plan.paymentsToInsert.length,
     skippedPayments: plan.skippedPayments,
     skippedRows: plan.skippedRows,
     warnings: plan.warnings,

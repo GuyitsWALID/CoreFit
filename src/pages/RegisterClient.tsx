@@ -1,6 +1,7 @@
 // RegisterClient.tsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from "@/hooks/use-toast";
+import { recordPayment } from '@/lib/gymApi';
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -64,9 +65,9 @@ const formSchema = z.object({
 export default function RegisterClient() {
   const { toast } = useToast();
   const { gym, loading: gymLoading } = useGym();
-  const [packages, setPackages] = useState<Array<{id: string, name: string, requires_trainer: boolean}>>([]);
+  const [packages, setPackages] = useState<Array<{id: string, name: string, price: number, requires_trainer: boolean}>>([]);
   const [trainers, setTrainers] = useState<Array<{id: string, full_name: string}>>([]);
-  const [selectedPackage, setSelectedPackage] = useState<{id: string, name: string, requires_trainer: boolean} | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<{id: string, name: string, price: number, requires_trainer: boolean} | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -127,7 +128,7 @@ export default function RegisterClient() {
     try {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name, requires_trainer')
+        .select('id, name, price, requires_trainer')
         .eq('gym_id', gym.id)
         .eq('archived', false)
         .order('name');
@@ -388,7 +389,23 @@ export default function RegisterClient() {
         return;
       }
 
-      // 3. Registration succeeded in auth + profile
+      // 3. Record payment for this registration
+      if (selectedPackage && selectedPackage.price > 0) {
+        try {
+          await recordPayment({
+            user_id: userId,
+            gym_id: gym.id,
+            package_id: selectedPackage.id,
+            amount: selectedPackage.price,
+            payment_method: 'admin',
+            remarks: `Registration: ${selectedPackage.name}`,
+          });
+        } catch (payErr) {
+          console.warn('Payment recording failed (non-blocking):', payErr);
+        }
+      }
+
+      // 4. Registration succeeded in auth + profile
       toast({
         title: "Registration successful",
         description: `Client has been registered successfully to ${gym.name}. Generating QR code...`,

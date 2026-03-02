@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Users, Calendar, BadgeCheck, DollarSign, Bell } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { supabase } from '@/lib/supabaseClient';
+import { fetchRevenueSummary } from '@/lib/gymApi';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -315,19 +316,44 @@ export default function Dashboard() {
         .gte('membership_expiry', new Date().toISOString());
       if (typeof activeCnt === 'number') setActiveMembers(activeCnt || 0);
 
-      // Revenue Today (Packages): sum price for users created today with a package
-      const { data: newUsers } = await supabase
-        .from('users')
-        .select('id, created_at, package_id, packages(price)')
-        .eq('gym_id', gym?.id)
-        .not('package_id', 'is', null)
-        .gte('created_at', dayStartISO)
-        .lte('created_at', dayEndISO);
-      const pkgSum = (newUsers || []).reduce((sum: number, u: any) => {
-        const price = u?.packages?.price;
-        const n = typeof price === 'number' ? price : Number(price || 0);
-        return sum + (Number.isFinite(n) ? n : 0);
-      }, 0);
+      // Revenue Today (Packages): sum package prices for registrations,
+      // renewals, and upgrades that happened today.
+      // Uses users table timestamps (created_at, last_renewed_at, last_upgraded_at)
+      // joined with packages.price for a reliable source of truth.
+      const sumPkgPrices = (rows: any[]) =>
+        (rows || []).reduce((s: number, r: any) => {
+          const p = Number(r?.packages?.price || 0);
+          return s + (Number.isFinite(p) ? p : 0);
+        }, 0);
+
+      const [regRes, renewRes, upgradeRes] = await Promise.all([
+        // New registrations today
+        supabase
+          .from('users')
+          .select('id, packages(price)')
+          .eq('gym_id', gym?.id)
+          .gte('created_at', dayStartISO)
+          .lte('created_at', dayEndISO),
+        // Renewals today
+        supabase
+          .from('users')
+          .select('id, packages(price)')
+          .eq('gym_id', gym?.id)
+          .gte('last_renewed_at', dayStartISO)
+          .lte('last_renewed_at', dayEndISO),
+        // Upgrades today
+        supabase
+          .from('users')
+          .select('id, packages(price)')
+          .eq('gym_id', gym?.id)
+          .gte('last_upgraded_at', dayStartISO)
+          .lte('last_upgraded_at', dayEndISO),
+      ]);
+
+      const pkgSum =
+        sumPkgPrices(regRes.data) +
+        sumPkgPrices(renewRes.data) +
+        sumPkgPrices(upgradeRes.data);
 
       // Today's one-to-one coaching: sum explicit daily fields only (daily_cost | daily_price | daily_revenue)
       // We coerce values to Number because Supabase can return numeric fields as strings.
@@ -374,24 +400,13 @@ export default function Dashboard() {
     }
   };
 
-  // Load revenue data (based on available schema)
+  // Load revenue data from payments-based revenue_summary view
   const loadRevenues = async () => {
     try {
-      // Total Package Revenue: sum package price for users with active memberships (status active and not expired)
-      const { data: activeUsers } = await supabase
-        .from('users')
-        .select('id, package_id, packages(price)')
-        .eq('gym_id', gym?.id)
-        .not('package_id', 'is', null)
-        .ilike('status', 'active%')
-        .gte('membership_expiry', new Date().toISOString());
-      const totalPkg = (activeUsers || []).reduce((sum: number, u: any) => {
-        const price = u?.packages?.price;
-        const n = typeof price === 'number' ? price : Number(price || 0);
-        return sum + (Number.isFinite(n) ? n : 0);
-      }, 0);
+      const summary = await fetchRevenueSummary(gym?.id!);
+      const paymentRevenue = Number(summary?.total_revenue || 0);
 
-      // Total 1:1 Coaching Revenue (estimated monthly): active rows
+      // Total 1:1 Coaching Revenue (estimated monthly): active rows — kept separate since coaching isn't in payments
       const { data: activeCoaching } = await supabase
         .from('one_to_one_coaching')
         .select('hourly_rate, days_per_week, hours_per_session, status')
@@ -401,14 +416,14 @@ export default function Dashboard() {
         const hr = Number(r?.hourly_rate || 0);
         const d = Number(r?.days_per_week || 0);
         const hps = Number(r?.hours_per_session || 0);
-        const weekly = hr * d * hps; // hourly * hours per session * days/week
-        const monthlyEstimate = weekly * 4; // approx.
+        const weekly = hr * d * hps;
+        const monthlyEstimate = weekly * 4;
         return sum + (Number.isFinite(monthlyEstimate) ? monthlyEstimate : 0);
       }, 0);
 
-      setTotalPackageRevenue(totalPkg);
+      setTotalPackageRevenue(paymentRevenue);
       setTotalCoachingRevenue(coachingTotal);
-      setCombinedRevenue(totalPkg + coachingTotal);
+      setCombinedRevenue(paymentRevenue + coachingTotal);
     } catch {
       setTotalPackageRevenue(0);
       setTotalCoachingRevenue(0);
@@ -427,15 +442,20 @@ export default function Dashboard() {
       const end = new Date();
       end.setHours(23, 59, 59, 999);
 
-      // Fetch per-user package and coaching values from user_combined_costs view and aggregate per day
-      const { data: combinedRows } = await supabase
-        .from('user_combined_costs')
-        .select('created_at, package_price, one_to_one_coaching_cost, total_monthly_cost, gym_id')
+      // Fetch actual payments from the payments table for the date range
+      const { data: paymentRows } = await supabase
+        .from('payments')
+        .select('created_at, amount')
+        .eq('gym_id', gym?.id)
+        .eq('payment_status', 'completed')
         .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-        .eq('gym_id', gym?.id);
+        .lte('created_at', end.toISOString());
 
-      console.debug('loadRevenueSeries: combinedRows count', (combinedRows || []).length, (combinedRows || []).slice?.(0,3));
+      // Coaching revenue from one_to_one_coaching (daily estimate)
+      const { data: coachingRows } = await supabase
+        .from('one_to_one_coaching')
+        .select('start_date, end_date, hourly_rate, days_per_week, hours_per_session, daily_cost, daily_price, daily_revenue, status, gym_id, users(gym_id)')
+        .eq('status', 'active');
 
       // Build day buckets
       const days: Array<{ date: string; packages: number; coaching: number; total: number }> = [];
@@ -446,75 +466,39 @@ export default function Dashboard() {
         copy.setDate(copy.getDate() + 1);
       }
 
-
-
-      if ((combinedRows || []).length === 0) {
-        // Fallback: build packages & coaching from users and one_to_one_coaching
-        const { data: usersCreated } = await supabase
-          .from('users')
-          .select('created_at, package_id, packages(price), gym_id')
-          .gte('created_at', start.toISOString())
-          .lte('created_at', end.toISOString())
-          .eq('gym_id', gym?.id)
-          .not('package_id', 'is', null);
-
-        const { data: coachingRows } = await supabase
-          .from('one_to_one_coaching')
-          .select('start_date, end_date, hourly_rate, days_per_week, hours_per_session, daily_cost, daily_price, daily_revenue, status, gym_id, users(gym_id)')
-          .eq('status', 'active');
-
-        (usersCreated || []).forEach((u: any) => {
-          if (!u?.created_at) return;
-          const day = (new Date(u.created_at)).toISOString().slice(0, 10);
-          const price = u?.packages?.price;
-          const n = price == null ? 0 : Number(price);
-          const idx = days.findIndex(d => d.date === day);
-          if (idx >= 0 && Number.isFinite(n)) days[idx].packages += n;
-        });
-
-        (coachingRows || []).forEach((r: any) => {
-          const rowGymId = r.gym_id ?? r?.users?.gym_id ?? null;
-          if (rowGymId !== gym?.id) return;
-          const startDate = r.start_date ? new Date(r.start_date).toISOString().slice(0, 10) : null;
-          const endDate = r.end_date ? new Date(r.end_date).toISOString().slice(0, 10) : null;
-          const explicitRaw = r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue;
-          const explicit = explicitRaw == null ? NaN : Number(explicitRaw);
-          const hr = Number(r?.hourly_rate || 0);
-          const d = Number(r?.days_per_week || 0);
-          const hps = Number(r?.hours_per_session || 0);
-          const weekly = hr * d * hps;
-          const dailyEstimate = Number.isFinite(weekly) ? (weekly / 7) : NaN;
-
-          for (let i = 0; i < days.length; i++) {
-            const day = days[i].date;
-            if (startDate && day < startDate) continue;
-            if (endDate && day > endDate) continue;
-            const val = (!Number.isNaN(explicit) && Number.isFinite(explicit)) ? explicit : (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
-            days[i].coaching += val;
-          }
-        });
-
-        days.forEach(d => d.total = d.packages + d.coaching);
-        const normalizedFallback = days.map(d => ({ date: d.date, packages: d.packages, coaching: d.coaching, total: d.total }));
-        console.debug('loadRevenueSeries: fallback normalized sample', normalizedFallback.slice(0, 6));
-        setRevenueSeries(normalizedFallback);
-        return;
-      }
-
-      // Aggregate combinedRows values into buckets
-      (combinedRows || []).forEach((u: any) => {
-        if (!u?.created_at) return;
-        const day = (new Date(u.created_at)).toISOString().slice(0, 10);
-        const pkg = u?.package_price == null ? 0 : Number(u.package_price);
-        const coach = u?.one_to_one_coaching_cost == null ? 0 : Number(u.one_to_one_coaching_cost);
+      // Aggregate payment amounts into daily buckets
+      (paymentRows || []).forEach((p: any) => {
+        if (!p?.created_at) return;
+        const day = (new Date(p.created_at)).toISOString().slice(0, 10);
+        const n = Number(p?.amount || 0);
         const idx = days.findIndex(d => d.date === day);
-        if (idx >= 0) {
-          if (Number.isFinite(pkg)) days[idx].packages += pkg;
-          if (Number.isFinite(coach)) days[idx].coaching += coach;
-          days[idx].total = days[idx].packages + days[idx].coaching;
+        if (idx >= 0 && Number.isFinite(n)) days[idx].packages += n;
+      });
+
+      // Spread coaching daily revenue across the day buckets
+      (coachingRows || []).forEach((r: any) => {
+        const rowGymId = r.gym_id ?? r?.users?.gym_id ?? null;
+        if (rowGymId !== gym?.id) return;
+        const startDate = r.start_date ? new Date(r.start_date).toISOString().slice(0, 10) : null;
+        const endDate = r.end_date ? new Date(r.end_date).toISOString().slice(0, 10) : null;
+        const explicitRaw = r?.daily_cost ?? r?.daily_price ?? r?.daily_revenue;
+        const explicit = explicitRaw == null ? NaN : Number(explicitRaw);
+        const hr = Number(r?.hourly_rate || 0);
+        const d = Number(r?.days_per_week || 0);
+        const hps = Number(r?.hours_per_session || 0);
+        const weekly = hr * d * hps;
+        const dailyEstimate = Number.isFinite(weekly) ? (weekly / 7) : NaN;
+
+        for (let i = 0; i < days.length; i++) {
+          const day = days[i].date;
+          if (startDate && day < startDate) continue;
+          if (endDate && day > endDate) continue;
+          const val = (!Number.isNaN(explicit) && Number.isFinite(explicit)) ? explicit : (Number.isFinite(dailyEstimate) ? dailyEstimate : 0);
+          days[i].coaching += val;
         }
       });
 
+      days.forEach(d => d.total = d.packages + d.coaching);
       const normalized = days.map(d => ({ date: d.date, packages: d.packages, coaching: d.coaching, total: d.total }));
       console.debug('loadRevenueSeries: normalized sample', normalized.slice(0, 6));
       setRevenueSeries(normalized);
@@ -825,10 +809,10 @@ export default function Dashboard() {
                   style={{ background: dynamicStyles.gradientBg }}
                 >
                   <StatCard
-                    title="Revenue Today (Packages)"
+                    title="Revenue Today"
                     value={nf.format(revenueTodayPackages)}
                     icon={DollarSign}
-                    trend={{ value: 'Packages only', positive: true }}
+                    trend={{ value: 'From payments', positive: true }}
                   />
                 </div>
               </div>
@@ -843,7 +827,7 @@ export default function Dashboard() {
               <CardHeader>
                 <CardTitle style={{ color: dynamicStyles.primaryColor }}>Revenue Summary</CardTitle>
                 <CardDescription>
-                  Current active totals for {gym?.name || 'the gym'}.
+                  All-time revenue from payments (legacy + live) for {gym?.name || 'the gym'}.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -853,7 +837,7 @@ export default function Dashboard() {
                     style={{ backgroundColor: `${dynamicStyles.primaryColor}10` }}
                   >
                     <div className="text-sm" style={{ color: dynamicStyles.primaryColor }}>
-                      Total Package Revenue
+                      Total Payment Revenue
                     </div>
                     <div 
                       className="text-2xl font-bold"
@@ -892,7 +876,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="text-xs text-gray-600 mt-2">
-                  Note: Revenue calculations for {gym?.name || 'this gym'}. Combined totals are in the summary above.
+                  Note: Payment revenue includes legacy migrated data and live payments for {gym?.name || 'this gym'}.
                 </div>
 
                 <div className="mt-4">

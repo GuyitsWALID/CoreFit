@@ -13,6 +13,7 @@ interface LogEntry {
 interface PreviewResult {
   usersInserted?: number;
   staffInserted?: number;
+  paymentsInserted?: number;
   skippedPayments?: number;
   skippedRows?: any[];
   warnings?: string[];
@@ -377,6 +378,7 @@ export const MigrationDashboard: React.FC = () => {
           <p>Detected Tables: {preview.detectedTables?.join(', ') || 'None'}</p>
           <p>Users Seen: {preview.usersInserted ?? 'Unknown'}</p>
           <p>Staff Seen: {preview.staffInserted ?? 'Unknown'}</p>
+          <p>Payments Parsed: {preview.paymentsInserted ?? 0}</p>
           <p>Skipped payments: {preview.skippedPayments ?? 0}</p>
           {preview.warnings && preview.warnings.length > 0 && (
             <div className="mt-2 text-sm text-amber-700">

@@ -1,5 +1,90 @@
 import { supabase } from '@/lib/supabaseClient';
 
+/* ─── Payment recording ─── */
+
+export interface RecordPaymentParams {
+  user_id: string;
+  gym_id: string;
+  package_id?: string | null;
+  amount: number;
+  payment_method?: string;
+  payment_status?: string;
+  transaction_id?: string | null;
+  remarks?: string | null;
+}
+
+/**
+ * Insert a row into the `payments` table for any revenue event
+ * (registration, renewal, upgrade, manual addition, etc.).
+ * Returns the inserted payment row or throws on error.
+ */
+export const recordPayment = async (params: RecordPaymentParams) => {
+  const {
+    user_id,
+    gym_id,
+    package_id = null,
+    amount,
+    payment_method = 'admin',
+    payment_status = 'completed',
+    transaction_id = null,
+    remarks = null,
+  } = params;
+
+  const { data, error } = await supabase
+    .from('payments')
+    .insert({
+      user_id,
+      gym_id,
+      package_id,
+      amount,
+      payment_method,
+      payment_status,
+      transaction_id,
+      remarks,
+      migrated_from_legacy: false,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[recordPayment] insert failed:', error);
+    throw error;
+  }
+  return data;
+};
+
+/* ─── Revenue summary ─── */
+
+export interface RevenueSummary {
+  gym_id: string;
+  total_payments: number;
+  total_revenue: number;
+  legacy_revenue: number;
+  live_revenue: number;
+  revenue_this_month: number;
+  revenue_today: number;
+  payments_today: number;
+  payments_this_month: number;
+}
+
+/**
+ * Fetch the pre-computed revenue summary from the `revenue_summary` view.
+ */
+export const fetchRevenueSummary = async (gymId: string): Promise<RevenueSummary | null> => {
+  const { data, error } = await supabase
+    .from('revenue_summary')
+    .select('*')
+    .eq('gym_id', gymId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[fetchRevenueSummary] query failed:', error);
+    return null;
+  }
+  return data as RevenueSummary | null;
+};
+
+/* ─── Gym config ─── */
 export interface GymConfig {
   id: string;
   slug?: string;
