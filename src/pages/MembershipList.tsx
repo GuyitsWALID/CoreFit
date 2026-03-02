@@ -170,7 +170,10 @@ export default function MembershipList() {
           let viewQuery: any = supabase.from('users_with_membership_info').select('*').gt('membership_expiry', nowIso);
           if (gym && gym.id !== 'default') viewQuery = viewQuery.eq('gym_id', gym.id);
           if (safe) viewQuery = viewQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
-          if (pkFilter && pkFilter !== 'all') viewQuery = viewQuery.eq('package_name', pkFilter);
+          if (pkFilter && pkFilter !== 'all') {
+            if (pkFilter === '__none__') viewQuery = viewQuery.is('package_name', null);
+            else viewQuery = viewQuery.eq('package_name', pkFilter);
+          }
 
           if (sortOrder === 'asc') viewQuery = viewQuery.order('full_name', { ascending: true });
           else if (sortOrder === 'desc') viewQuery = viewQuery.order('full_name', { ascending: false });
@@ -276,7 +279,8 @@ export default function MembershipList() {
         }
 
         if (pkFilter && pkFilter !== 'all') {
-          viewQuery = viewQuery.eq('package_name', pkFilter);
+          if (pkFilter === '__none__') viewQuery = viewQuery.is('package_name', null);
+          else viewQuery = viewQuery.eq('package_name', pkFilter);
         }
 
         if (tab && tab !== 'all') {
@@ -322,7 +326,8 @@ export default function MembershipList() {
       }
 
       if (pkFilter && pkFilter !== 'all') {
-        query = query.eq('package_name', pkFilter);
+        if (pkFilter === '__none__') query = query.is('package_name', null);
+        else query = query.eq('package_name', pkFilter);
       }
 
       if (tab && tab !== 'all') {
@@ -524,7 +529,7 @@ export default function MembershipList() {
       (member.phone || '').toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesStatus = statusFilter === "all" || computeStatus(member) === statusFilter;
-    const matchesPackage = packageFilter === "all" || member.package_name === packageFilter;
+    const matchesPackage = packageFilter === "all" || (packageFilter === "__none__" ? !member.package_name : member.package_name === packageFilter);
 
     let matchesTab = true;
     if (activeTab === "all") matchesTab = true;

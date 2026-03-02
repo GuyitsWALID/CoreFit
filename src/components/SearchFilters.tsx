@@ -53,6 +53,7 @@ export function SearchFilters({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Packages</SelectItem>
+          <SelectItem value="__none__">No Package</SelectItem>
           {packageTypes.map((pkg) => (
             <SelectItem key={pkg} value={pkg}>{pkg}</SelectItem>
           ))}
