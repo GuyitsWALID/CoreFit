@@ -1,22 +1,24 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Logout() {
   const navigate = useNavigate();
   const { toast } = useToast();
   
   useEffect(() => {
-    // In a real app, we'd handle the logout logic here
-    toast({
-      title: "Logged out successfully",
-      description: "You have been logged out of your account.",
-    });
-    
-    // Redirect to admin login after a brief delay
-    setTimeout(() => {
-      navigate('/admin/login');
-    }, 1500);
+    const logout = async () => {
+      const { error } = await supabase.auth.signOut();
+      sessionStorage.removeItem('corefit:super-admin-entry');
+      toast({
+        title: error ? "Logout warning" : "Logged out successfully",
+        description: error?.message || "You have been logged out of your account.",
+        variant: error ? "destructive" : "default",
+      });
+      navigate('/login', { replace: true });
+    };
+    logout();
   }, [navigate, toast]);
   
   return (

@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Valid email is required." }),
@@ -33,7 +33,8 @@ export default function AdminLogin() {
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
+  const location = useLocation();
+  const superAdminOnly = location.pathname === '/admin/login';
 
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -148,15 +149,29 @@ export default function AdminLogin() {
       const userRole = (_rawRole ?? '').toString().trim().toLowerCase();
       console.log('Detected user role on login:', userRole); // debug
       // Include 'receptionist' so front-desk staff can also access the admin dashboard when appropriate
-      const authorizedRoles = ['admin', 'manager', 'owner', 'receptionist']; // Add roles that can access admin dashboard
+      const authorizedRoles = superAdminOnly
+        ? ['super_admin']
+        : ['super_admin', 'admin', 'manager', 'owner', 'receptionist'];
       
       if (!authorizedRoles.includes(userRole)) {
         toast({
           title: "Access denied",
-          description: `Your role (${userRole}) does not have admin dashboard access.`,
+          description: superAdminOnly
+            ? "Only an active super-admin account can access the system administration area."
+            : `Your role (${userRole}) does not have admin dashboard access.`,
           variant: "destructive",
         });
         await supabase.auth.signOut();
+        return;
+      }
+
+      // Super admins manage every gym and do not require a gym assignment.
+      if (userRole === 'super_admin') {
+        toast({
+          title: "Login successful",
+          description: `Welcome ${staffRecord.first_name}! Redirecting to the system dashboard...`,
+        });
+        window.location.href = '/admin/gyms';
         return;
       }
 
@@ -209,15 +224,19 @@ export default function AdminLogin() {
           <div className="mx-auto w-16 h-16 bg-fitness-primary rounded-full flex items-center justify-center mb-4">
             <Lock className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">Admin Login</h1>
-          <p className="text-gray-600 mt-2">Access your gym's admin dashboard</p>
+          <h1 className="text-3xl font-bold text-gray-900">{superAdminOnly ? 'Super Admin Login' : 'Admin Login'}</h1>
+          <p className="text-gray-600 mt-2">
+            {superAdminOnly ? 'Secure access to system-wide administration' : "Access your gym's admin dashboard"}
+          </p>
         </div>
 
         <Card className="w-full shadow-lg">
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl text-center">Sign In</CardTitle>
             <CardDescription className="text-center">
-              Enter your credentials to access your gym's admin dashboard
+              {superAdminOnly
+                ? 'Enter an active super-admin account'
+                : "Enter your credentials to access your gym's admin dashboard"}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -308,7 +327,7 @@ export default function AdminLogin() {
                   className="w-full bg-fitness-primary hover:bg-fitness-primary/90 text-white"
                   disabled={isLoading}
                 >
-                  {isLoading ? "Signing In..." : "Sign In to Gym Dashboard"}
+                  {isLoading ? "Signing In..." : superAdminOnly ? "Sign In to Super Admin" : "Sign In to Gym Dashboard"}
                 </Button>
               </form>
             </Form>

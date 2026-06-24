@@ -25,6 +25,8 @@ import UserManagement from '@/pages/admin/users';
 import AdminSettings from '@/pages/admin/settings'; 
 import { MigrationDashboard } from '@/components/MigrationPage';
 import Packages from './pages/Packages.tsx';
+import { SuperAdminGuard } from '@/components/auth/SuperAdminGuard';
+import { AdminHotkeyGate, hasSuperAdminEntry } from '@/components/auth/AdminHotkeyGate';
 
 // Layout component that wraps gym-specific pages
 const GymLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -41,18 +43,22 @@ function App() {
   return (
     <Router>
       <div className="App">
+        <AdminHotkeyGate />
         <Routes>
           {/* Admin routes (no gym context needed) */}
           <Route path="/login" element={<AdminLogin />} />
+          <Route path="/admin/login" element={hasSuperAdminEntry() ? <AdminLogin /> : <Navigate to="/login" replace />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/reset-password/complete" element={<ResetPasswordComplete />} />
-          <Route path="/admin" element={<div>Admin Overview</div>} />
-          <Route path="/admin/gyms" element={<AdminGyms />} />
-          <Route path="/admin/onboard" element={<OnboardingForm />} />
-          <Route path="/admin/analytics" element={<Analytics />} />
-          <Route path="/admin/users" element={<UserManagement/>} />
-          <Route path="/admin/settings" element={<AdminSettings/>} />
-          <Route path="/admin/import" element={<MigrationDashboard/>} />
+          <Route path="/admin" element={<SuperAdminGuard />}>
+            <Route index element={<Navigate to="/admin/gyms" replace />} />
+            <Route path="gyms" element={<AdminGyms />} />
+            <Route path="onboard" element={<OnboardingForm />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="users" element={<UserManagement />} />
+            <Route path="settings" element={<AdminSettings />} />
+            <Route path="import" element={<MigrationDashboard />} />
+          </Route>
           
           {/* Gym-specific routes with dynamic identifier (ID or name) */}
           <Route path="/:gymIdentifier/*" element={

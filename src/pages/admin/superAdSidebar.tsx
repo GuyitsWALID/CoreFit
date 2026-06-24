@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Building2, Plus, Settings, BarChart3, Users, Home, Menu, X, Upload } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Building2, Plus, Settings, BarChart3, Users, Menu, X, Upload, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { supabase } from '@/lib/supabaseClient';
 
 interface SuperAdSidebarProps {
   className?: string;
@@ -13,6 +14,7 @@ interface SuperAdSidebarProps {
 
 export const SuperAdSidebar: React.FC<SuperAdSidebarProps> = ({ className, isOpen = true, onToggle }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [collapsed, setCollapsed] = React.useState(false);
 
@@ -65,6 +67,12 @@ export const SuperAdSidebar: React.FC<SuperAdSidebarProps> = ({ className, isOpe
 
   const isActive = (href: string) => {
     return location.pathname === href || location.pathname.startsWith(href + '/');
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    sessionStorage.removeItem('corefit:super-admin-entry');
+    navigate('/admin/login', { replace: true });
   };
 
   return (
@@ -168,6 +176,10 @@ export const SuperAdSidebar: React.FC<SuperAdSidebarProps> = ({ className, isOpe
 
       {/* Footer */}
       <div className="p-4 border-t border-gray-100">
+        <Button variant="ghost" className="mb-3 w-full justify-start text-gray-600" onClick={signOut}>
+          <LogOut className="mr-3 h-5 w-5" />
+          {(!collapsed || isMobile) && 'Sign out'}
+        </Button>
         {(!collapsed || isMobile) ? (
           <div className="text-xs text-gray-500 text-center">
             <div>CoreFit Super Admin</div>

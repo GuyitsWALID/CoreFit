@@ -12,6 +12,8 @@
     "clean": "rimraf dist node_modules/.vite",
     "serve:functions": "supabase functions serve",
     "deploy:functions": "supabase functions deploy migrate-ping migrate-preview migrate-run",
+    "deploy:migration": "powershell -ExecutionPolicy Bypass -File scripts/deploy_migration.ps1",
+    "deploy:admin-hotkey": "powershell -ExecutionPolicy Bypass -File scripts/deploy_admin_hotkey.ps1",
     "list:functions": "supabase functions list"
   },
   "dependencies": {

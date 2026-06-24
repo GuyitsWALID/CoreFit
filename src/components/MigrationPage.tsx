@@ -1,456 +1,425 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Database, FileText, Menu, Play, Upload, XCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { Menu } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import { buildLegacyMigrationPlan, LegacyMigrationPlan } from '@/utils/legacyMigration';
 
-interface LogEntry {
+type Gym = { id: string; name: string };
+type UploadFile = { name: string; content: string; size: number };
+type Preview = {
+  detectedTables: string[];
+  sourceCounts: Record<string, number>;
+  packagesInserted: number;
+  usersInserted: number;
+  staffInserted: number;
+  paymentsInserted: number;
+  freezesInserted: number;
+  checkinsInserted: number;
+  trainerAssignmentsInserted?: number;
+  skippedRows: Array<{ table: string; row?: number; reason: string }>;
+  skippedCount: number;
+  warnings: string[];
+  ready: boolean;
+};
+type MigrationJob = {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'completed_with_issues' | 'failed';
+  progress: number;
+  current_step?: string;
+  result?: any;
+  error_message?: string;
+};
+type TerminalEntry = {
+  time: string;
+  level: 'info' | 'success' | 'warning' | 'error';
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
-  timestamp: string;
-}
+};
 
-interface PreviewResult {
-  usersInserted?: number;
-  staffInserted?: number;
-  paymentsInserted?: number;
-  skippedPayments?: number;
-  skippedRows?: any[];
-  warnings?: string[];
-  detectedTables?: string[];
-}
+const getFunctionsBase = () =>
+  (import.meta.env.VITE_MIGRATE_FUNCTIONS_BASE as string | undefined)
+  ?? `${String(import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '')}/functions/v1`;
+
+const authHeaders = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Please sign in with an admin account before running a migration.');
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`,
+  };
+};
 
 export const MigrationDashboard: React.FC = () => {
-  const [gyms, setGyms] = useState<{ id: string; name: string }[]>([]);
-  const [selectedGymId, setSelectedGymId] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [isDryRun, setIsDryRun] = useState(true);
-  const [isMigrating, setIsMigrating] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [env, setEnv] = useState<string>(import.meta.env.MODE || 'development');
-  const logEndRef = useRef<HTMLDivElement>(null);
-
+  const [gyms, setGyms] = useState<Gym[]>([]);
+  const [gymId, setGymId] = useState('');
+  const [files, setFiles] = useState<UploadFile[]>([]);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [migrationPlan, setMigrationPlan] = useState<LegacyMigrationPlan | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [job, setJob] = useState<MigrationJob | null>(null);
+  const [error, setError] = useState('');
+  const [terminal, setTerminal] = useState<TerminalEntry[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const terminalEnd = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  const functionsBase = useMemo(getFunctionsBase, []);
 
-  const [functionsHealthy, setFunctionsHealthy] = useState<boolean | null>(null);
-
-  // Base URL for migration functions. Prefer explicit env override (useful for localhost testing), otherwise
-  // fall back to the Supabase project's functions base derived from VITE_SUPABASE_URL.
-  const functionsBase = (import.meta.env.VITE_MIGRATE_FUNCTIONS_BASE as string | undefined) ?? ((import.meta.env.VITE_SUPABASE_URL as string || '').replace(/\/$/, '') + '/functions/v1');
+  const addLog = (message: string, level: TerminalEntry['level'] = 'info') => {
+    setTerminal(current => [...current, {
+      time: new Date().toLocaleTimeString(),
+      level,
+      message,
+    }]);
+  };
 
   useEffect(() => {
-    const fetchGyms = async () => {
-      const { data } = await supabase.from('gyms').select('id, name').eq('status', 'active').order('name');
-      if (data) {
-        setGyms(data as { id: string; name: string }[]);
-        if (data.length > 0) setSelectedGymId(data[0].id);
-      }
-    };
+    terminalEnd.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [terminal]);
 
-    const pingFunctions = async () => {
-      try {
-        const res = await fetch(`${functionsBase}/migrate-ping`);
-        if (res.ok) setFunctionsHealthy(true);
-        else setFunctionsHealthy(false);
-      } catch (err) {
-        setFunctionsHealthy(false);
-      }
-    };
-
-    fetchGyms();
-    pingFunctions();
+  useEffect(() => {
+    supabase.from('gyms').select('id,name').eq('status', 'active').order('name').then(({ data }) => {
+      const rows = (data ?? []) as Gym[];
+      setGyms(rows);
+      if (rows[0]) setGymId(rows[0].id);
+    });
   }, []);
 
-  const addLog = (message: string, type: LogEntry['type'] = 'info') => {
-    setLogs(prev => [...prev, {
-      message,
-      type,
-      timestamp: new Date().toLocaleTimeString()
-    }]);
-    // Scroll terminal to bottom
-    setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      setFile(e.target.files[0]);
-      addLog(`File selected: ${e.target.files[0].name}`, 'info');
-
-      // Auto-run preview on file selection
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const content = event.target?.result as string;
-        try {
-          addLog('Parsing file (preview)...', 'info');
-          const res = await fetch(`${functionsBase}/migrate-preview`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-            body: JSON.stringify({ sql: content, gymId: selectedGymId })
-          });
-          if (!res.ok) {
-            // Try to parse JSON error, otherwise show text
-            const text = await res.text().catch(() => 'No response body');
-            let errMsg = `Preview failed (status ${res.status})`;
-            try {
-              const parsed = JSON.parse(text);
-              errMsg = parsed.error || JSON.stringify(parsed);
-            } catch {
-              errMsg = text;
-            }
-            addLog(`Preview error: ${errMsg}`, 'error');
-
-            if (res.status === 404) {
-              addLog('Preview endpoint not found (404). Make sure Supabase function migrate-preview is deployed.', 'error');
-            }
-            return;
-          }
-          const { preview } = await res.json();
-          setPreview(preview);
-          addLog(`Preview complete. Detected tables: ${preview.detectedTables?.join(', ') || 'none'}`, 'success');
-          if (preview.warnings && preview.warnings.length) {
-            preview.warnings.forEach((w: string) => addLog(`Warning: ${w}`, 'warning'));
-          }
-        } catch (err: any) {
-          addLog(`Preview failed: ${err.message}`, 'error');
+  useEffect(() => {
+    if (!job || !['queued', 'running'].includes(job.status)) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`${functionsBase}/migrate-run`, {
+          method: 'POST',
+          headers: await authHeaders(),
+          body: JSON.stringify({ action: 'status', jobId: job.id }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Could not read migration status.');
+        if (payload.job.current_step !== job.current_step || payload.job.progress !== job.progress) {
+          addLog(`${payload.job.current_step || payload.job.status} (${payload.job.progress}%)`);
         }
+        if (payload.job.status === 'completed') addLog('Migration completed successfully.', 'success');
+        if (payload.job.status === 'completed_with_issues') addLog('Migration completed with quarantined rows. Review the result below.', 'warning');
+        if (payload.job.status === 'failed') addLog(payload.job.error_message || 'Migration failed.', 'error');
+        setJob(payload.job);
+      } catch (statusError: any) {
+        setError(statusError.message);
+        addLog(`Status check failed: ${statusError.message}`, 'error');
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [job?.id, job?.status, functionsBase]);
+
+  const previewFiles = async (selectedFiles: UploadFile[]) => {
+    if (!gymId || !selectedFiles.length) return;
+    setPreviewing(true);
+    setError('');
+    setPreview(null);
+    try {
+      addLog('Splitting the full export into independent legacy tables…');
+      await new Promise(resolve => window.setTimeout(resolve, 20));
+      const plan = buildLegacyMigrationPlan(selectedFiles.map(file => file.content), gymId);
+      setMigrationPlan(plan);
+      const raw = {
+        detectedTables: plan.detectedTables,
+        sourceCounts: plan.sourceCounts,
+        packagesInserted: plan.packages.length,
+        usersInserted: plan.users.length,
+        staffInserted: plan.staff.length,
+        paymentsInserted: plan.payments.length,
+        freezesInserted: plan.membershipFreezes.length,
+        checkinsInserted: plan.clientCheckins.length,
+        trainerAssignmentsInserted: plan.trainerAssignments.length,
+        skippedRows: plan.issues.slice(0, 200),
+        skippedCount: plan.issues.length,
+        warnings: plan.warnings,
+        ready: plan.users.length > 0 || plan.packages.length > 0 || plan.staff.length > 0,
       };
-      reader.readAsText(e.target.files[0]);
-    }
-  };
-
-  // CSV export for skipped rows
-  const downloadSkippedCSV = () => {
-    if (!preview?.skippedRows || preview.skippedRows.length === 0) return;
-    const rows = preview.skippedRows;
-    const headers = Object.keys(rows[0]);
-    const csv = [headers.join(',')].concat(rows.map((r: any) => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'skipped_rows.csv';
-    a.click();
-  };
-
-  const runMigration = async () => {
-    if (!file || !selectedGymId) return;
-    let finalConfirmValue: string | undefined = undefined;
-    if (!isDryRun) {
-      // Safety lock: simple prompt
-      const confirm = window.prompt('Type MIGRATE to confirm final migration');
-      if (confirm !== 'MIGRATE') {
-        addLog('Migration cancelled by user (confirmation failed).', 'warning');
-        return;
+      const normalized: Preview = {
+        detectedTables: raw.detectedTables ?? [],
+        sourceCounts: raw.sourceCounts ?? {},
+        packagesInserted: raw.packagesInserted ?? raw.packagesCreated ?? 0,
+        usersInserted: raw.usersInserted ?? 0,
+        staffInserted: raw.staffInserted ?? 0,
+        paymentsInserted: raw.paymentsInserted ?? 0,
+        freezesInserted: raw.freezesInserted ?? 0,
+        checkinsInserted: raw.checkinsInserted ?? 0,
+        skippedRows: raw.skippedRows ?? [],
+        skippedCount: raw.skippedCount ?? raw.skippedRows?.length ?? raw.skippedPayments ?? 0,
+        warnings: raw.warnings ?? [],
+        ready: raw.ready ?? ((raw.usersInserted ?? 0) + (raw.staffInserted ?? 0) + (raw.packagesInserted ?? raw.packagesCreated ?? 0) + (raw.paymentsInserted ?? 0) > 0),
+      };
+      setPreview(normalized);
+      for (const table of normalized.detectedTables) {
+        addLog(`Parsed ${table}: ${normalized.sourceCounts[table] ?? 0} source row(s).`, 'success');
+        await new Promise(resolve => window.setTimeout(resolve, 0));
       }
-      finalConfirmValue = 'MIGRATE';
+      addLog(`Local validation complete. Detected tables: ${normalized.detectedTables.join(', ') || 'none'}.`, 'success');
+      addLog(`Plan: ${normalized.usersInserted} members, ${normalized.packagesInserted} packages, ${normalized.paymentsInserted} payments, ${normalized.checkinsInserted} check-ins.`);
+      if (normalized.skippedCount) addLog(`${normalized.skippedCount} row(s) will be quarantined.`, 'warning');
+    } catch (previewError: any) {
+      const message = previewError.message;
+      setError(message);
+      addLog(`Preview failed: ${message}`, 'error');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const selectFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? []);
+    if (!selected.length) return;
+    setTerminal([]);
+    addLog(`Selected ${selected.length} legacy export file(s).`);
+    const loaded: UploadFile[] = [];
+    const allDetectedTables = new Set<string>();
+    for (const file of selected) {
+      addLog(`Reading ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)…`);
+      const content = await file.text();
+      loaded.push({ name: file.name, content, size: file.size });
+      const tables = [...content.matchAll(/(?:CREATE\s+TABLE|INSERT\s+INTO)\s+(?:[`"']?[\w]+[`"']?\.)?[`"']?([A-Za-z_][A-Za-z0-9_]*)/gi)]
+        .map(match => match[1].toLowerCase());
+      const uniqueTables = [...new Set(tables)];
+      uniqueTables.forEach(table => allDetectedTables.add(table));
+      addLog(`${file.name}: found ${uniqueTables.length} table(s): ${uniqueTables.join(', ') || 'none'}.`, uniqueTables.length ? 'success' : 'warning');
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+    setFiles(loaded);
+    setJob(null);
+    setPreview(null);
+    setMigrationPlan(null);
+
+    const hasMembers = ['users', 'members', 'clients'].some(table => allDetectedTables.has(table));
+    const hasDependentHistory = ['payments', 'payment', 'checkins', 'clientcheckins'].some(table => allDetectedTables.has(table));
+    if (!hasMembers && hasDependentHistory) {
+      const message = 'The selected export contains payment/check-in history but no Users table. Select this file together with the separate Users SQL export (for example, Users (2).sql).';
+      setError(message);
+      addLog('BLOCKED: No Users table was found in the selected export.', 'error');
+      addLog('Payments and check-ins reference member IDs, so migrating without Users would create orphaned records.', 'warning');
+      addLog('Choose the full dump and Users (2).sql together in the same file picker, then retry.', 'info');
+      setPreviewing(false);
+      return;
     }
 
-    setIsMigrating(true);
-    setProgress(0);
-    setLogs([]);
+    setError('');
+    addLog('Local scan complete. Building the migration plan table-by-table…');
+    await previewFiles(loaded);
+  };
 
-    const content = await file.text();
-
+  const startMigration = async () => {
+    if (!preview?.ready || !migrationPlan || !files.length || !gymId) return;
+    setStarting(true);
+    setError('');
     try {
-      const res = await fetch(`${functionsBase}/migrate-run`, {
+      addLog('Uploading the normalized migration plan (raw SQL parsing is already complete)…');
+      const response = await fetch(`${functionsBase}/migrate-run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-        body: JSON.stringify({ sql: content, gymId: selectedGymId, dryRun: isDryRun, finalConfirm: finalConfirmValue })
+        headers: await authHeaders(),
+        body: JSON.stringify({
+          gymId,
+          plan: migrationPlan,
+          files: files.map(file => ({ name: file.name, size: file.size })),
+          dryRun: false,
+          finalConfirm: 'MIGRATE',
+        }),
       });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => 'No response body');
-        let errMsg = `Migration start failed (status ${res.status})`;
-        try { errMsg = JSON.parse(text).error || errMsg; } catch {}
-        addLog(errMsg, 'error');
-        if (res.status === 404) addLog('Migration endpoint not found (404). Make sure Supabase function migrate-run is deployed.', 'error');
-        setIsMigrating(false);
-        return;
-      }
-
-      if (!res.body) throw new Error('Streaming not supported by this browser');
-
-      addLog(`Server response status: ${res.status}`, 'info');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      let receivedEvents = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-
-        // SSE chunks are separated by "\n\n"
-        let parts = buf.split('\n\n');
-        buf = parts.pop() || '';
-        for (const part of parts) {
-          const trimmed = part.trim();
-          if (!trimmed) continue;
-
-          // Handle multiple data: lines in a part
-          const dataLines = trimmed.split(/\r?\n/).filter(l => l.startsWith('data:'));
-          if (dataLines.length === 0) {
-            addLog(`Non-data chunk received: ${trimmed.slice(0, 200)}`, 'warning');
-            continue;
-          }
-
-          for (const line of dataLines) {
-            const dataStr = line.replace(/^data:\s*/m, '');
-            let obj: any = null;
-            try { obj = JSON.parse(dataStr); } catch (e) { addLog(`Malformed event: ${dataStr}`, 'warning'); continue; }
-
-            receivedEvents++;
-
-            if (obj.type === 'progress') {
-              setProgress(obj.percent ?? 0);
-              addLog(`Progress: ${obj.percent}%`, 'info');
-            } else if (obj.type === 'start') {
-              addLog(obj.message || 'Migration started', 'info');
-            } else if (obj.type === 'done') {
-              addLog('Migration finished', 'success');
-              if (obj.result?.skippedPayments) addLog(`Skipped payments: ${obj.result.skippedPayments}`, 'warning');
-              if (obj.result?.skippedRows && obj.result.skippedRows.length) addLog(`Skipped rows: ${obj.result.skippedRows.length}`, 'warning');
-              // if preview was included in result
-              if (obj.result?.preview) setPreview(obj.result.preview);
-              // Show run diagnostics (packages created, attempted upserts, batch errors)
-              if (obj.result?.runDiagnostics) {
-                const rd = obj.result.runDiagnostics;
-                addLog(`Packages created: ${rd.packagesCreated} (map size: ${rd.packageMapSize})`, 'info');
-                addLog(`Users attempted: ${rd.usersAttempted}, batches: ${rd.userUpsertBatches}, errors: ${rd.userUpsertErrors?.length || 0}`, 'info');
-                addLog(`Staff attempted: ${rd.staffAttempted}, batches: ${rd.staffUpsertBatches}, errors: ${rd.staffUpsertErrors?.length || 0}`, 'info');
-                if (rd.userUpsertErrors && rd.userUpsertErrors.length) rd.userUpsertErrors.forEach((e: any) => addLog(`User upsert error: ${typeof e.error === 'string' ? e.error : JSON.stringify(e.error)}`, 'error'));
-                if (rd.staffUpsertErrors && rd.staffUpsertErrors.length) rd.staffUpsertErrors.forEach((e: any) => addLog(`Staff upsert error: ${typeof e.error === 'string' ? e.error : JSON.stringify(e.error)}`, 'error'));
-              }
-            } else if (obj.type === 'error') {
-              addLog(`Error: ${obj.message}`, 'error');
-            } else {
-              addLog(`Event: ${JSON.stringify(obj).slice(0, 400)}`, 'info');
-            }
-          }
+      if (!response.ok) {
+        const text = await response.text();
+        try {
+          throw new Error(JSON.parse(text).error || text);
+        } catch (parseError) {
+          if (parseError instanceof SyntaxError) throw new Error(text || `Migration failed with HTTP ${response.status}.`);
+          throw parseError;
         }
       }
 
-      if (receivedEvents === 0) {
-        addLog('Migration stream closed without emitting events. Check function logs and preview output.', 'warning');
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('text/event-stream')) {
+        addLog('Connected to legacy streaming migration endpoint.', 'warning');
+        if (!response.body) throw new Error('The migration stream is unavailable.');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() ?? '';
+          for (const event of events) {
+            const line = event.split(/\r?\n/).find(item => item.startsWith('data:'));
+            if (!line) continue;
+            const data = JSON.parse(line.replace(/^data:\s*/, ''));
+            if (data.type === 'progress') addLog(`${data.message || 'Migrating data'} (${data.percent ?? 0}%)`);
+            if (data.type === 'error') throw new Error(data.message || 'Migration failed.');
+            if (data.type === 'done') addLog('Migration completed.', 'success');
+          }
+        }
       } else {
-        addLog('Migration stream closed', 'info');
+        const payload = await response.json();
+        if (!payload.jobId) throw new Error(payload.error || 'The migration endpoint did not return a job ID.');
+        setJob({ id: payload.jobId, status: 'queued', progress: 0, current_step: 'Waiting to start' });
+        addLog(`Background migration job created: ${payload.jobId}`, 'success');
       }
-
-    } catch (err: any) {
-      addLog(`Migration failed: ${err.message}`, 'error');
+    } catch (startError: any) {
+      setError(startError.message);
+      addLog(`Migration failed: ${startError.message}`, 'error');
     } finally {
-      setIsMigrating(false);
-      setProgress(100);
+      setStarting(false);
     }
   };
 
-  // Generate migration SQL (no DB writes). Returns a downloadable SQL script.
-  const generateMigrationSql = async () => {
-    if (!file || !selectedGymId) return;
-    addLog('Generating migration SQL...', 'info');
-    try {
-      const content = await file.text();
-      const res = await fetch(`${functionsBase}/migrate-generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-        body: JSON.stringify({ sql: content, gymId: selectedGymId })
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => 'No response body');
-        let errMsg = `Generate start failed (status ${res.status})`;
-        try { errMsg = JSON.parse(text).error || errMsg; } catch {}
-        addLog(errMsg, 'error');
-        return;
-      }
-
-      const { migrationSql, preview } = await res.json();
-      setPreview(preview);
-      addLog('Migration SQL generated', 'success');
-
-      // Download the SQL as a file
-      const blob = new Blob([migrationSql], { type: 'text/sql' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const now = new Date().toISOString().replace(/[:.]/g, '-');
-      a.href = url;
-      a.download = `migration_${selectedGymId}_${now}.sql`;
-      a.click();
-      URL.revokeObjectURL(url);
-
-    } catch (err: any) {
-      addLog(`Generate failed: ${err.message}`, 'error');
-    }
-  };
-
+  const planned = preview ? [
+    ['Packages', preview.packagesInserted],
+    ['Members', preview.usersInserted],
+    ['Staff', preview.staffInserted],
+    ['Payments', preview.paymentsInserted],
+    ['Freezes', preview.freezesInserted],
+    ['Check-ins', preview.checkinsInserted],
+  ] : [];
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-gray-50">
       <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-      <div className="flex-1 overflow-y-auto flex flex-col">
-        {/* Mobile Header */}
-        <header className="sticky top-0 z-20 bg-gradient-to-r from-blue-600 to-blue-400 shadow-md px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            
-            <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Migration Dashboard</h1>
-              <span className="text-sm text-blue-100">Admin Tool for Gym Data Migration</span>
-            </div>
-          </div>
-          <div className="hidden md:flex items-center gap-4">
-            <span className="bg-white/20 text-white px-3 py-1 rounded text-xs font-medium">v1.0</span>
-            <span className="bg-green-500/80 text-white px-3 py-1 rounded text-xs font-medium">Production</span>
-          </div>
-        </header>
+      <main className="flex-1 overflow-y-auto">
         {isMobile && (
-          <div className="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-            <button
-              className="btn-ghost"
-              onClick={() => setSidebarOpen(true)}
-            >
-              <Menu size={20} />
-            </button>
-            <h1 className="font-semibold text-lg text-blue-600">Super Admin</h1>
+          <div className="sticky top-0 z-30 flex items-center gap-3 border-b bg-white px-4 py-3">
+            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}><Menu /></Button>
+            <span className="font-semibold text-blue-600">Super Admin</span>
           </div>
         )}
 
-        <div className="p-6 max-w-4xl mx-auto w-full bg-white shadow-xl rounded-xl border border-gray-200">
-          <div className="mb-8 border-b pb-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">Gym Data Migration Tool</h1>
-              <p className="text-gray-500">Active Gym: <strong>{selectedGymId ? gyms.find(g => g.id === selectedGymId)?.name : 'None selected'}</strong> <code className="bg-gray-100 px-2 rounded">{selectedGymId}</code></p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="px-2 py-1 rounded bg-gray-100 text-sm">Env: {env}</span>
-              <span className={`px-2 py-1 rounded text-sm ${functionsHealthy === null ? 'bg-yellow-50 text-yellow-700' : functionsHealthy ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                Functions: {functionsHealthy === null ? 'Checking...' : functionsHealthy ? 'Reachable' : 'Unavailable'}
-              </span>
-            </div>
+        <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Automatic Legacy Migration</h1>
+            <p className="mt-1 text-gray-500">Upload one full phpMyAdmin SQL export, or select Users, Packages, Payments, CheckIns, and Admins exports together.</p>
           </div>
 
-          {/* Select Gym */}
-          <div className="mb-6">
-            <label className="block font-semibold text-gray-700 mb-2">Select Target Gym</label>
-            <select value={selectedGymId ?? ''} onChange={(e) => setSelectedGymId(e.target.value)} className="w-full p-2 border rounded">
-              {gyms.map(g => <option key={g.id} value={g.id}>{g.name} ({g.id})</option>)}
-            </select>
-          </div>
-
-          {/* File + Settings */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div className="space-y-4">
-              <label className="block font-semibold text-gray-700">1. Select Legacy SQL File</label>
-              <input 
-                type="file" 
-                accept=".sql" 
-                onChange={handleFileChange}
-                disabled={isMigrating}
-                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
+          {error && (
+            <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
+              <XCircle className="mt-0.5 h-5 w-5 shrink-0" /><span>{error}</span>
             </div>
+          )}
 
-            <div className="space-y-4">
-              <label className="block font-semibold text-gray-700">2. Migration Settings</label>
-              <div className="flex items-center space-x-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
-                <input 
-                  type="checkbox" 
-                  id="dryRun" 
-                  checked={isDryRun} 
-                  onChange={(e) => setIsDryRun(e.target.checked)}
-                  disabled={isMigrating}
-                  className="w-5 h-5 accent-amber-600"
-                />
-                <label htmlFor="dryRun" className="text-sm font-medium text-amber-800">
-                  Enable Dry Run (Simulate only, no DB write)
-                </label>
+          <Card>
+            <CardHeader><CardTitle>1. Choose gym and exports</CardTitle></CardHeader>
+            <CardContent className="space-y-5">
+              <select value={gymId} onChange={event => setGymId(event.target.value)} className="w-full rounded-md border p-3">
+                {gyms.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}
+              </select>
+              <input ref={fileInput} type="file" multiple accept=".sql,.txt" onChange={selectFiles} className="hidden" />
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="flex min-h-40 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/40 p-8 text-center hover:bg-blue-50"
+              >
+                <Upload className="mb-3 h-10 w-10 text-blue-600" />
+                <span className="font-semibold">Select SQL export file(s)</span>
+                <span className="mt-1 text-sm text-gray-500">You can select all separate table exports in one action.</span>
+              </button>
+              {!!files.length && (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {files.map(file => (
+                    <div key={file.name} className="flex items-center gap-3 rounded-lg border bg-white p-3">
+                      <FileText className="h-5 w-5 text-blue-600" />
+                      <div className="min-w-0"><div className="truncate font-medium">{file.name}</div><div className="text-xs text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</div></div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {previewing && <div className="flex items-center gap-2 text-blue-700"><Database className="h-5 w-5 animate-pulse" /> Parsing and validating exports…</div>}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Parsing and migration terminal</CardTitle></CardHeader>
+            <CardContent>
+              <div className="h-72 overflow-y-auto rounded-lg bg-gray-950 p-4 font-mono text-xs">
+                {terminal.length === 0 && <div className="text-gray-500">// Select a legacy SQL export to begin…</div>}
+                {terminal.map((entry, index) => (
+                  <div
+                    key={`${entry.time}-${index}`}
+                    className={
+                      entry.level === 'error' ? 'text-red-400'
+                        : entry.level === 'warning' ? 'text-amber-300'
+                          : entry.level === 'success' ? 'text-green-400'
+                            : 'text-sky-300'
+                    }
+                  >
+                    <span className="mr-2 text-gray-600">[{entry.time}]</span>{entry.message}
+                  </div>
+                ))}
+                <div ref={terminalEnd} />
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-      {/* Preview Card */}
-      {preview && (
-        <div className="mb-6 p-4 border rounded bg-gray-50">
-          <h3 className="font-semibold">Preview Summary</h3>
-          <p>Detected Tables: {preview.detectedTables?.join(', ') || 'None'}</p>
-          <p>Users Seen: {preview.usersInserted ?? 'Unknown'}</p>
-          <p>Staff Seen: {preview.staffInserted ?? 'Unknown'}</p>
-          <p>Payments Parsed: {preview.paymentsInserted ?? 0}</p>
-          <p>Skipped payments: {preview.skippedPayments ?? 0}</p>
-          {preview.warnings && preview.warnings.length > 0 && (
-            <div className="mt-2 text-sm text-amber-700">
-              <strong>Warnings:</strong>
-              <ul className="list-disc ml-5">
-                {preview.warnings.map((w, i) => <li key={i}>{w}</li>)}
-              </ul>
-            </div>
+          {preview && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  {preview.ready ? <CheckCircle2 className="text-green-600" /> : <AlertTriangle className="text-amber-600" />}
+                  2. Validated migration plan
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="flex flex-wrap gap-2">
+                  {preview.detectedTables.map(table => <Badge key={table} variant="outline">{table}{preview.sourceCounts[table] !== undefined ? `: ${preview.sourceCounts[table]}` : ''}</Badge>)}
+                </div>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+                  {planned.map(([label, count]) => (
+                    <div key={String(label)} className="rounded-lg border bg-gray-50 p-3 text-center">
+                      <div className="text-2xl font-bold">{count}</div><div className="text-xs text-gray-500">{label}</div>
+                    </div>
+                  ))}
+                </div>
+                {(preview.warnings.length > 0 || preview.skippedRows.length > 0) && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <div className="font-semibold">{preview.skippedCount} malformed or orphaned rows will be safely quarantined.</div>
+                    {preview.warnings.map(warning => <div key={warning} className="mt-1">{warning}</div>)}
+                    {preview.skippedRows.slice(0, 5).map((issue, index) => <div key={index} className="mt-1">{issue.table}{issue.row ? ` row ${issue.row}` : ''}: {issue.reason}</div>)}
+                    {preview.skippedCount > 5 && <div className="mt-1">…and {preview.skippedCount - 5} more, included in the final report.</div>}
+                  </div>
+                )}
+                <Button size="lg" className="w-full" disabled={!preview.ready || !migrationPlan || starting || !!job} onClick={startMigration}>
+                  <Play className="mr-2 h-5 w-5" />{starting ? 'Starting…' : 'Start Automatic Migration'}
+                </Button>
+              </CardContent>
+            </Card>
           )}
-          {preview.skippedRows && preview.skippedRows.length > 0 && (
-            <div className="mt-2">
-              <button onClick={downloadSkippedCSV} className="px-3 py-2 bg-red-600 text-white rounded">Download Skipped Rows CSV</button>
-            </div>
+
+          {job && (
+            <Card>
+              <CardHeader><CardTitle>3. Background migration</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div><div className="font-medium">{job.current_step || job.status}</div><div className="text-sm text-gray-500">Job {job.id}</div></div>
+                  <Badge variant={job.status === 'failed' ? 'destructive' : 'outline'}>{job.status.replace(/_/g, ' ')}</Badge>
+                </div>
+                <Progress value={job.progress} />
+                <div className="text-right text-sm font-medium">{job.progress}%</div>
+                {job.error_message && <div className="rounded-lg bg-red-50 p-4 text-red-700">{job.error_message}</div>}
+                {job.result?.counts && (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {Object.entries(job.result.counts).map(([table, value]: [string, any]) => (
+                      <div key={table} className="rounded-lg border p-3">
+                        <div className="font-medium">{table.replace(/_/g, ' ')}</div>
+                        <div className="text-sm text-gray-500">Written {value.written} · Skipped {value.skipped}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
         </div>
-      )}
-
-      {/* Progress Bar */}
-      {isMigrating && (
-        <div className="mb-6">
-          <div className="flex justify-between text-sm mb-1">
-            <span>Overall Progress</span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div 
-              className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
-              style={{ width: `${progress}%` }}
-            ></div>
-          </div>
-        </div>
-      )}
-
-      {/* Action Button */}
-      <button
-        onClick={runMigration}
-        disabled={!file || isMigrating || !selectedGymId}
-        className={`w-full py-3 rounded-lg font-bold text-white transition-colors ${
-          isMigrating ? 'bg-gray-400' : isDryRun ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'
-        }`}
-      >
-        {isMigrating ? 'Processing...' : isDryRun ? 'Run Simulation' : 'Execute Final Migration'}
-      </button>
-
-      <button
-        onClick={generateMigrationSql}
-        disabled={!file || isMigrating || !selectedGymId}
-        className={`w-full mt-3 py-2 rounded-lg font-medium bg-gray-800 text-white hover:bg-gray-900 transition-colors ${!file || isMigrating ? 'opacity-50 cursor-not-allowed' : ''}`}
-      >
-        Generate Migration SQL (Download)
-      </button>
-
-      {/* Terminal Log */}
-      <div className="mt-8">
-        <h3 className="font-semibold mb-2 text-gray-700">Migration Log</h3>
-        <div className="bg-gray-900 text-green-400 p-4 rounded-lg h-64 overflow-y-auto font-mono text-xs space-y-1">
-          {logs.length === 0 && <span className="text-gray-500">// Waiting for file upload...</span>}
-          {logs.map((log, i) => (
-            <div key={i} className={`flex space-x-2 ${
-              log.type === 'error' ? 'text-red-400' : 
-              log.type === 'warning' ? 'text-amber-400' : 
-              log.type === 'success' ? 'text-green-300' : 'text-blue-300'
-            }`}>
-              <span className="opacity-50">[{log.timestamp}]</span>
-              <span>{log.message}</span>
-            </div>
-          ))}
-          <div ref={logEndRef} />
-        </div>
-      </div>
-    </div>
-      </div>
+      </main>
     </div>
   );
 };
