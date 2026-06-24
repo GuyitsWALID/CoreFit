@@ -57,12 +57,18 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
             </div>
             <div className="flex items-center gap-2">
               <Badge
-                style={{ backgroundColor: gym.status === 'active' ? gym.brand_color || '#10b981' : '#6b7280', color: 'white' }}
+                style={{
+                  backgroundColor: gym.status === 'active' ? '#39ff14' : '#6b7280',
+                  color: gym.status === 'active' ? '#052e16' : 'white',
+                  boxShadow: gym.status === 'active'
+                    ? '0 0 6px #39ff14, 0 0 14px rgba(57, 255, 20, 0.85), 0 0 24px rgba(57, 255, 20, 0.45)'
+                    : 'none',
+                  border: gym.status === 'active' ? '1px solid #b7ffab' : undefined,
+                }}
                 className="text-xs px-2 py-1"
               >
                 {gym.status}
               </Badge>
-              <div className="text-xs text-gray-500">/{gym.id}</div>
             </div>
           </div>
         </div>
@@ -112,16 +118,16 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
               )}
               <Badge 
                 style={{ 
-                  backgroundColor: gym.status === 'active' ? gym.brand_color || '#10b981' : '#6b7280',
-                  color: 'white'
+                  backgroundColor: gym.status === 'active' ? '#39ff14' : '#6b7280',
+                  color: gym.status === 'active' ? '#052e16' : 'white',
+                  boxShadow: gym.status === 'active'
+                    ? '0 0 6px #39ff14, 0 0 14px rgba(57, 255, 20, 0.85), 0 0 24px rgba(57, 255, 20, 0.45)'
+                    : 'none',
+                  border: gym.status === 'active' ? '1px solid #b7ffab' : undefined,
                 }}
               >
                 {gym.status}
               </Badge>
-              <div className="flex items-center gap-1 text-xs text-gray-500">
-                <Globe className="h-3 w-3" />
-                <span>/{gym.id}</span>
-              </div>
             </div>
           </div>
           

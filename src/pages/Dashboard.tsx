@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Users, Calendar, BadgeCheck, DollarSign, Bell } from 'lucide-react';
+import { Users, Calendar, BadgeCheck, Banknote, Bell } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { supabase } from '@/lib/supabaseClient';
 import { fetchRevenueSummary } from '@/lib/gymApi';
@@ -168,10 +168,14 @@ export default function Dashboard() {
     };
   }, [gym]);
 
-  // Custom currency formatter based on gym location (could be extended)
+  // Display CoreFit revenue in Ethiopian Birr.
   const nf = useMemo(() => {
-    // You could determine currency based on gym.address or add currency field to gym config
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    return new Intl.NumberFormat('en-ET', {
+      style: 'currency',
+      currency: 'ETB',
+      currencyDisplay: 'code',
+      maximumFractionDigits: 2,
+    });
   }, []);
 
   // Load initial data when gym is available
@@ -811,7 +815,7 @@ export default function Dashboard() {
                   <StatCard
                     title="Revenue Today"
                     value={nf.format(revenueTodayPackages)}
-                    icon={DollarSign}
+                    icon={Banknote}
                     trend={{ value: 'From payments', positive: true }}
                   />
                 </div>
