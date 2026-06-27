@@ -452,7 +452,7 @@ export default function AdminOfflineRenewals() {
     setCreatingUser(true);
 
     try {
-      let userId = crypto.randomUUID();
+      let userId: string = crypto.randomUUID();
       const password = values.password.trim();
 
       if (password) {

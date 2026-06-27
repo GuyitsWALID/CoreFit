@@ -33,6 +33,7 @@ import { usePhysicalScanner } from '@/hooks/usePhysicalScanner';
 import { useGym } from '@/contexts/GymContext';
 import { DynamicHeader } from '@/components/layout/DynamicHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { isPlaceholderEmail } from '@/lib/placeholderEmail';
 
 interface ClientCheckIn {
   id: string;
@@ -47,6 +48,8 @@ interface ClientCheckIn {
     last_name: string;
     email: string;
     package_id?: string;
+    membership_expiry?: string | null;
+    status?: string | null;
     packages?: {
       name: string;
     };
@@ -82,6 +85,34 @@ declare global {
 }
 
 type CheckInSource = 'camera' | 'manual' | 'usb';
+
+const getClientDaysLeft = (membershipExpiry?: string | null) => {
+  if (!membershipExpiry || Number.isNaN(Date.parse(membershipExpiry))) return Number.MAX_SAFE_INTEGER;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const expiryDate = new Date(membershipExpiry);
+  expiryDate.setHours(0, 0, 0, 0);
+
+  return Math.round((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+};
+
+const getEffectiveClientStatus = (user: ClientCheckIn['users']) => {
+  const status = (user.status ?? '').toLowerCase();
+  if (status === 'paused') return 'paused';
+  if (status === 'inactive') return 'inactive';
+  const daysLeft = getClientDaysLeft(user.membership_expiry);
+  if (daysLeft <= 0) return 'expired';
+  return 'active';
+};
+
+const clientStatusColors: Record<string, string> = {
+  active: 'bg-green-100 text-green-800',
+  expired: 'bg-red-100 text-red-800',
+  paused: 'bg-yellow-100 text-yellow-800',
+  inactive: 'bg-gray-100 text-gray-800',
+};
 
 export default function CheckIns() {
   const { toast } = useToast();
@@ -295,6 +326,8 @@ export default function CheckIns() {
             last_name,
             email,
             package_id,
+            membership_expiry,
+            status,
             gym_id,
             packages (
               name
@@ -381,9 +414,10 @@ export default function CheckIns() {
       // Search filter
       if (!searchTerm) return true;
       const fullName = `${checkIn.users.first_name} ${checkIn.users.last_name}`;
+      const email = isPlaceholderEmail(checkIn.users.email) ? '' : checkIn.users.email;
       return (
         fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        checkIn.users.email.toLowerCase().includes(searchTerm.toLowerCase())
+        email.toLowerCase().includes(searchTerm.toLowerCase())
       );
     });
 
@@ -1546,41 +1580,62 @@ export default function CheckIns() {
                           <TableHead>Member</TableHead>
                           <TableHead>Package</TableHead>
                           <TableHead>Check-in Time</TableHead>
-                          <TableHead>Check-out Time</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Days Left</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {isLoading ? (
-                          <TableRow><TableCell colSpan={4} className="text-center">Loading...</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={5} className="text-center">Loading...</TableCell></TableRow>
                         ) : filteredClientCheckIns.length > 0 ? (
-                          filteredClientCheckIns.map(checkIn => (
-                            <TableRow key={checkIn.id}>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <Avatar>
-                                    <AvatarImage />
-                                    <AvatarFallback>{`${checkIn.users.first_name[0]}${checkIn.users.last_name[0]}`}</AvatarFallback>
-                                  </Avatar>
-                                  <div>
-                                    <p className="font-medium">{`${checkIn.users.first_name} ${checkIn.users.last_name}`}</p>
-                                    <p className="text-sm text-muted-foreground">{checkIn.users.email}</p>
-                                  </div>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <Badge 
-                                  style={{ backgroundColor: `${dynamicStyles.primaryColor}20`, color: dynamicStyles.primaryColor }}
-                                >
-                                  {checkIn.users.packages?.name || 'N/A'}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>{new Date(checkIn.checkin_time).toLocaleTimeString()}</TableCell>
-                              <TableCell>{checkIn.checkout_time ? new Date(checkIn.checkout_time).toLocaleTimeString() : 'N/A'}</TableCell>
-                            </TableRow>
-                          ))
+                          filteredClientCheckIns.map(checkIn => {
+                              const effectiveStatus = getEffectiveClientStatus(checkIn.users);
+                              const daysLeft = getClientDaysLeft(checkIn.users.membership_expiry);
+                              const displayEmail = isPlaceholderEmail(checkIn.users.email) ? '-' : checkIn.users.email;
+
+                              return (
+                                <TableRow key={checkIn.id}>
+                                  <TableCell>
+                                    <div className="flex items-center gap-2">
+                                      <Avatar>
+                                        <AvatarImage />
+                                        <AvatarFallback>{`${checkIn.users.first_name[0] || ''}${checkIn.users.last_name[0] || ''}`}</AvatarFallback>
+                                      </Avatar>
+                                      <div>
+                                        <p className="font-medium">{`${checkIn.users.first_name} ${checkIn.users.last_name}`}</p>
+                                        <p className="text-sm text-muted-foreground">{displayEmail}</p>
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge 
+                                      style={{ backgroundColor: `${dynamicStyles.primaryColor}20`, color: dynamicStyles.primaryColor }}
+                                    >
+                                      {checkIn.users.packages?.name || 'N/A'}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>{new Date(checkIn.checkin_time).toLocaleTimeString()}</TableCell>
+                                  <TableCell>
+                                    <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${clientStatusColors[effectiveStatus] || clientStatusColors.inactive}`}>
+                                      {effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1)}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className={`font-semibold ${daysLeft > 5 ? 'text-green-600' : daysLeft > 0 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                      {daysLeft === Number.MAX_SAFE_INTEGER
+                                        ? '-'
+                                        : daysLeft >= 0
+                                          ? `${daysLeft} days`
+                                          : `${Math.abs(daysLeft)} overdue`}
+                                    </span>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            }
+                          )
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={4} className="text-center">
+                            <TableCell colSpan={5} className="text-center">
                               No client check-ins found for {gym.name}.
                             </TableCell>
                           </TableRow>

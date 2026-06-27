@@ -346,7 +346,7 @@ export default function RegisterClient() {
         createsPortalLogin: Boolean(password),
       });
 
-      let userId = crypto.randomUUID();
+      let userId: string = crypto.randomUUID();
 
       if (password) {
         const { data: existingAuth } = await supabase.auth.getSession();
