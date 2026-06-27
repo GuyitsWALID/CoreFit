@@ -35,10 +35,17 @@ import { fetchTrainers } from "@/lib/supabase_trainer_query";
 import FreezeActionModal from "../components/Modals/FreezeActionModal.tsx";
 import type { OfflineRenewalPackage } from "@/components/Modals/OfflineRenewalModal";
 
+type CouponMembershipInfo = MembershipInfo & {
+  is_coupon?: boolean;
+  number_of_passes?: number | null;
+  coupon_used_passes?: number;
+  coupon_remaining_passes?: number;
+};
 
 const statusColors: Record<string, string> = {
   active: "text-green-600 bg-green-50",
   expired: "text-red-600 bg-red-50",
+  used_up: "text-red-600 bg-red-50",
   paused: "text-yellow-600 bg-yellow-50",
 };
 
@@ -53,7 +60,7 @@ export default function MembershipList() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [packageFilter, setPackageFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("all");
-  const [members, setMembers] = useState<MembershipInfo[]>([]);
+  const [members, setMembers] = useState<CouponMembershipInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingMembers, setIsRefreshingMembers] = useState(false);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | 'none'>('none');
@@ -185,6 +192,81 @@ export default function MembershipList() {
     localStorage.setItem(MEMBERSHIP_CALENDAR_PREF_KEY, checked ? "ethiopian" : "gregorian");
   };
 
+  const calculateDateDaysLeft = (expiry: string | null | undefined) => {
+    if (!expiry) return Number.MAX_SAFE_INTEGER;
+    return Math.ceil((new Date(expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  };
+
+  const enrichCouponMembershipRows = async (rows: any[]): Promise<CouponMembershipInfo[]> => {
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+
+    const normalizedRows = rows.map((row) => ({
+      ...row,
+      user_id: row.user_id ?? row.id,
+      days_left: typeof row.days_left === 'number' ? row.days_left : calculateDateDaysLeft(row.membership_expiry),
+    })) as CouponMembershipInfo[];
+
+    const packageIds = Array.from(new Set(normalizedRows.map((row) => row.package_id).filter(Boolean))) as string[];
+    if (packageIds.length === 0) return normalizedRows;
+
+    const { data: packageRows, error: packageError } = await supabase
+      .from('packages')
+      .select('id, is_coupon, number_of_passes')
+      .in('id', packageIds);
+
+    if (packageError) {
+      console.warn('Could not load coupon package metadata:', packageError.message);
+      return normalizedRows;
+    }
+
+    const packageById = new Map((packageRows || []).map((pkg: any) => [pkg.id, pkg]));
+    const couponRows = normalizedRows.filter((row) => Boolean(packageById.get(row.package_id || '')?.is_coupon));
+
+    const couponUsageByUser = new Map<string, number>();
+    await Promise.all(couponRows.map(async (row) => {
+      if (!row.user_id || !row.membership_expiry) {
+        couponUsageByUser.set(row.user_id, 0);
+        return;
+      }
+
+      const periodStart = row.created_at || '1970-01-01T00:00:00.000Z';
+      const { count, error } = await supabase
+        .from('client_checkins')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', row.user_id)
+        .gte('checkin_time', periodStart)
+        .lte('checkin_time', row.membership_expiry);
+
+      if (error) {
+        console.warn(`Could not count coupon check-ins for ${row.user_id}:`, error.message);
+        couponUsageByUser.set(row.user_id, 0);
+        return;
+      }
+
+      couponUsageByUser.set(row.user_id, count ?? 0);
+    }));
+
+    return normalizedRows.map((row) => {
+      const packageMeta = packageById.get(row.package_id || '');
+      const isCoupon = Boolean(packageMeta?.is_coupon);
+      if (!isCoupon) return { ...row, is_coupon: false };
+
+      const passLimit = Number(packageMeta?.number_of_passes || 0);
+      const usedPasses = couponUsageByUser.get(row.user_id) ?? 0;
+      const remainingPasses = Math.max(0, passLimit - usedPasses);
+      const dateDaysLeft = calculateDateDaysLeft(row.membership_expiry);
+
+      return {
+        ...row,
+        is_coupon: true,
+        number_of_passes: passLimit,
+        coupon_used_passes: usedPasses,
+        coupon_remaining_passes: remainingPasses,
+        days_left: dateDaysLeft <= 0 ? dateDaysLeft : remainingPasses,
+      };
+    });
+  };
+
   // Filter members by gym if gym context is available
   // This version performs DB-side filtering so selecting a status/tab triggers an API query
   const fetchMembershipData = async (opts?: { searchTerm?: string; statusFilter?: string; packageFilter?: string; activeTab?: string; page?: number; showPageLoading?: boolean; }) => {
@@ -218,7 +300,7 @@ export default function MembershipList() {
 
           const { data: viewData, error: viewErr } = await viewQuery;
           if (!viewErr && Array.isArray(viewData)) {
-            setMembers(viewData || []);
+            setMembers(await enrichCouponMembershipRows(viewData || []));
             setIsLoading(false);
             setIsRefreshingMembers(false);
             return;
@@ -299,7 +381,7 @@ export default function MembershipList() {
             }
           });
 
-          setMembers(merged);
+          setMembers(await enrichCouponMembershipRows(merged));
           setIsLoading(false);
           setIsRefreshingMembers(false);
           return;
@@ -322,15 +404,6 @@ export default function MembershipList() {
           else viewQuery = viewQuery.eq('package_name', pkFilter);
         }
 
-        if (tab && tab !== 'all') {
-          if (tab === 'expiring') {
-            viewQuery = viewQuery.lte('days_left', 10).gt('days_left', 0);
-          }
-          if (tab === 'expired') {
-            viewQuery = viewQuery.lte('days_left', 0);
-          }
-        }
-
         if (sortOrder === 'asc') {
           viewQuery = viewQuery.order('full_name', { ascending: true });
         } else if (sortOrder === 'desc') {
@@ -342,7 +415,7 @@ export default function MembershipList() {
         const { data: viewData, error: viewErr } = await viewQuery;
 
         if (!viewErr && Array.isArray(viewData)) {
-          setMembers(viewData || []);
+          setMembers(await enrichCouponMembershipRows(viewData || []));
           setIsLoading(false);
           setIsRefreshingMembers(false);
           return;
@@ -370,15 +443,6 @@ export default function MembershipList() {
         else query = query.eq('package_name', pkFilter);
       }
 
-      if (tab && tab !== 'all') {
-        if (tab === 'expiring') {
-          query = query.lte('days_left', 10).gt('days_left', 0);
-        }
-        if (tab === 'expired') {
-          query = query.lte('days_left', 0);
-        }
-      }
-
       if (sortOrder === 'asc') {
         query = query.order('full_name', { ascending: true });
       } else if (sortOrder === 'desc') {
@@ -396,7 +460,7 @@ export default function MembershipList() {
           variant: "destructive"
         });
       } else {
-        setMembers(data || []);
+        setMembers(await enrichCouponMembershipRows(data || []));
       }
     } catch (error: any) {
       toast({
@@ -533,7 +597,8 @@ export default function MembershipList() {
   
 
   // Computed values - Update all counts to use frontend logic
-  const packageTypes = Array.from(new Set(members.map((m) => m.package_name))).sort();
+  const packageTypes = Array.from(new Set(members.map((m) => m.package_name).filter(Boolean))) as string[];
+  packageTypes.sort();
   
   // Use DB-driven counts for accuracy (keeps Dashboard and Membership counts consistent)
   const [dbTotalCount, setDbTotalCount] = useState<number>(0);
@@ -543,24 +608,37 @@ export default function MembershipList() {
 
 
 
-  // Fallback client-side calculations kept for local UI but display uses DB counts
-  // Use nullish coalescing (??) so a DB count of 0 is respected and not replaced by client fallback
-  const allMembersCount = dbTotalCount ?? members.length;
-  const expiringCount = dbExpiringCount ?? members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
-  const expiredCount = dbExpiredCount ?? members.filter((m) => m.days_left <= 0).length;
-  const activeCount = dbActiveCount ?? members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
+  const isCouponUsedUp = (m: CouponMembershipInfo) =>
+    Boolean(m.is_coupon) && typeof m.coupon_remaining_passes === 'number' && m.coupon_remaining_passes <= 0;
 
-  // Client-side filtering for status (paused/inactive/expired). Active uses the DB-driven branch above.
-  const computeStatus = (m: MembershipInfo) => {
+  const computeStatus = (m: CouponMembershipInfo) => {
     const st = (m.status ?? '').toLowerCase();
     if (st === 'paused') return 'paused';
     if (st === 'inactive') return 'inactive';
+    if (isCouponUsedUp(m)) return 'expired';
     if (typeof m.days_left === 'number') {
       if (m.days_left <= 0) return 'expired';
       return 'active';
     }
     return 'active';
   };
+
+  const isExpiringMembership = (m: CouponMembershipInfo) => {
+    if (m.is_coupon) {
+      return computeStatus(m) === 'active' && (m.coupon_remaining_passes ?? m.days_left) <= 10;
+    }
+
+    return m.days_left <= 10 && m.days_left > 0;
+  };
+
+  const hasCouponMembers = members.some((member) => member.is_coupon);
+
+  // Fallback client-side calculations kept for local UI. Coupon packages use client-side counts
+  // because "used up" is derived from check-in history rather than membership_expiry alone.
+  const allMembersCount = dbTotalCount ?? members.length;
+  const expiringCount = hasCouponMembers ? members.filter(isExpiringMembership).length : dbExpiringCount ?? members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
+  const expiredCount = hasCouponMembers ? members.filter((m) => computeStatus(m) === 'expired').length : dbExpiredCount ?? members.filter((m) => m.days_left <= 0).length;
+  const activeCount = hasCouponMembers ? members.filter((m) => computeStatus(m) === 'active').length : dbActiveCount ?? members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
 
   const filteredMembers = members.filter((member) => {
     const searchableEmail = isPlaceholderEmail(member.email) ? '' : member.email || '';
@@ -576,9 +654,9 @@ export default function MembershipList() {
 
     let matchesTab = true;
     if (activeTab === "all") matchesTab = true;
-    if (activeTab === "active") matchesTab = (member.days_left > 0) || (member.membership_expiry === null);
-    if (activeTab === "expiring") matchesTab = member.days_left <= 10 && member.days_left > 0;
-    if (activeTab === "expired") matchesTab = member.days_left <= 0;
+    if (activeTab === "active") matchesTab = computeStatus(member) === 'active';
+    if (activeTab === "expiring") matchesTab = isExpiringMembership(member);
+    if (activeTab === "expired") matchesTab = computeStatus(member) === 'expired';
 
     return matchesSearch && matchesStatus && matchesPackage && matchesTab;
   }).sort((a, b) => {

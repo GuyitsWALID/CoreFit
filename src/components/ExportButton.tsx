@@ -9,12 +9,14 @@ interface MembershipInfo {
   full_name: string;
   email: string;
   phone: string;
-  package_id: string;
-  package_name: string;
+  package_id: string | null;
+  package_name: string | null;
   created_at: string;
-  membership_expiry: string;
+  membership_expiry: string | null;
   status: string;
   days_left: number;
+  is_coupon?: boolean;
+  coupon_remaining_passes?: number;
 }
 
 interface ExportButtonProps {
@@ -33,18 +35,20 @@ export function ExportButton({ filteredMembers }: ExportButtonProps) {
       'Created At',
       'Membership Expiry',
       'Status',
-      'Days Left'
+      'Remaining'
     ];
 
     const csvData = filteredMembers.map(member => [
       member.full_name,
       isPlaceholderEmail(member.email) ? '' : member.email,
       isPlaceholderPhone(member.phone) ? '' : member.phone,
-      member.package_name,
+      member.package_name || '',
       member.created_at ? new Date(member.created_at).toLocaleDateString() : '-',
       member.membership_expiry ? new Date(member.membership_expiry).toLocaleDateString() : '-',
       member.status,
-      member.days_left >= 0 ? member.days_left.toString() : `${Math.abs(member.days_left)} overdue`
+      member.is_coupon
+        ? `${member.coupon_remaining_passes ?? member.days_left} passes left`
+        : member.days_left >= 0 ? member.days_left.toString() : `${Math.abs(member.days_left)} overdue`
     ]);
 
     const csvContent = [csvHeaders, ...csvData]

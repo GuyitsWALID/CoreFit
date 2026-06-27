@@ -38,6 +38,7 @@ interface Package {
   duration_unit: string;
   access_level: string;
   number_of_passes: number;
+  is_coupon?: boolean;
   requires_trainer: boolean;
   description?: string;
   created_at: string;
@@ -67,6 +68,7 @@ export default function Packages() {
     duration_unit: "months",
     access_level: "", // Initialize as empty string
     number_of_passes: "0",
+    is_coupon: false,
     requires_trainer: false,
     description: ""
   });
@@ -191,6 +193,7 @@ export default function Packages() {
       duration_unit: "months",
       access_level: accessLevelTypes.length > 0 ? accessLevelTypes[0].value : "",
       number_of_passes: "0",
+      is_coupon: false,
       requires_trainer: false,
       description: ""
     });
@@ -207,6 +210,7 @@ export default function Packages() {
       duration_unit: pkg.duration_unit || "months",
       access_level: pkg.access_level || (accessLevelTypes.length > 0 ? accessLevelTypes[0].value : ""),
       number_of_passes: (pkg.number_of_passes || 0).toString(),
+      is_coupon: Boolean(pkg.is_coupon),
       requires_trainer: pkg.requires_trainer || false,
       description: pkg.description || ""
     });
@@ -300,6 +304,15 @@ export default function Packages() {
       return;
     }
 
+    if (formData.is_coupon && (!Number.isFinite(Number(formData.number_of_passes)) || Number(formData.number_of_passes) <= 0)) {
+      toast({
+        title: "Validation Error",
+        description: "Coupon packages require a positive number of passes.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const packageData = {
       name: formData.name.trim(),
       price: parseFloat(formData.price),
@@ -307,6 +320,7 @@ export default function Packages() {
       duration_unit: formData.duration_unit,
       access_level: formData.access_level,
       number_of_passes: parseInt(formData.number_of_passes),
+      is_coupon: Boolean(formData.is_coupon),
       requires_trainer: formData.requires_trainer,
       description: formData.description.trim() || null,
       gym_id: gym.id // Add gym_id to associate package with current gym
@@ -380,9 +394,15 @@ export default function Packages() {
               Archived
             </span>
           )}
+          {pkg.is_coupon && (
+            <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">
+              Coupon
+            </span>
+          )}
         </CardTitle>
         <CardDescription>
           {pkg.duration_value} {pkg.duration_unit} • {accessLevelTypes.find(type => type.value === pkg.access_level)?.label || pkg.access_level}
+          {pkg.is_coupon && ` • ${pkg.number_of_passes} passes`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -397,7 +417,9 @@ export default function Packages() {
           </li>
           <li className="flex items-center">
             <span className="h-1.5 w-1.5 rounded-full mr-2" style={{ backgroundColor: dynamicStyles.primaryColor }}></span>
-            {pkg.number_of_passes} pass{pkg.number_of_passes !== 1 ? 'es' : ''} allowed
+            {pkg.is_coupon
+              ? `${pkg.number_of_passes} coupon pass${pkg.number_of_passes !== 1 ? 'es' : ''} / ${pkg.duration_value} ${pkg.duration_unit}`
+              : `${pkg.number_of_passes} pass${pkg.number_of_passes !== 1 ? 'es' : ''} allowed`}
           </li>
           <li className="flex items-center">
             <span className="h-1.5 w-1.5 rounded-full mr-2" style={{ backgroundColor: dynamicStyles.primaryColor }}></span>
@@ -443,10 +465,16 @@ export default function Packages() {
               Archived
             </span>
           )}
+          {pkg.is_coupon && (
+            <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">
+              Coupon
+            </span>
+          )}
         </div>
         <p className="text-2xl font-bold mb-1" style={{ color: dynamicStyles.primaryColor }}>{pkg.price} ETB</p>
         <p className="text-sm text-gray-600">
           {pkg.duration_value} {pkg.duration_unit} • {accessLevelTypes.find(type => type.value === pkg.access_level)?.label || pkg.access_level}
+          {pkg.is_coupon && ` • ${pkg.number_of_passes} passes`}
           {pkg.requires_trainer && ' • Trainer Required'}
         </p>
         {pkg.description && (
@@ -666,6 +694,29 @@ export default function Packages() {
                             placeholder="0"
                             className="h-9"
                           />
+                          {formData.is_coupon && (
+                            <p className="text-xs text-gray-500">
+                              Coupon members can check in this many times during the package period.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-start space-x-2 rounded-md border border-gray-200 p-3">
+                          <input
+                            type="checkbox"
+                            id="is_coupon"
+                            name="is_coupon"
+                            checked={formData.is_coupon}
+                            onChange={handleInputChange}
+                            className="mt-1 h-4 w-4 rounded"
+                            style={{ accentColor: dynamicStyles.primaryColor }}
+                          />
+                          <div>
+                            <Label htmlFor="is_coupon" className="text-sm font-medium">Coupon Package</Label>
+                            <p className="text-xs text-gray-500">
+                              Uses Number of Passes as the check-in limit during the package duration.
+                            </p>
+                          </div>
                         </div>
                         
                         <div className="flex items-center space-x-2">

@@ -48,10 +48,18 @@ interface ClientCheckIn {
     last_name: string;
     email: string;
     package_id?: string;
+    created_at?: string | null;
     membership_expiry?: string | null;
     status?: string | null;
+    coupon_used_passes?: number;
+    coupon_remaining_passes?: number;
     packages?: {
       name: string;
+      access_level?: string | null;
+      is_coupon?: boolean | null;
+      number_of_passes?: number | null;
+      duration_value?: number | null;
+      duration_unit?: string | null;
     };
   };
 }
@@ -86,6 +94,17 @@ declare global {
 
 type CheckInSource = 'camera' | 'manual' | 'usb';
 
+type PackageSnapshot = {
+  name: string | null;
+  access_level: string | null;
+  is_coupon: boolean;
+  number_of_passes: number;
+  duration_value?: number | null;
+  duration_unit?: string | null;
+};
+
+const PACKAGE_CHECKIN_SELECT = 'name, access_level, is_coupon, number_of_passes, duration_value, duration_unit';
+
 const getClientDaysLeft = (membershipExpiry?: string | null) => {
   if (!membershipExpiry || Number.isNaN(Date.parse(membershipExpiry))) return Number.MAX_SAFE_INTEGER;
 
@@ -102,6 +121,9 @@ const getEffectiveClientStatus = (user: ClientCheckIn['users']) => {
   const status = (user.status ?? '').toLowerCase();
   if (status === 'paused') return 'paused';
   if (status === 'inactive') return 'inactive';
+  if (user.packages?.is_coupon && typeof user.coupon_remaining_passes === 'number' && user.coupon_remaining_passes <= 0) {
+    return getClientDaysLeft(user.membership_expiry) <= 0 ? 'expired' : 'used_up';
+  }
   const daysLeft = getClientDaysLeft(user.membership_expiry);
   if (daysLeft <= 0) return 'expired';
   return 'active';
@@ -110,6 +132,7 @@ const getEffectiveClientStatus = (user: ClientCheckIn['users']) => {
 const clientStatusColors: Record<string, string> = {
   active: 'bg-green-100 text-green-800',
   expired: 'bg-red-100 text-red-800',
+  used_up: 'bg-red-100 text-red-800',
   paused: 'bg-yellow-100 text-yellow-800',
   inactive: 'bg-gray-100 text-gray-800',
 };
@@ -244,6 +267,121 @@ export default function CheckIns() {
     }
   };
 
+  const normalizePackageSnapshot = (packageInfo: any): PackageSnapshot | null => {
+    const pkg = Array.isArray(packageInfo) ? packageInfo[0] : packageInfo;
+    if (!pkg) return null;
+
+    return {
+      name: pkg.name || null,
+      access_level: pkg.access_level || pkg.accessLevel || null,
+      is_coupon: Boolean(pkg.is_coupon),
+      number_of_passes: Number(pkg.number_of_passes ?? 0),
+      duration_value: pkg.duration_value ?? null,
+      duration_unit: pkg.duration_unit ?? null,
+    };
+  };
+
+  const resolvePackageSnapshot = async (user: any): Promise<PackageSnapshot | null> => {
+    const fromRelation = normalizePackageSnapshot(user?.packages);
+    if (fromRelation) return fromRelation;
+    if (!user?.package_id) return null;
+
+    const { data: pkgRow, error } = await supabase
+      .from('packages')
+      .select(PACKAGE_CHECKIN_SELECT)
+      .eq('id', user.package_id)
+      .maybeSingle();
+
+    if (error) {
+      logCheckInError('Package lookup failed during check-in', error);
+      throw new Error(`Package lookup failed: ${error.message}`);
+    }
+
+    return normalizePackageSnapshot(pkgRow);
+  };
+
+  const validateCouponAccess = async (user: any, pkg: PackageSnapshot | null): Promise<boolean> => {
+    if (!pkg?.is_coupon) return true;
+
+    const passLimit = Number(pkg.number_of_passes || 0);
+    if (passLimit <= 0) {
+      toast({
+        title: 'Coupon package misconfigured',
+        description: 'This coupon package does not have any allowed passes.',
+        variant: 'destructive',
+      });
+      setQrStatus('error');
+      return false;
+    }
+
+    if (!user?.membership_expiry || Number.isNaN(Date.parse(user.membership_expiry))) {
+      toast({
+        title: 'Membership expiry missing',
+        description: 'This coupon package needs a valid membership expiry.',
+        variant: 'destructive',
+      });
+      setQrStatus('error');
+      return false;
+    }
+
+    const now = new Date();
+    const expiryDate = new Date(user.membership_expiry);
+    if (expiryDate < now) {
+      toast({
+        title: 'Membership expired',
+        description: 'This coupon package period has ended.',
+        variant: 'destructive',
+      });
+      setQrStatus('error');
+      return false;
+    }
+
+    const periodStart = user.created_at && !Number.isNaN(Date.parse(user.created_at))
+      ? new Date(user.created_at).toISOString()
+      : new Date(0).toISOString();
+
+    const { count, error } = await supabase
+      .from('client_checkins')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .gte('checkin_time', periodStart)
+      .lte('checkin_time', expiryDate.toISOString());
+
+    if (error) {
+      logCheckInError('Coupon check-in count failed', error);
+      throw new Error(`Could not check coupon usage: ${error.message}`);
+    }
+
+    const usedPasses = count ?? 0;
+    const remainingPasses = passLimit - usedPasses;
+    if (remainingPasses <= 0) {
+      toast({
+        title: 'Coupon used up',
+        description: `This member has used all ${passLimit} allowed check-ins for this package.`,
+        variant: 'destructive',
+      });
+      setQrStatus('error');
+      return false;
+    }
+
+    addDebugInfo(`Coupon passes remaining before check-in: ${remainingPasses}/${passLimit}`);
+    return true;
+  };
+
+  const validatePackageForCheckIn = async (user: any): Promise<PackageSnapshot | null | false> => {
+    const pkg = await resolvePackageSnapshot(user);
+    const { allowed, reason } = checkPackageAccess(pkg?.access_level || undefined);
+    if (!allowed) {
+      addDebugInfo(`Access denied by package (${pkg?.access_level || 'unknown'}): ${reason}`);
+      toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
+      setQrStatus('error');
+      return false;
+    }
+
+    const couponAllowed = await validateCouponAccess(user, pkg);
+    return couponAllowed ? pkg : false;
+  };
+
   // Safely insert a client_checkins row but fallback if package columns are missing in DB schema
   const safeInsertClientCheckin = async (payload: Record<string, any>) => {
     try {
@@ -310,6 +448,62 @@ export default function CheckIns() {
     }
   };
 
+  const enrichClientCheckInsForCoupons = async (checkIns: any[]): Promise<ClientCheckIn[]> => {
+    if (!Array.isArray(checkIns) || checkIns.length === 0) return [];
+
+    const uniqueCouponUsers = Array.from(
+      new Map(
+        checkIns
+          .filter((checkIn) => Boolean(checkIn.users?.packages?.is_coupon))
+          .map((checkIn) => [checkIn.users.id, checkIn.users])
+      ).values()
+    );
+
+    const usageByUser = new Map<string, number>();
+    await Promise.all(uniqueCouponUsers.map(async (user: any) => {
+      if (!user?.id || !user?.membership_expiry) {
+        usageByUser.set(user?.id, 0);
+        return;
+      }
+
+      const periodStart = user.created_at && !Number.isNaN(Date.parse(user.created_at))
+        ? user.created_at
+        : '1970-01-01T00:00:00.000Z';
+
+      const { count, error } = await supabase
+        .from('client_checkins')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('checkin_time', periodStart)
+        .lte('checkin_time', user.membership_expiry);
+
+      if (error) {
+        console.warn(`Could not count coupon check-ins for ${user.id}:`, error.message);
+        usageByUser.set(user.id, 0);
+        return;
+      }
+
+      usageByUser.set(user.id, count ?? 0);
+    }));
+
+    return checkIns.map((checkIn) => {
+      const pkg = checkIn.users?.packages;
+      if (!pkg?.is_coupon) return checkIn;
+
+      const passLimit = Number(pkg.number_of_passes || 0);
+      const usedPasses = usageByUser.get(checkIn.users.id) ?? 0;
+
+      return {
+        ...checkIn,
+        users: {
+          ...checkIn.users,
+          coupon_used_passes: usedPasses,
+          coupon_remaining_passes: Math.max(0, passLimit - usedPasses),
+        },
+      };
+    });
+  };
+
   const fetchCheckIns = async () => {
     if (!gym || gym.id === 'default') return;
     
@@ -326,11 +520,17 @@ export default function CheckIns() {
             last_name,
             email,
             package_id,
+            created_at,
             membership_expiry,
             status,
             gym_id,
             packages (
-              name
+              name,
+              access_level,
+              is_coupon,
+              number_of_passes,
+              duration_value,
+              duration_unit
             )
           )
         `)
@@ -351,7 +551,7 @@ export default function CheckIns() {
           variant: "destructive"
         });
       } else {
-        setClientCheckIns(clientData || []);
+        setClientCheckIns(await enrichClientCheckInsForCoupons(clientData || []));
       }
 
       // Fetch staff check-ins filtered by gym_id
@@ -817,7 +1017,7 @@ export default function CheckIns() {
           // Look up user by ID
           let userQuery = supabase
             .from('users')
-            .select('id, first_name, last_name, email, package_id, gym_id, packages(name, access_level)')
+            .select(`id, first_name, last_name, email, package_id, gym_id, created_at, membership_expiry, packages(${PACKAGE_CHECKIN_SELECT})`)
             .eq('id', qrData.userId);
 
           // Filter by gym if available
@@ -848,27 +1048,8 @@ export default function CheckIns() {
 
             addDebugInfo(`Found user: ${userMatch.first_name} ${userMatch.last_name}`);
 
-            // Resolve package name & access level (try relation first, else lookup by package_id)
-            let packageName: string | null = null;
-            let packageAccessLevel: string | null = null;
-            if (userMatch.packages) {
-              const pkg = Array.isArray(userMatch.packages) ? userMatch.packages[0] : userMatch.packages;
-              packageName = pkg?.name || null;
-              packageAccessLevel = pkg?.access_level || (pkg as any)?.accessLevel || null;
-            } else if (userMatch.package_id) {
-              const { data: pkgRow } = await supabase.from('packages').select('name, access_level').eq('id', userMatch.package_id).maybeSingle();
-              packageName = (pkgRow as any)?.name || null;
-              packageAccessLevel = (pkgRow as any)?.access_level || (pkgRow as any)?.accessLevel || null;
-            }
-
-            // Enforce package access rules
-            const { allowed, reason } = checkPackageAccess(packageAccessLevel);
-            if (!allowed) {
-              addDebugInfo(`Access denied by package (${packageAccessLevel || 'unknown'}): ${reason}`);
-              toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
-              setQrStatus('error');
-              return;
-            }
+            const packageSnapshot = await validatePackageForCheckIn(userMatch);
+            if (packageSnapshot === false) return;
 
             // Insert into client_checkins with gym_id and package metadata
             const checkInData = {
@@ -876,8 +1057,8 @@ export default function CheckIns() {
               checkin_time: nowIso,
               checkin_date: dateStr,
               gym_id: gym?.id || null,
-              package_type_at_checkin: packageName,
-              package_access_level_at_checkin: packageAccessLevel || null,
+              package_type_at_checkin: packageSnapshot?.name || null,
+              package_access_level_at_checkin: packageSnapshot?.access_level || null,
             };
 
             const insertResult = await safeInsertClientCheckin(checkInData);
@@ -980,7 +1161,7 @@ export default function CheckIns() {
       // Fallback: Try to match by qr_code_data field in users table
       const { data: userByQrCode, error: qrCodeErr } = await supabase
         .from('users')
-            .select('id, first_name, last_name, email, package_id, packages(name, access_level), qr_code_data')
+            .select(`id, first_name, last_name, email, package_id, created_at, membership_expiry, packages(${PACKAGE_CHECKIN_SELECT}), qr_code_data`)
         .eq('gym_id', gym?.id)
         .eq('qr_code_data', code)
         .maybeSingle();
@@ -1010,24 +1191,14 @@ export default function CheckIns() {
           gym_id: gym?.id || null,
         };
 
-        const packageInfo = userByQrCode.packages as any;
-        const packageName = Array.isArray(packageInfo) ? packageInfo[0]?.name || null : packageInfo?.name || null;
-        const packageAccessLevel = Array.isArray(packageInfo) ? packageInfo[0]?.access_level || packageInfo[0]?.accessLevel || null : packageInfo?.access_level || packageInfo?.accessLevel || null;
-
-        // Enforce package access rules
-        const { allowed, reason } = checkPackageAccess(packageAccessLevel);
-        if (!allowed) {
-          addDebugInfo(`Access denied by package (${packageAccessLevel || 'unknown'}): ${reason}`);
-          toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
-          setQrStatus('error');
-          return;
-        }
+        const packageSnapshot = await validatePackageForCheckIn(userByQrCode);
+        if (packageSnapshot === false) return;
 
         const extendedCheckInData = {
           ...checkInData,
           'QR-CODE USED': true,
-          package_type_at_checkin: packageName,
-          package_access_level_at_checkin: packageAccessLevel || null,
+          package_type_at_checkin: packageSnapshot?.name || null,
+          package_access_level_at_checkin: packageSnapshot?.access_level || null,
         };
 
         const insertResult = await safeInsertClientCheckin(extendedCheckInData);
@@ -1136,7 +1307,7 @@ export default function CheckIns() {
       if (kind !== 'staff') {
         const { data: userById } = await supabase
           .from('users')
-          .select('id, first_name, last_name, email, package_id, packages(name, access_level)')
+          .select(`id, first_name, last_name, email, package_id, created_at, membership_expiry, packages(${PACKAGE_CHECKIN_SELECT})`)
           .eq('gym_id', gym?.id)
           .eq('id', id)
           .maybeSingle();
@@ -1196,29 +1367,14 @@ export default function CheckIns() {
           gym_id: gym?.id || null,
         };
 
-        // Resolve package access level if available
-        let packageAccessLevel: string | null = null;
-        if (person.package_id) {
-          const { data: pkgRow } = await supabase.from('packages').select('access_level, name').eq('id', person.package_id).maybeSingle();
-          packageAccessLevel = (pkgRow as any)?.access_level || (pkgRow as any)?.accessLevel || null;
-        } else if (person.packages) {
-          const pkg = Array.isArray(person.packages) ? person.packages[0] : person.packages;
-          packageAccessLevel = pkg?.access_level || pkg?.accessLevel || null;
-        }
-
-        const { allowed, reason } = checkPackageAccess(packageAccessLevel);
-        if (!allowed) {
-          addDebugInfo(`Access denied by package (${packageAccessLevel || 'unknown'}): ${reason}`);
-          toast({ title: 'Access denied', description: `Access denied: your package allows ${reason}.`, variant: 'destructive' });
-          setQrStatus('error');
-          return;
-        }
+        const packageSnapshot = await validatePackageForCheckIn(person);
+        if (packageSnapshot === false) return;
 
         const extendedCheckInData = {
           ...checkInData,
           'QR-CODE USED': true,
-          package_type_at_checkin: person.packages?.name || null,
-          package_access_level_at_checkin: packageAccessLevel || null,
+          package_type_at_checkin: packageSnapshot?.name || null,
+          package_access_level_at_checkin: packageSnapshot?.access_level || null,
         };
 
         const insertResult = await safeInsertClientCheckin(extendedCheckInData);
@@ -1581,7 +1737,7 @@ export default function CheckIns() {
                           <TableHead>Package</TableHead>
                           <TableHead>Check-in Time</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead>Days Left</TableHead>
+                          <TableHead>Remaining</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1591,6 +1747,21 @@ export default function CheckIns() {
                           filteredClientCheckIns.map(checkIn => {
                               const effectiveStatus = getEffectiveClientStatus(checkIn.users);
                               const daysLeft = getClientDaysLeft(checkIn.users.membership_expiry);
+                              const isCoupon = Boolean(checkIn.users.packages?.is_coupon);
+                              const passesLeft = checkIn.users.coupon_remaining_passes ?? 0;
+                              const remainingValue = isCoupon
+                                ? `${passesLeft} pass${passesLeft === 1 ? '' : 'es'}`
+                                : daysLeft === Number.MAX_SAFE_INTEGER
+                                  ? '-'
+                                  : daysLeft >= 0
+                                    ? `${daysLeft} days`
+                                    : `${Math.abs(daysLeft)} overdue`;
+                              const remainingColor = isCoupon
+                                ? passesLeft > 5 ? 'text-green-600' : passesLeft > 0 ? 'text-yellow-600' : 'text-red-600'
+                                : daysLeft > 5 ? 'text-green-600' : daysLeft > 0 ? 'text-yellow-600' : 'text-red-600';
+                              const statusLabel = effectiveStatus === 'used_up'
+                                ? 'Used Up'
+                                : effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1);
                               const displayEmail = isPlaceholderEmail(checkIn.users.email) ? '-' : checkIn.users.email;
 
                               return (
@@ -1617,17 +1788,18 @@ export default function CheckIns() {
                                   <TableCell>{new Date(checkIn.checkin_time).toLocaleTimeString()}</TableCell>
                                   <TableCell>
                                     <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${clientStatusColors[effectiveStatus] || clientStatusColors.inactive}`}>
-                                      {effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1)}
+                                      {statusLabel}
                                     </span>
                                   </TableCell>
                                   <TableCell>
-                                    <span className={`font-semibold ${daysLeft > 5 ? 'text-green-600' : daysLeft > 0 ? 'text-yellow-600' : 'text-red-600'}`}>
-                                      {daysLeft === Number.MAX_SAFE_INTEGER
-                                        ? '-'
-                                        : daysLeft >= 0
-                                          ? `${daysLeft} days`
-                                          : `${Math.abs(daysLeft)} overdue`}
+                                    <span className={`font-semibold ${remainingColor}`}>
+                                      {remainingValue}
                                     </span>
+                                    {isCoupon && (
+                                      <div className="text-xs text-muted-foreground">
+                                        Coupon
+                                      </div>
+                                    )}
                                   </TableCell>
                                 </TableRow>
                               );

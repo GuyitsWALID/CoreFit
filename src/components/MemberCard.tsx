@@ -32,6 +32,7 @@ const statusColorMap: Record<string, string> = {
   paused: "bg-yellow-100 text-yellow-800",
   inactive: "bg-gray-100 text-gray-800",
   expired: "bg-red-100 text-red-800",
+  used_up: "bg-red-100 text-red-800",
   // add more if needed
 };
 
@@ -62,6 +63,10 @@ export  function MemberCard({
 
   // Determine the actual status based on days_left and current status
   const getEffectiveStatus = () => {
+    if (member.is_coupon && typeof member.coupon_remaining_passes === 'number' && member.coupon_remaining_passes <= 0) {
+      return member.days_left <= 0 ? 'expired' : 'used_up';
+    }
+
     if (member.days_left <= 0) {
       return 'expired';
     }
@@ -69,6 +74,18 @@ export  function MemberCard({
   };
 
   const effectiveStatus = getEffectiveStatus();
+  const isCoupon = Boolean(member.is_coupon);
+  const remainingPasses = member.coupon_remaining_passes ?? member.days_left;
+  const remainingLabel = isCoupon ? 'Passes Left' : 'Days Left';
+  const remainingValue = isCoupon
+    ? `${Math.max(0, remainingPasses)} pass${Math.max(0, remainingPasses) === 1 ? '' : 'es'}`
+    : member.days_left >= 0 ? `${member.days_left} days` : `${Math.abs(member.days_left)} overdue`;
+  const remainingColor = isCoupon
+    ? remainingPasses > 5 ? "text-green-600" : remainingPasses > 0 ? "text-yellow-600" : "text-red-600"
+    : member.days_left > 5 ? "text-green-600" : member.days_left > 0 ? "text-yellow-600" : "text-red-600";
+  const statusLabel = effectiveStatus === 'used_up'
+    ? 'Used Up'
+    : effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1);
 
   return (
     <div className="border rounded-lg px-4 py-4 mb-4 bg-white shadow-sm relative">
@@ -92,6 +109,11 @@ export  function MemberCard({
             <Badge variant="outline" className="font-semibold text-sm px-3 py-1">
               {member.package_name}
             </Badge>
+            {isCoupon && (
+              <div className="mt-2 text-xs font-semibold text-blue-600">
+                Coupon • {member.number_of_passes ?? 0} passes
+              </div>
+            )}
           </div>
           
           <div className="text-center">
@@ -103,16 +125,16 @@ export  function MemberCard({
           </div>
           
           <div className="text-center">
-            <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Days Left</div>
-            <div className={`font-bold text-lg ${member.days_left > 5 ? "text-green-600" : member.days_left > 0 ? "text-yellow-600" : "text-red-600"}`}>
-              {member.days_left >= 0 ? `${member.days_left} days` : `${Math.abs(member.days_left)} overdue`}
+            <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">{remainingLabel}</div>
+            <div className={`font-bold text-lg ${remainingColor}`}>
+              {remainingValue}
             </div>
           </div>
           
           <div className="text-center">
             <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Status</div>
             <span className={`inline-block px-4 py-2 rounded-full text-sm font-semibold ${statusColorMap[effectiveStatus] || "bg-gray-100 text-gray-600"}`}>
-              {effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1)}
+              {statusLabel}
             </span>
           </div>
           
