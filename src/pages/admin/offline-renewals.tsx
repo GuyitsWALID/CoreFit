@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Menu, Plus, RefreshCw, Search, Users } from 'lucide-react';
+import { CalendarClock, Menu, Plus, RefreshCw, Search, Snowflake, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -53,6 +53,12 @@ type OfflineRegistrationValues = {
   password: string;
 };
 
+type OfflineFreezeValues = {
+  freeze_start_date: string;
+  freeze_days: string;
+  remarks: string;
+};
+
 const allowedDurationUnits = ['days', 'weeks', 'months', 'years'] as const;
 
 const emptyRegistrationValues = (): OfflineRegistrationValues => ({
@@ -76,6 +82,12 @@ const emptyRegistrationValues = (): OfflineRegistrationValues => ({
   password: '',
 });
 
+const emptyFreezeValues = (): OfflineFreezeValues => ({
+  freeze_start_date: new Date().toISOString().slice(0, 10),
+  freeze_days: '1',
+  remarks: '',
+});
+
 const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage, periods = 1) => {
   const next = new Date(date);
   const durationValue = pkg.duration_value * periods;
@@ -97,6 +109,12 @@ const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage, periods = 1)
 };
 
 const dateInputToAddisIso = (dateValue: string) => `${dateValue}T00:00:00+03:00`;
+
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
 
 const toMembershipRow = (row: any): MembershipInfo => {
   const expiry = row.membership_expiry ?? null;
@@ -146,6 +164,9 @@ export default function AdminOfflineRenewals() {
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [selectedMember, setSelectedMember] = useState<MembershipInfo | null>(null);
   const [renewalOpen, setRenewalOpen] = useState(false);
+  const [freezeOpen, setFreezeOpen] = useState(false);
+  const [freezeMember, setFreezeMember] = useState<MembershipInfo | null>(null);
+  const [freezeValues, setFreezeValues] = useState<OfflineFreezeValues>(() => emptyFreezeValues());
   const [processingMemberId, setProcessingMemberId] = useState<string | null>(null);
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [registrationValues, setRegistrationValues] = useState<OfflineRegistrationValues>(() => emptyRegistrationValues());
@@ -315,6 +336,87 @@ export default function AdminOfflineRenewals() {
   const openRenewal = (member: MembershipInfo) => {
     setSelectedMember(member);
     setRenewalOpen(true);
+  };
+
+  const openFreeze = (member: MembershipInfo) => {
+    setFreezeMember(member);
+    setFreezeValues(emptyFreezeValues());
+    setFreezeOpen(true);
+  };
+
+  const freezeDaysNumber = Number(freezeValues.freeze_days);
+  const freezePreview = useMemo(() => {
+    if (!freezeMember || !freezeValues.freeze_start_date) return null;
+    if (!Number.isInteger(freezeDaysNumber) || freezeDaysNumber <= 0) return null;
+    if (!freezeMember.membership_expiry || Number.isNaN(Date.parse(freezeMember.membership_expiry))) return null;
+
+    const startDate = new Date(dateInputToAddisIso(freezeValues.freeze_start_date));
+    const currentExpiry = new Date(freezeMember.membership_expiry);
+    return {
+      freezeEndDate: addDays(startDate, freezeDaysNumber),
+      newExpiryDate: addDays(currentExpiry, freezeDaysNumber),
+    };
+  }, [freezeDaysNumber, freezeMember, freezeValues.freeze_start_date]);
+
+  const updateFreezeValue = (field: keyof OfflineFreezeValues, value: string) => {
+    setFreezeValues(previous => ({ ...previous, [field]: value }));
+  };
+
+  const handleFreezeSubmit = async () => {
+    if (!freezeMember) return;
+
+    const freezeDays = Number(freezeValues.freeze_days);
+    if (!freezeValues.freeze_start_date) {
+      toast({
+        title: 'Missing freeze date',
+        description: 'Please enter the real freeze start date.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!Number.isInteger(freezeDays) || freezeDays <= 0 || freezeDays > 365) {
+      toast({
+        title: 'Invalid freeze days',
+        description: 'Freeze days must be a whole number between 1 and 365.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setProcessingMemberId(freezeMember.user_id);
+
+    try {
+      const { data, error } = await supabase.rpc('record_offline_freeze', {
+        p_user_id: freezeMember.user_id,
+        p_freeze_start_date: dateInputToAddisIso(freezeValues.freeze_start_date),
+        p_freeze_days: freezeDays,
+        p_remarks: freezeValues.remarks.trim() || null,
+      });
+
+      if (error) throw error;
+
+      const result = Array.isArray(data) && data.length > 0 ? data[0] : data;
+      toast({
+        title: 'Offline freeze recorded',
+        description: result?.new_expiry_date
+          ? `${freezeMember.full_name}'s new expiry is ${new Date(result.new_expiry_date).toLocaleDateString()}.`
+          : `${freezeMember.full_name}'s freeze was recorded.`,
+      });
+
+      setFreezeOpen(false);
+      setFreezeMember(null);
+      setFreezeValues(emptyFreezeValues());
+      await fetchMembers(selectedGymId, searchTerm);
+    } catch (err: any) {
+      toast({
+        title: 'Offline freeze failed',
+        description: err?.message || 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setProcessingMemberId(null);
+    }
   };
 
   const handleRenewalSubmit = async (values: OfflineRenewalValues) => {
@@ -718,7 +820,7 @@ export default function AdminOfflineRenewals() {
                           </div>
                         </div>
 
-                        <div className="grid gap-3 text-sm md:grid-cols-4 md:items-center">
+                        <div className="grid gap-3 text-sm md:grid-cols-5 md:items-center">
                           <div>
                             <div className="text-xs uppercase tracking-wide text-gray-400">Package</div>
                             <Badge variant="outline" className="mt-1">{member.package_name}</Badge>
@@ -746,6 +848,16 @@ export default function AdminOfflineRenewals() {
                             <CalendarClock className="mr-2 h-4 w-4" />
                             {processingMemberId === member.user_id ? 'Recording...' : 'Record Offline Renewal'}
                           </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => openFreeze(member)}
+                            disabled={processingMemberId === member.user_id}
+                            className="justify-center"
+                          >
+                            <Snowflake className="mr-2 h-4 w-4" />
+                            {processingMemberId === member.user_id ? 'Recording...' : 'Record Offline Freeze'}
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -768,6 +880,87 @@ export default function AdminOfflineRenewals() {
         onSubmit={handleRenewalSubmit}
         isProcessing={processingMemberId === selectedMember?.user_id}
       />
+
+      <SimpleModal
+        isOpen={freezeOpen}
+        onClose={() => {
+          if (processingMemberId === freezeMember?.user_id) return;
+          setFreezeOpen(false);
+          setFreezeMember(null);
+          setFreezeValues(emptyFreezeValues());
+        }}
+        title="Record Offline Freeze"
+        icon={<Snowflake className="h-5 w-5" />}
+      >
+        <div className="space-y-5">
+          <div className="rounded-md bg-gray-50 p-3 text-sm text-gray-700">
+            <div className="font-medium text-gray-900">{freezeMember?.full_name ?? '-'}</div>
+            <div>Current expiry: {formatDate(freezeMember?.membership_expiry ?? '')}</div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-freeze-start">Freeze start date</Label>
+              <Input
+                id="offline-freeze-start"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={freezeValues.freeze_start_date}
+                onChange={(event) => updateFreezeValue('freeze_start_date', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-freeze-days">Freeze days</Label>
+              <Input
+                id="offline-freeze-days"
+                type="number"
+                min="1"
+                step="1"
+                value={freezeValues.freeze_days}
+                onChange={(event) => updateFreezeValue('freeze_days', event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="offline-freeze-remarks">Note or source</Label>
+            <Input
+              id="offline-freeze-remarks"
+              value={freezeValues.remarks}
+              onChange={(event) => updateFreezeValue('remarks', event.target.value)}
+              placeholder="Paper note, spreadsheet row, admin correction reason..."
+            />
+          </div>
+
+          <div className="rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+            <div>Freeze start: <strong>{freezeValues.freeze_start_date || '-'}</strong></div>
+            <div>Freeze end: <strong>{freezePreview ? freezePreview.freezeEndDate.toLocaleDateString() : '-'}</strong></div>
+            <div>New expiry: <strong>{freezePreview ? freezePreview.newExpiryDate.toLocaleDateString() : '-'}</strong></div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFreezeOpen(false);
+                setFreezeMember(null);
+                setFreezeValues(emptyFreezeValues());
+              }}
+              disabled={processingMemberId === freezeMember?.user_id}
+              type="button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleFreezeSubmit}
+              disabled={!freezePreview || processingMemberId === freezeMember?.user_id}
+              type="button"
+            >
+              {processingMemberId === freezeMember?.user_id ? 'Recording...' : 'Record Freeze'}
+            </Button>
+          </div>
+        </div>
+      </SimpleModal>
 
       <SimpleModal
         isOpen={registrationOpen}
