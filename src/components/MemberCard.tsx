@@ -22,6 +22,7 @@ interface MemberCardProps {
   onOfflineRenewal?: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void; // ONLY CHANGE: Added this prop
+  formatDate?: (value: string | null | undefined) => string;
 }
 const statusColorMap: Record<string, string> = {
   active: "bg-green-100 text-green-800",
@@ -46,7 +47,8 @@ export  function MemberCard({
   onRenew,
   onOfflineRenewal,
   onUpgrade,
-  onCoaching // ONLY CHANGE: Added this prop
+  onCoaching, // ONLY CHANGE: Added this prop
+  formatDate = (value) => value && !isNaN(Date.parse(value)) ? new Date(value).toLocaleDateString() : "-",
 }: MemberCardProps) {
 
   const openFreezeModal = () => {
@@ -90,8 +92,8 @@ export  function MemberCard({
           <div className="text-center">
             <div className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Period</div>
             <div className="text-sm space-y-1">
-              <div>Start: <span className="font-medium">{member.created_at && !isNaN(Date.parse(member.created_at)) ? new Date(member.created_at).toLocaleDateString() : "-"}</span></div>
-              <div>Expires: <span className="font-medium">{member.membership_expiry && !isNaN(Date.parse(member.membership_expiry)) ? new Date(member.membership_expiry).toLocaleDateString() : "-"}</span></div>
+              <div>Start: <span className="font-medium">{formatDate(member.created_at)}</span></div>
+              <div>Expires: <span className="font-medium">{formatDate(member.membership_expiry)}</span></div>
             </div>
           </div>
           

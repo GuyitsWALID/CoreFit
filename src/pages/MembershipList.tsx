@@ -1,11 +1,18 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Users, Clock, AlertTriangle, CheckCircle } from "lucide-react";
+import { Users, Clock, AlertTriangle, CheckCircle, CalendarDays } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 import { useGym } from "@/contexts/GymContext";
 import { recordPayment } from '@/lib/gymApi';
+import {
+  convertGregorianDatesWithEthioall,
+  formatEthiopianDate,
+  formatGregorianDate,
+  toGregorianDateKey,
+} from "@/lib/ethiopianCalendar";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { Switch } from "@/components/ui/switch";
 
 // Import all the extracted components
 import {
@@ -32,6 +39,8 @@ const statusColors: Record<string, string> = {
   paused: "text-yellow-600 bg-yellow-50",
 };
 
+const MEMBERSHIP_CALENDAR_PREF_KEY = "corefit:membership-calendar";
+
 export default function MembershipList() {
   const { toast } = useToast();
   const { gym, loading: gymLoading } = useGym();
@@ -46,6 +55,10 @@ export default function MembershipList() {
   const [isRefreshingMembers, setIsRefreshingMembers] = useState(false);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | 'none'>('none');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [useEthiopianCalendar, setUseEthiopianCalendar] = useState(() => {
+    return localStorage.getItem(MEMBERSHIP_CALENDAR_PREF_KEY) === "ethiopian";
+  });
+  const [ethioallDateMap, setEthioallDateMap] = useState<Record<string, string>>({});
 
   // Client-side pagination
   const PAGE_SIZE = 60;
@@ -152,6 +165,20 @@ export default function MembershipList() {
       accentColor: primaryColor,
     };
   }, [gym]);
+
+  const formatMembershipDate = useMemo(
+    () => (value: string | null | undefined) => {
+      if (!useEthiopianCalendar) return formatGregorianDate(value);
+      const dateKey = toGregorianDateKey(value);
+      return (dateKey && ethioallDateMap[dateKey]) || formatEthiopianDate(value);
+    },
+    [ethioallDateMap, useEthiopianCalendar],
+  );
+
+  const handleCalendarToggle = (checked: boolean) => {
+    setUseEthiopianCalendar(checked);
+    localStorage.setItem(MEMBERSHIP_CALENDAR_PREF_KEY, checked ? "ethiopian" : "gregorian");
+  };
 
   // Filter members by gym if gym context is available
   // This version performs DB-side filtering so selecting a status/tab triggers an API query
@@ -556,6 +583,40 @@ export default function MembershipList() {
   // Pagination (client-side slicing for all filters)
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
   const paginatedMembers = filteredMembers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const visibleMembershipDateKeys = useMemo(() => {
+    if (!useEthiopianCalendar) return [];
+
+    return Array.from(new Set(
+      paginatedMembers
+        .flatMap(member => [
+          toGregorianDateKey(member.created_at),
+          toGregorianDateKey(member.membership_expiry),
+        ])
+        .filter((dateKey): dateKey is string => Boolean(dateKey))
+    ));
+  }, [paginatedMembers, useEthiopianCalendar]);
+
+  useEffect(() => {
+    if (!useEthiopianCalendar || visibleMembershipDateKeys.length === 0) return;
+
+    const missingDateKeys = visibleMembershipDateKeys.filter(dateKey => !ethioallDateMap[dateKey]);
+    if (missingDateKeys.length === 0) return;
+
+    let cancelled = false;
+
+    convertGregorianDatesWithEthioall(missingDateKeys)
+      .then((convertedDates) => {
+        if (cancelled || Object.keys(convertedDates).length === 0) return;
+        setEthioallDateMap(previousMap => ({ ...previousMap, ...convertedDates }));
+      })
+      .catch((error) => {
+        console.warn('Ethioall date conversion failed; using local Ethiopian calendar fallback.', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ethioallDateMap, useEthiopianCalendar, visibleMembershipDateKeys]);
 
   // Reset to first page whenever filters/search/sort change
   useEffect(() => {
@@ -800,7 +861,7 @@ const handleUpgradeSubmit = async () => {
     toast({
       title: "Package upgraded",
       description: result
-        ? `${upgradeMember.full_name}'s package upgraded. New expiry: ${new Date(result.new_expiry_date).toLocaleDateString()}.`
+        ? `${upgradeMember.full_name}'s package upgraded. New expiry: ${formatMembershipDate(result.new_expiry_date)}.`
         : `${upgradeMember.full_name}'s package has been upgraded successfully.`,
     });
 
@@ -1006,6 +1067,35 @@ const handleUpgradeSubmit = async () => {
                 sortOrder={sortOrder}
                 onSort={handleSort}
               />
+
+              <div className="mb-4 flex flex-col gap-2 rounded-lg border bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-700">
+                    <CalendarDays className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">Membership date display</div>
+                    <div className="text-xs text-gray-500">
+                      {useEthiopianCalendar
+                        ? "Showing membership dates in Ethiopian calendar. Stored dates remain Gregorian."
+                        : "Showing membership dates in Gregorian calendar."}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-sm ${!useEthiopianCalendar ? "font-semibold text-gray-900" : "text-gray-500"}`}>
+                    Gregorian
+                  </span>
+                  <Switch
+                    checked={useEthiopianCalendar}
+                    onCheckedChange={handleCalendarToggle}
+                    aria-label="Toggle Ethiopian calendar display"
+                  />
+                  <span className={`text-sm ${useEthiopianCalendar ? "font-semibold text-gray-900" : "text-gray-500"}`}>
+                    Ethiopian
+                  </span>
+                </div>
+              </div>
               
               {/* Tabs */}
               <MembershipTabs
@@ -1045,6 +1135,7 @@ const handleUpgradeSubmit = async () => {
                       onRenew={handleRenew}
                       onUpgrade={handleUpgrade}
                       onCoaching={handleCoaching}
+                      formatDate={formatMembershipDate}
                     />
                   ))
                 )}
