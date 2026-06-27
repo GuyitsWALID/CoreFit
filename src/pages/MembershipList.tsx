@@ -43,6 +43,7 @@ export default function MembershipList() {
   const [activeTab, setActiveTab] = useState("all");
   const [members, setMembers] = useState<MembershipInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingMembers, setIsRefreshingMembers] = useState(false);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | 'none'>('none');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -156,8 +157,10 @@ export default function MembershipList() {
 
   // Filter members by gym if gym context is available
   // This version performs DB-side filtering so selecting a status/tab triggers an API query
-  const fetchMembershipData = async (opts?: { searchTerm?: string; statusFilter?: string; packageFilter?: string; activeTab?: string; page?: number; }) => {
-    setIsLoading(true);
+  const fetchMembershipData = async (opts?: { searchTerm?: string; statusFilter?: string; packageFilter?: string; activeTab?: string; page?: number; showPageLoading?: boolean; }) => {
+    const showPageLoading = opts?.showPageLoading ?? members.length === 0;
+    if (showPageLoading) setIsLoading(true);
+    else setIsRefreshingMembers(true);
     const sTerm = opts?.searchTerm ?? searchTerm;
     const stFilter = opts?.statusFilter ?? statusFilter;
     const pkFilter = opts?.packageFilter ?? packageFilter;
@@ -187,6 +190,7 @@ export default function MembershipList() {
           if (!viewErr && Array.isArray(viewData)) {
             setMembers(viewData || []);
             setIsLoading(false);
+            setIsRefreshingMembers(false);
             return;
           }
 
@@ -267,6 +271,7 @@ export default function MembershipList() {
 
           setMembers(merged);
           setIsLoading(false);
+          setIsRefreshingMembers(false);
           return;
         }
       }
@@ -309,6 +314,7 @@ export default function MembershipList() {
         if (!viewErr && Array.isArray(viewData)) {
           setMembers(viewData || []);
           setIsLoading(false);
+          setIsRefreshingMembers(false);
           return;
         }
       } catch (viewErr) {
@@ -370,6 +376,7 @@ export default function MembershipList() {
       });
     } finally {
       setIsLoading(false);
+      setIsRefreshingMembers(false);
     }
   };
 
@@ -480,7 +487,7 @@ export default function MembershipList() {
     setIsLoading(true);
     try {
       await Promise.all([
-        fetchMembershipData(),
+        fetchMembershipData({ showPageLoading: true }),
         loadTrainers(),
         fetchCounts()
       ]);
@@ -560,18 +567,7 @@ export default function MembershipList() {
   // When filters/search/sort change, perform a debounced server-side fetch to keep results accurate
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchMembershipData({ searchTerm, statusFilter, packageFilter, activeTab });
-      // refresh counts to reflect database state
-      fetchCounts();
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [searchTerm, statusFilter, packageFilter, activeTab, sortOrder, gym?.id]);
-
-  // When filters/search/sort change, perform a debounced server-side fetch to keep results accurate
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchMembershipData({ searchTerm, statusFilter, packageFilter, activeTab });
+      fetchMembershipData({ searchTerm, statusFilter, packageFilter, activeTab, showPageLoading: false });
       // refresh counts to reflect database state
       fetchCounts();
     }, 350);
@@ -1077,6 +1073,11 @@ const handleUpgradeSubmit = async () => {
               
               {/* Member List */}
               <div>
+                {isRefreshingMembers && (
+                  <div className="mb-3 text-sm text-gray-500">
+                    Refreshing results...
+                  </div>
+                )}
                 {filteredMembers.length === 0 ? (
                   <div className="text-center text-gray-400 py-16">
                     No members found for {gym?.name || 'this gym'}
