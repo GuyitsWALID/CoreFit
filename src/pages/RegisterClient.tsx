@@ -45,7 +45,8 @@ const formSchema = z.object({
   last_name: z.string().min(2, { message: "Last name is required." }),
   date_of_birth: z
     .string()
-    .refine(val => !isNaN(Date.parse(val)), {
+    .optional()
+    .refine(val => !val || !isNaN(Date.parse(val)), {
       message: "Please enter a valid date",
     }),
   phone: z.string().min(10, { message: "Phone number is required." }),
@@ -53,7 +54,10 @@ const formSchema = z.object({
     value => !value || value.length >= 8,
     { message: "Password must be at least 8 characters" }
   ),
-  email: z.string().email({ message: "Valid email is required." }),
+  email: z.string().optional().refine(
+    value => !value || z.string().email().safeParse(value).success,
+    { message: "Please enter a valid email or leave it blank." }
+  ),
   gender: z.string().min(1, { message: "Gender is required." }),
   package_id: z.string().min(1, { message: "Package is required." }),
   trainer_id: z.string().optional(),
@@ -324,8 +328,20 @@ export default function RegisterClient() {
     setIsLoading(true);
     try {
       const password = values.password?.trim() || "";
+      const email = values.email?.trim() || "";
+
+      if (password && !email) {
+        toast({
+          title: "Email required for dashboard login",
+          description: "Leave password blank or provide an email address for the client dashboard account.",
+          variant: "destructive"
+        });
+        setIsLoading(false);
+        return;
+      }
+
       console.log("Registering client:", {
-        email: values.email,
+        email,
         createsPortalLogin: Boolean(password),
       });
 
@@ -336,7 +352,7 @@ export default function RegisterClient() {
         const adminSession = existingAuth.session;
 
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email: values.email,
+          email,
           password,
         });
 
@@ -393,7 +409,7 @@ export default function RegisterClient() {
         p_first_name: values.first_name,
         p_last_name: values.last_name,
         p_gender: values.gender,
-        p_email: values.email,
+        p_email: email || null,
         p_phone: values.phone,
         p_emergency_name: values.emergency_name || null,
         p_emergency_phone: values.emergency_phone || null,
@@ -444,7 +460,7 @@ export default function RegisterClient() {
       });
       setRegisteredUserId(userId);
       setRegisteredClientName(`${values.first_name} ${values.last_name}`);
-      setRegisteredClientEmail(values.email);
+      setRegisteredClientEmail(email || null);
       setRegisteredClientDetails({
         phone: values.phone,
         gender: values.gender,
@@ -770,7 +786,7 @@ export default function RegisterClient() {
                             name="date_of_birth"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Date of Birth</FormLabel>
+                                <FormLabel>Date of Birth (optional)</FormLabel>
                                 <FormControl>
                                   <Input placeholder="YYYY-MM-DD" type="date" {...field} />
                                 </FormControl>
@@ -834,10 +850,10 @@ export default function RegisterClient() {
                             name="email"
                             render={({ field, fieldState }) => (
                               <FormItem>
-                                <FormLabel>Email</FormLabel>
+                                <FormLabel>Email (optional)</FormLabel>
                                 <FormControl>
                                   <Input
-                                    placeholder="john.doe@example.com"
+                                    placeholder="Optional email address"
                                     {...field}
                                     type="email"
                                     className={fieldState.invalid ? "border-red-500" : ""}

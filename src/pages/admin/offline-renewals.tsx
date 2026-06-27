@@ -387,9 +387,7 @@ export default function AdminOfflineRenewals() {
     const requiredFields = [
       values.first_name.trim(),
       values.last_name.trim(),
-      values.email.trim(),
       values.phone.trim(),
-      values.date_of_birth,
       values.gender,
       values.package_id,
       values.payment_date,
@@ -408,6 +406,15 @@ export default function AdminOfflineRenewals() {
       toast({
         title: 'Password too short',
         description: 'Optional dashboard password must be at least 8 characters.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (values.password.trim() && !values.email.trim()) {
+      toast({
+        title: 'Email required for dashboard login',
+        description: 'Leave password blank or provide an email address for the client dashboard account.',
         variant: 'destructive',
       });
       return;
@@ -491,7 +498,7 @@ export default function AdminOfflineRenewals() {
           last_name: values.last_name.trim(),
           full_name: fullName,
           gender: values.gender,
-          email: values.email.trim(),
+          email: values.email.trim() || null,
           phone: values.phone.trim(),
           emergency_name: values.emergency_name.trim() || null,
           emergency_phone: values.emergency_phone.trim() || null,
@@ -501,7 +508,7 @@ export default function AdminOfflineRenewals() {
           created_at: paidAtIso,
           membership_expiry: expiryIso,
           status: 'active',
-          date_of_birth: values.date_of_birth,
+          date_of_birth: values.date_of_birth || null,
           qr_code_data: qrData,
           gym_id: selectedGymId,
         });
@@ -771,7 +778,7 @@ export default function AdminOfflineRenewals() {
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="offline-email">Email</Label>
+              <Label htmlFor="offline-email">Email (optional)</Label>
               <Input
                 id="offline-email"
                 type="email"
@@ -791,7 +798,7 @@ export default function AdminOfflineRenewals() {
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="offline-dob">Date of birth</Label>
+              <Label htmlFor="offline-dob">Date of birth (optional)</Label>
               <Input
                 id="offline-dob"
                 type="date"
