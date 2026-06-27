@@ -132,9 +132,6 @@ export default function CheckIns() {
     };
   }, [gym]);
 
-  // Use the physical scanner hook
-  usePhysicalScanner({ onScan: (value) => handleQrResult(value, 'usb') });
-
   useEffect(() => {
     if (!import.meta.env.DEV) return;
 
@@ -172,6 +169,19 @@ export default function CheckIns() {
     console.log('QR Debug:', info);
     setDebugInfo(prev => [...prev.slice(-4), `${new Date().toLocaleTimeString()}: ${info}`]);
   };
+
+  // Use the physical scanner hook. Allow scanner-speed input even when an input field is focused:
+  // slow human typing is still rejected by timing rules inside the hook.
+  usePhysicalScanner({
+    onScan: (value) => handleQrResult(value, 'usb'),
+    ignoreWhenInputFocused: false,
+    scanTimeout: 140,
+    maxInterKeyDelay: 120,
+    onDebug: (message, details) => {
+      console.info(`[USB Scanner] ${message}`, details ?? '');
+      addDebugInfo(message);
+    },
+  });
 
   const logCheckInDiagnostic = (label: string, details?: unknown) => {
     if (details === undefined) {

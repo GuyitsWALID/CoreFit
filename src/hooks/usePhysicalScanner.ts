@@ -6,6 +6,7 @@ interface UsePhysicalScannerOptions {
   minLength?: number; // Minimum length of scanned string to be considered valid
   maxInterKeyDelay?: number; // Max ms between characters to be treated as scanner input
   ignoreWhenInputFocused?: boolean;
+  onDebug?: (message: string, details?: unknown) => void;
 }
 
 const isEditableTarget = (target: EventTarget | null) => {
@@ -27,16 +28,26 @@ export const usePhysicalScanner = ({
   minLength = 3,
   maxInterKeyDelay = 45,
   ignoreWhenInputFocused = true,
+  onDebug,
 }: UsePhysicalScannerOptions) => {
   const bufferRef = useRef<string>('');
   const firstKeyTimeRef = useRef<number>(0);
   const timeoutRef = useRef<number | null>(null);
   const lastKeyPressTimeRef = useRef<number>(0);
   const onScanRef = useRef(onScan);
+  const onDebugRef = useRef(onDebug);
 
   useEffect(() => {
     onScanRef.current = onScan;
   }, [onScan]);
+
+  useEffect(() => {
+    onDebugRef.current = onDebug;
+  }, [onDebug]);
+
+  const debug = useCallback((message: string, details?: unknown) => {
+    onDebugRef.current?.(message, details);
+  }, []);
 
   const resetBuffer = useCallback(() => {
     bufferRef.current = '';
@@ -58,13 +69,21 @@ export const usePhysicalScanner = ({
 
     const duration = Math.max(1, lastKeyTime - firstKeyTime);
     const averageDelay = duration / Math.max(1, value.length - 1);
-    if (averageDelay > maxInterKeyDelay) return;
+    if (averageDelay > maxInterKeyDelay) {
+      debug('USB scanner input rejected as human typing', { valueLength: value.length, duration, averageDelay, maxInterKeyDelay });
+      return;
+    }
 
+    debug('USB scanner input accepted', { valueLength: value.length, averageDelay });
     onScanRef.current(value);
-  }, [maxInterKeyDelay, minLength, resetBuffer]);
+  }, [debug, maxInterKeyDelay, minLength, resetBuffer]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     if (ignoreWhenInputFocused && isEditableTarget(event.target)) {
+      debug('USB scanner key ignored because an editable field is focused', {
+        key: event.key,
+        target: event.target instanceof HTMLElement ? event.target.tagName.toLowerCase() : 'unknown',
+      });
       return;
     }
 
@@ -98,6 +117,9 @@ export const usePhysicalScanner = ({
     }
 
     bufferRef.current += event.key;
+    if (bufferRef.current.length === 1) {
+      debug('USB scanner buffer started');
+    }
 
     if (timeoutRef.current) {
       window.clearTimeout(timeoutRef.current);
@@ -106,7 +128,7 @@ export const usePhysicalScanner = ({
     timeoutRef.current = window.setTimeout(() => {
       flushScan();
     }, scanTimeout);
-  }, [flushScan, ignoreWhenInputFocused, resetBuffer, scanTimeout]);
+  }, [debug, flushScan, ignoreWhenInputFocused, resetBuffer, scanTimeout]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
