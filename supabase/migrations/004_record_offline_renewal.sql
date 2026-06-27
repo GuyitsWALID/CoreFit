@@ -89,8 +89,7 @@ BEGIN
   SET
     package_id = p_package_id,
     membership_expiry = v_new_expiry,
-    status = 'active',
-    updated_at = now()
+    status = 'active'
   WHERE id = p_user_id;
 
   v_audit := jsonb_build_object(
