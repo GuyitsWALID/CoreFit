@@ -10,6 +10,7 @@ import {
   formatGregorianDate,
   toGregorianDateKey,
 } from "@/lib/ethiopianCalendar";
+import { isPlaceholderEmail, isPlaceholderPhone } from "@/lib/placeholderEmail";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Switch } from "@/components/ui/switch";
@@ -558,11 +559,13 @@ export default function MembershipList() {
   };
 
   const filteredMembers = members.filter((member) => {
+    const searchableEmail = isPlaceholderEmail(member.email) ? '' : member.email || '';
+    const searchablePhone = isPlaceholderPhone(member.phone) ? '' : member.phone || '';
     const matchesSearch =
       searchTerm === "" ||
       (member.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (member.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (member.phone || '').toLowerCase().includes(searchTerm.toLowerCase());
+      searchableEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      searchablePhone.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesStatus = statusFilter === "all" || computeStatus(member) === statusFilter;
     const matchesPackage = packageFilter === "all" || (packageFilter === "__none__" ? !member.package_name : member.package_name === packageFilter);

@@ -14,6 +14,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { UserSelector } from './UserSelector'
 import type { User as DBuser } from '@/types/db'
 import { formatPhoneNumberForSms } from '@/utils/phone' // <-- Added
+import { isPlaceholderEmail, isPlaceholderPhone } from '@/lib/placeholderEmail'
 
 interface NotificationTemplate {
   id: string
@@ -93,8 +94,8 @@ export const EnhancedSMSSender: React.FC = () => {
         case 'name': newVars[variable] = firstUser.full_name; break
         case 'first_name': newVars[variable] = firstUser.first_name; break
         case 'last_name': newVars[variable] = firstUser.last_name; break
-        case 'email': newVars[variable] = firstUser.email; break
-        case 'phone': newVars[variable] = formatPhoneNumberForSms(firstUser.phone); break // formatted
+        case 'email': newVars[variable] = isPlaceholderEmail(firstUser.email) ? '' : firstUser.email; break
+        case 'phone': newVars[variable] = isPlaceholderPhone(firstUser.phone) ? '' : formatPhoneNumberForSms(firstUser.phone); break // formatted
         case 'membership_type': newVars[variable] = firstUser.membership_type || 'Standard'; break
         case 'membership_expiry':
           newVars[variable] = firstUser.membership_expiry
@@ -145,8 +146,8 @@ export const EnhancedSMSSender: React.FC = () => {
               case 'name': val = u.full_name; break
               case 'first_name': val = u.first_name; break
               case 'last_name': val = u.last_name; break
-              case 'email': val = u.email; break
-              case 'phone': val = formatPhoneNumberForSms(u.phone); break // formatted
+              case 'email': val = isPlaceholderEmail(u.email) ? '' : u.email; break
+              case 'phone': val = isPlaceholderPhone(u.phone) ? '' : formatPhoneNumberForSms(u.phone); break // formatted
               case 'membership_type': val = u.membership_type || 'Standard'; break
               case 'membership_expiry':
                 val = u.membership_expiry
@@ -162,7 +163,7 @@ export const EnhancedSMSSender: React.FC = () => {
             msg = msg.replace(new RegExp(`{${v}}`, 'g'), val)
           })
 
-          const formattedPhone = formatPhoneNumberForSms(u.phone) // formatted
+          const formattedPhone = isPlaceholderPhone(u.phone) ? '' : formatPhoneNumberForSms(u.phone) // formatted
           if (!formattedPhone.startsWith('+')) {
             return { success: false, error: 'Invalid phone format' }
           }
@@ -200,7 +201,7 @@ export const EnhancedSMSSender: React.FC = () => {
     if (selectedUsers.length === 0) return showAlert('error', 'Please select at least one user')
 
     const recipients = selectedUsers
-      .map(u => formatPhoneNumberForSms(u.phone)) // formatted
+      .map(u => isPlaceholderPhone(u.phone) ? '' : formatPhoneNumberForSms(u.phone)) // formatted
       .filter(num => num && num.startsWith('+'))
 
     if (recipients.length === 0) return showAlert('error', 'No valid phone numbers found')

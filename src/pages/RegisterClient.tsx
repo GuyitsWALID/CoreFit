@@ -36,7 +36,7 @@ import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
 import QRCodeSVG from 'react-qr-code';
 import { useGym } from "@/contexts/GymContext";
-import { createPlaceholderEmail } from "@/lib/placeholderEmail";
+import { createPlaceholderEmail, createPlaceholderPhone } from "@/lib/placeholderEmail";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
 
@@ -50,7 +50,7 @@ const formSchema = z.object({
     .refine(val => !val || !isNaN(Date.parse(val)), {
       message: "Please enter a valid date",
     }),
-  phone: z.string().min(10, { message: "Phone number is required." }),
+  phone: z.string().optional(),
   password: z.string().optional().refine(
     value => !value || value.length >= 8,
     { message: "Password must be at least 8 characters" }
@@ -396,6 +396,7 @@ export default function RegisterClient() {
       }
 
       const profileEmail = email || createPlaceholderEmail(userId);
+      const profilePhone = values.phone?.trim() || createPlaceholderPhone(userId);
 
       // Generate QR code data
       const qrData = JSON.stringify({
@@ -413,7 +414,7 @@ export default function RegisterClient() {
         p_last_name: values.last_name,
         p_gender: values.gender,
         p_email: profileEmail,
-        p_phone: values.phone,
+        p_phone: profilePhone,
         p_emergency_name: values.emergency_name || null,
         p_emergency_phone: values.emergency_phone || null,
         p_relationship: values.relationship || null,
@@ -465,7 +466,7 @@ export default function RegisterClient() {
       setRegisteredClientName(`${values.first_name} ${values.last_name}`);
       setRegisteredClientEmail(email || null);
       setRegisteredClientDetails({
-        phone: values.phone,
+        phone: values.phone?.trim() || undefined,
         gender: values.gender,
         emergency_name: values.emergency_name || undefined,
         emergency_phone: values.emergency_phone || undefined,
@@ -826,7 +827,7 @@ export default function RegisterClient() {
                             name="phone"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Phone Number</FormLabel>
+                                <FormLabel>Phone Number (optional)</FormLabel>
                                 <FormControl>
                                   <div className="w-full">
                                     <PhoneInput
@@ -835,7 +836,7 @@ export default function RegisterClient() {
                                       onChange={field.onChange}
                                       inputProps={{
                                         name: 'phone',
-                                        required: true,
+                                        required: false,
                                         autoFocus: false,
                                       }}
                                       inputClass="w-full"
@@ -844,6 +845,9 @@ export default function RegisterClient() {
                                     />
                                   </div>
                                 </FormControl>
+                                <p className="text-xs text-muted-foreground">
+                                  Leave blank if the client does not want to share a phone number.
+                                </p>
                                 <FormMessage />
                               </FormItem>
                             )}

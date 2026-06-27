@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Search, User as UserIcon, Users as UsersIcon, Phone, Mail } from 'lucide-react'
 import { smsService } from '@/services/smsService'
 import { useGym } from '@/contexts/GymContext'
+import { isPlaceholderEmail, isPlaceholderPhone } from '@/lib/placeholderEmail'
 import type { User } from '@/types/db'
 
 interface UserSelectorProps {
@@ -104,8 +105,8 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
       const term = normalize(searchTerm)
       filtered = filtered.filter(user =>
         (normalize(user.full_name).includes(term)) ||
-        (normalize(user.email).includes(term)) ||
-        (normalize(user.phone).includes(term))
+        (normalize(isPlaceholderEmail(user.email) ? '' : user.email).includes(term)) ||
+        (normalize(isPlaceholderPhone(user.phone) ? '' : user.phone).includes(term))
       )
     }
 
@@ -252,8 +253,8 @@ export const UserSelector: React.FC<UserSelectorProps> = ({
                         </div>
 
                         <div className="flex items-center gap-4 text-sm text-gray-500">
-                          <div className="flex items-center gap-1"><Mail className="h-3 w-3" /> {user.email ?? '—'}</div>
-                          <div className="flex items-center gap-1"><Phone className="h-3 w-3" /> {user.phone ?? '—'}</div>
+                          <div className="flex items-center gap-1"><Mail className="h-3 w-3" /> {isPlaceholderEmail(user.email) ? '—' : user.email ?? '—'}</div>
+                          <div className="flex items-center gap-1"><Phone className="h-3 w-3" /> {isPlaceholderPhone(user.phone) ? '—' : user.phone ?? '—'}</div>
                         </div>
 
                         {user.membership_expiry && <div className="text-xs text-gray-400">Expires: {new Date(user.membership_expiry).toLocaleDateString()}</div>}

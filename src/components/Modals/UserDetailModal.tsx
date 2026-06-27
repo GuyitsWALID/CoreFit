@@ -7,7 +7,7 @@ import QRCode from 'react-qr-code';
 import * as fileSaver from 'file-saver';
 import { jsPDF } from 'jspdf';
 import { useToast } from '@/hooks/use-toast';
-import { isPlaceholderEmail } from "@/lib/placeholderEmail";
+import { isPlaceholderEmail, isPlaceholderPhone } from "@/lib/placeholderEmail";
 
 interface UserDetailModalProps {
   userId: string;
@@ -479,7 +479,7 @@ export default function UserDetailModal({ userId, isOpen, onClose }: UserDetailM
             <div className="space-y-2">
               <div><strong>Name:</strong> {user.first_name} {user.last_name}</div>
               <div><strong>Email:</strong> {isPlaceholderEmail(user.email) ? "-" : user.email}</div>
-              <div><strong>Phone:</strong> {user.phone}</div>
+              <div><strong>Phone:</strong> {isPlaceholderPhone(user.phone) ? "-" : user.phone}</div>
               <div><strong>Date of Birth:</strong> {user.date_of_birth || "-"}</div>
               <div><strong>Gender:</strong> {user.gender || "-"}</div>
               <div><strong>Package:</strong> {user.packages?.name || "-"}</div>

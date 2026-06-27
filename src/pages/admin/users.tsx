@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
+import { isPlaceholderEmail, isPlaceholderPhone } from '@/lib/placeholderEmail';
 
 interface UserData {
   id: string;
@@ -363,12 +364,14 @@ export default function AdminUsers() {
 
   const filterAndSortUsers = () => {
     let filtered = users.filter(user => {
+      const searchableEmail = isPlaceholderEmail(user.email) ? '' : user.email;
+      const searchablePhone = isPlaceholderPhone(user.phone) ? '' : user.phone || '';
       // Search filter
       const matchesSearch = 
         searchTerm === '' ||
         user.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (user.phone && user.phone.toLowerCase().includes(searchTerm.toLowerCase()));
+        searchableEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        searchablePhone.toLowerCase().includes(searchTerm.toLowerCase());
 
       // User type filter
       const matchesUserType = 
@@ -454,8 +457,8 @@ export default function AdminUsers() {
   const handleExportCSV = () => {
     const csvData = filteredUsers.map(user => ({
       Name: user.full_name,
-      Email: user.email,
-      Phone: user.phone || '',
+      Email: isPlaceholderEmail(user.email) ? '' : user.email,
+      Phone: isPlaceholderPhone(user.phone) ? '' : user.phone || '',
       Type: user.user_type,
       Status: user.status,
       Gym: user.gym_name || '',
@@ -915,7 +918,7 @@ export default function AdminUsers() {
                               </Avatar>
                               <div>
                                 <div className="font-medium">{user.full_name}</div>
-                                {user.phone && (
+                                {user.phone && !isPlaceholderPhone(user.phone) && (
                                   <div className="text-xs text-gray-500 flex items-center gap-1">
                                     <Phone className="h-3 w-3" />
                                     {user.phone}
@@ -927,7 +930,7 @@ export default function AdminUsers() {
                           <TableCell>
                             <div className="flex items-center gap-1">
                               <Mail className="h-3 w-3 text-gray-400" />
-                              {user.email}
+                              {isPlaceholderEmail(user.email) ? '-' : user.email}
                             </div>
                           </TableCell>
                           <TableCell>
