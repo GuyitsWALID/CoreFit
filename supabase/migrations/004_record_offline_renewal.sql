@@ -73,7 +73,7 @@ BEGIN
     ELSE v_payment_date
   END;
 
-  v_new_expiry := CASE lower(COALESCE(v_package.duration_unit, 'days'))
+  v_new_expiry := CASE lower(COALESCE(v_package.duration_unit::text, 'days'))
     WHEN 'day' THEN v_start_date + make_interval(days => v_package.duration_value::int)
     WHEN 'days' THEN v_start_date + make_interval(days => v_package.duration_value::int)
     WHEN 'week' THEN v_start_date + make_interval(weeks => v_package.duration_value::int)

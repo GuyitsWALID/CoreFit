@@ -49,7 +49,10 @@ const formSchema = z.object({
       message: "Please enter a valid date",
     }),
   phone: z.string().min(10, { message: "Phone number is required." }),
-  password: z.string().min(8, { message: "Password must be at least 8 characters" }),
+  password: z.string().optional().refine(
+    value => !value || value.length >= 8,
+    { message: "Password must be at least 8 characters" }
+  ),
   email: z.string().email({ message: "Valid email is required." }),
   gender: z.string().min(1, { message: "Gender is required." }),
   package_id: z.string().min(1, { message: "Package is required." }),
@@ -320,32 +323,41 @@ export default function RegisterClient() {
 
     setIsLoading(true);
     try {
-      console.log("Registering email:", values.email);
-      // 1. Register with Supabase Auth
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      const password = values.password?.trim() || "";
+      console.log("Registering client:", {
         email: values.email,
-        password: values.password,
+        createsPortalLogin: Boolean(password),
       });
 
-      if (signUpError) {
-        toast({
-          title: "Registration failed",
-          description: signUpError.message,
-          variant: "destructive"
-        });
-        setIsLoading(false);
-        return;
-      }
+      let userId = crypto.randomUUID();
 
-      const userId = signUpData?.user?.id;
-      if (!userId) {
-        toast({
-          title: "Registration failed",
-          description: "Could not get user ID after sign up.",
-          variant: "destructive"
+      if (password) {
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: values.email,
+          password,
         });
-        setIsLoading(false);
-        return;
+
+        if (signUpError) {
+          toast({
+            title: "Registration failed",
+            description: signUpError.message,
+            variant: "destructive"
+          });
+          setIsLoading(false);
+          return;
+        }
+
+        if (!signUpData?.user?.id) {
+          toast({
+            title: "Registration failed",
+            description: "Could not get user ID after sign up.",
+            variant: "destructive"
+          });
+          setIsLoading(false);
+          return;
+        }
+
+        userId = signUpData.user.id;
       }
 
       // Generate QR code data
@@ -408,7 +420,9 @@ export default function RegisterClient() {
       // 4. Registration succeeded in auth + profile
       toast({
         title: "Registration successful",
-        description: `Client has been registered successfully to ${gym.name}. Generating QR code...`,
+        description: password
+          ? `Client has been registered successfully to ${gym.name}. Generating QR code...`
+          : `Client has been registered without a dashboard login. Generating QR code...`,
       });
       setRegisteredUserId(userId);
       setRegisteredClientName(`${values.first_name} ${values.last_name}`);
@@ -824,12 +838,12 @@ export default function RegisterClient() {
                             name="password"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Password</FormLabel>
+                                <FormLabel>Password (optional)</FormLabel>
                                 <div className="flex gap-2">
                                   <div className="relative flex-1">
                                     <FormControl>
                                       <Input
-                                        placeholder="Enter password"
+                                        placeholder="Optional dashboard password"
                                         type={showPassword ? "text" : "password"}
                                         {...field}
                                       />
@@ -853,6 +867,9 @@ export default function RegisterClient() {
                                     Generate
                                   </Button>
                                 </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Leave blank if this client does not need dashboard access yet.
+                                </p>
                                 <FormMessage />
                               </FormItem>
                             )}
