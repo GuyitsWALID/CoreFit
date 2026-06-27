@@ -496,7 +496,6 @@ export default function AdminOfflineRenewals() {
           id: userId,
           first_name: values.first_name.trim(),
           last_name: values.last_name.trim(),
-          full_name: fullName,
           gender: values.gender,
           email: values.email.trim() || null,
           phone: values.phone.trim(),
