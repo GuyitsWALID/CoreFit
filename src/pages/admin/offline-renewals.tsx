@@ -40,6 +40,7 @@ type OfflineRegistrationValues = {
   date_of_birth: string;
   gender: string;
   package_id: string;
+  periods_paid: string;
   payment_date: string;
   amount: string;
   payment_method: string;
@@ -62,6 +63,7 @@ const emptyRegistrationValues = (): OfflineRegistrationValues => ({
   date_of_birth: '',
   gender: '',
   package_id: '',
+  periods_paid: '1',
   payment_date: new Date().toISOString().slice(0, 10),
   amount: '',
   payment_method: 'offline',
@@ -74,20 +76,21 @@ const emptyRegistrationValues = (): OfflineRegistrationValues => ({
   password: '',
 });
 
-const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage) => {
+const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage, periods = 1) => {
   const next = new Date(date);
+  const durationValue = pkg.duration_value * periods;
   switch (pkg.duration_unit) {
     case 'days':
-      next.setDate(next.getDate() + pkg.duration_value);
+      next.setDate(next.getDate() + durationValue);
       break;
     case 'weeks':
-      next.setDate(next.getDate() + pkg.duration_value * 7);
+      next.setDate(next.getDate() + durationValue * 7);
       break;
     case 'months':
-      next.setMonth(next.getMonth() + pkg.duration_value);
+      next.setMonth(next.getMonth() + durationValue);
       break;
     case 'years':
-      next.setFullYear(next.getFullYear() + pkg.duration_value);
+      next.setFullYear(next.getFullYear() + durationValue);
       break;
   }
   return next;
@@ -353,18 +356,28 @@ export default function AdminOfflineRenewals() {
   };
 
   const selectedRegistrationPackage = packages.find(pkg => pkg.id === registrationValues.package_id) ?? null;
+  const registrationPeriodsPaid = Number(registrationValues.periods_paid || 1);
   const registrationExpiryPreview = useMemo(() => {
     if (!selectedRegistrationPackage || !registrationValues.payment_date) return null;
-    return addPackageDuration(new Date(dateInputToAddisIso(registrationValues.payment_date)), selectedRegistrationPackage);
-  }, [registrationValues.payment_date, selectedRegistrationPackage]);
+    if (!Number.isInteger(registrationPeriodsPaid) || registrationPeriodsPaid < 1) return null;
+    return addPackageDuration(new Date(dateInputToAddisIso(registrationValues.payment_date)), selectedRegistrationPackage, registrationPeriodsPaid);
+  }, [registrationValues.payment_date, registrationPeriodsPaid, selectedRegistrationPackage]);
 
   const updateRegistrationValue = (field: keyof OfflineRegistrationValues, value: string) => {
     setRegistrationValues(previous => {
       const next = { ...previous, [field]: value };
       if (field === 'package_id') {
         const pkg = packages.find(packageOption => packageOption.id === value);
-        next.amount = pkg ? String(pkg.price ?? 0) : next.amount;
+        const periods = Number(next.periods_paid || 1);
+        next.amount = pkg && Number.isInteger(periods) && periods > 0 ? String(Number(pkg.price ?? 0) * periods) : next.amount;
         if (!pkg?.requires_trainer) next.trainer_id = '';
+      }
+      if (field === 'periods_paid') {
+        const pkg = packages.find(packageOption => packageOption.id === next.package_id);
+        const periods = Number(value || 1);
+        if (pkg && Number.isInteger(periods) && periods > 0) {
+          next.amount = String(Number(pkg.price ?? 0) * periods);
+        }
       }
       return next;
     });
@@ -429,6 +442,16 @@ export default function AdminOfflineRenewals() {
       return;
     }
 
+    const periodsPaid = Number(values.periods_paid);
+    if (!Number.isInteger(periodsPaid) || periodsPaid < 1 || periodsPaid > 120) {
+      toast({
+        title: 'Invalid periods paid',
+        description: 'Periods paid must be a whole number between 1 and 120.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (selectedPackage.requires_trainer && !values.trainer_id) {
       toast({
         title: 'Trainer required',
@@ -483,7 +506,7 @@ export default function AdminOfflineRenewals() {
       const profileEmail = values.email.trim() || createPlaceholderEmail(userId);
       const profilePhone = values.phone.trim() || createPlaceholderPhone(userId);
       const paidAtIso = dateInputToAddisIso(values.payment_date);
-      const expiryIso = addPackageDuration(new Date(paidAtIso), selectedPackage).toISOString();
+      const expiryIso = addPackageDuration(new Date(paidAtIso), selectedPackage, periodsPaid).toISOString();
       const qrData = JSON.stringify({
         userId,
         firstName: values.first_name.trim(),
@@ -545,6 +568,7 @@ export default function AdminOfflineRenewals() {
             payment_date: paidAtIso,
             gym_name: selectedGym.name,
             package_name: selectedPackage.name,
+            periods_paid: periodsPaid,
             membership_expiry: expiryIso,
           }),
         });
@@ -862,7 +886,7 @@ export default function AdminOfflineRenewals() {
             </div>
           )}
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="offline-payment-date-register">Real payment / registration date</Label>
               <Input
@@ -871,6 +895,17 @@ export default function AdminOfflineRenewals() {
                 max={new Date().toISOString().slice(0, 10)}
                 value={registrationValues.payment_date}
                 onChange={(event) => updateRegistrationValue('payment_date', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-register-periods">Periods paid</Label>
+              <Input
+                id="offline-register-periods"
+                type="number"
+                min="1"
+                step="1"
+                value={registrationValues.periods_paid}
+                onChange={(event) => updateRegistrationValue('periods_paid', event.target.value)}
               />
             </div>
             <div className="space-y-2">
@@ -958,6 +993,7 @@ export default function AdminOfflineRenewals() {
 
           <div className="rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
             <div>Registration date: <strong>{registrationValues.payment_date || '-'}</strong></div>
+            <div>Periods paid: <strong>{registrationValues.periods_paid || '1'}</strong></div>
             <div>Calculated expiry: <strong>{registrationExpiryPreview ? registrationExpiryPreview.toLocaleDateString() : '-'}</strong></div>
           </div>
 

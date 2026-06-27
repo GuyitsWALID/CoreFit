@@ -61,6 +61,10 @@ const formSchema = z.object({
   ),
   gender: z.string().min(1, { message: "Gender is required." }),
   package_id: z.string().min(1, { message: "Package is required." }),
+  membership_periods: z.string().refine(value => {
+    const periods = Number(value);
+    return Number.isInteger(periods) && periods >= 1 && periods <= 120;
+  }, { message: "Periods paid must be a whole number between 1 and 120." }),
   trainer_id: z.string().optional(),
   emergency_name: z.string().optional(),
   emergency_phone: z.string().optional(),
@@ -70,12 +74,56 @@ const formSchema = z.object({
   qr_code_data: z.string().optional(),
 });
 
+type RegisterPackage = {
+  id: string;
+  name: string;
+  price: number;
+  requires_trainer: boolean;
+  duration_value: number;
+  duration_unit: string | null;
+};
+
+const addPackageDuration = (startDate: Date, pkg: RegisterPackage, periods: number) => {
+  const next = new Date(startDate);
+  const durationValue = Math.max(0, Number(pkg.duration_value || 0)) * periods;
+  const durationUnit = String(pkg.duration_unit || "days").toLowerCase();
+
+  switch (durationUnit) {
+    case "day":
+    case "days":
+      next.setDate(next.getDate() + durationValue);
+      break;
+    case "week":
+    case "weeks":
+      next.setDate(next.getDate() + durationValue * 7);
+      break;
+    case "month":
+    case "months":
+      next.setMonth(next.getMonth() + durationValue);
+      break;
+    case "year":
+    case "years":
+      next.setFullYear(next.getFullYear() + durationValue);
+      break;
+    default:
+      next.setDate(next.getDate() + durationValue);
+  }
+
+  return next;
+};
+
+const formatPackageDuration = (pkg: RegisterPackage) => {
+  const value = Number(pkg.duration_value || 0);
+  const unit = String(pkg.duration_unit || "days").toLowerCase();
+  return `${value} ${unit}`;
+};
+
 export default function RegisterClient() {
   const { toast } = useToast();
   const { gym, loading: gymLoading } = useGym();
-  const [packages, setPackages] = useState<Array<{id: string, name: string, price: number, requires_trainer: boolean}>>([]);
+  const [packages, setPackages] = useState<RegisterPackage[]>([]);
   const [trainers, setTrainers] = useState<Array<{id: string, full_name: string}>>([]);
-  const [selectedPackage, setSelectedPackage] = useState<{id: string, name: string, price: number, requires_trainer: boolean} | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<RegisterPackage | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -113,6 +161,7 @@ export default function RegisterClient() {
       email: "",
       gender: "",
       package_id: "",
+      membership_periods: "1",
       trainer_id: "",
       emergency_name: "",
       emergency_phone: "",
@@ -122,6 +171,15 @@ export default function RegisterClient() {
       qr_code_data: "",
     },
   });
+
+  const watchedPeriods = form.watch("membership_periods");
+  const membershipPeriods = Number(watchedPeriods || 1);
+  const membershipExpiryPreview = selectedPackage && Number.isInteger(membershipPeriods) && membershipPeriods > 0
+    ? addPackageDuration(new Date(), selectedPackage, membershipPeriods)
+    : null;
+  const paymentAmountPreview = selectedPackage && Number.isInteger(membershipPeriods) && membershipPeriods > 0
+    ? Number(selectedPackage.price || 0) * membershipPeriods
+    : 0;
 
   useEffect(() => {
     if (gym && gym.id !== 'default') {
@@ -136,7 +194,7 @@ export default function RegisterClient() {
     try {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name, price, requires_trainer')
+        .select('id, name, price, requires_trainer, duration_value, duration_unit')
         .eq('gym_id', gym.id)
         .eq('archived', false)
         .order('name');
@@ -149,7 +207,14 @@ export default function RegisterClient() {
           variant: "destructive"
         });
       } else {
-        setPackages(data || []);
+        setPackages((data || []).map(pkg => ({
+          id: pkg.id,
+          name: pkg.name,
+          price: Number(pkg.price ?? 0),
+          requires_trainer: Boolean(pkg.requires_trainer),
+          duration_value: Number(pkg.duration_value ?? 0),
+          duration_unit: pkg.duration_unit ?? "days",
+        })));
       }
     } catch (err) {
       console.error("fetchPackages unexpected error:", err);
@@ -397,6 +462,21 @@ export default function RegisterClient() {
 
       const profileEmail = email || createPlaceholderEmail(userId);
       const profilePhone = values.phone?.trim() || createPlaceholderPhone(userId);
+      const paidPeriods = Number(values.membership_periods);
+      const selectedRegistrationPackage = packages.find(pkg => pkg.id === values.package_id) ?? null;
+
+      if (!selectedRegistrationPackage || selectedRegistrationPackage.duration_value <= 0) {
+        toast({
+          title: "Invalid package duration",
+          description: "Please select a package with a valid duration before registering.",
+          variant: "destructive"
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const membershipExpiry = addPackageDuration(new Date(), selectedRegistrationPackage, paidPeriods);
+      const registrationAmount = Number(selectedRegistrationPackage.price || 0) * paidPeriods;
 
       // Generate QR code data
       const qrData = JSON.stringify({
@@ -420,7 +500,7 @@ export default function RegisterClient() {
         p_relationship: values.relationship || null,
         p_fitness_goal: values.fitness_goal || null,
         p_package_id: values.package_id,
-        p_membership_expiry: values.membership_expiry ? new Date(values.membership_expiry).toISOString() : null,
+        p_membership_expiry: membershipExpiry.toISOString(),
         p_trainer_id: values.trainer_id || null,
         p_status: 'active',
         p_date_of_birth: values.date_of_birth ? new Date(values.date_of_birth).toISOString().split('T')[0] : null,
@@ -440,15 +520,15 @@ export default function RegisterClient() {
       }
 
       // 3. Record payment for this registration
-      if (selectedPackage && selectedPackage.price > 0) {
+      if (selectedRegistrationPackage && registrationAmount > 0) {
         try {
           await recordPayment({
             user_id: userId,
             gym_id: gym.id,
-            package_id: selectedPackage.id,
-            amount: selectedPackage.price,
+            package_id: selectedRegistrationPackage.id,
+            amount: registrationAmount,
             payment_method: 'admin',
-            remarks: `Registration: ${selectedPackage.name}`,
+            remarks: `Registration: ${selectedRegistrationPackage.name}; periods paid: ${paidPeriods}; expiry: ${membershipExpiry.toISOString()}`,
           });
         } catch (payErr) {
           console.warn('Payment recording failed (non-blocking):', payErr);
@@ -935,7 +1015,9 @@ export default function RegisterClient() {
                                       <SelectItem value="no-packages" disabled>No packages available</SelectItem>
                                     ) : (
                                       packages.map((pkg) => (
-                                        <SelectItem key={pkg.id} value={pkg.id}>{pkg.name}</SelectItem>
+                                        <SelectItem key={pkg.id} value={pkg.id}>
+                                          {pkg.name} - ETB {Number(pkg.price || 0).toLocaleString()} / {formatPackageDuration(pkg)}
+                                        </SelectItem>
                                       ))
                                     )}
                                   </SelectContent>
@@ -944,7 +1026,45 @@ export default function RegisterClient() {
                               </FormItem>
                             )}
                           />
+                          <FormField
+                            control={form.control}
+                            name="membership_periods"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Periods Paid</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    placeholder="1"
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <p className="text-xs text-muted-foreground">
+                                  Example: for a 1-month package, enter 2 when the client paid for 2 months.
+                                </p>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
                         </div>
+                        {selectedPackage && (
+                          <div
+                            className="mt-4 rounded-md border p-3 text-sm"
+                            style={{ backgroundColor: `${dynamicStyles.primaryColor}08`, borderColor: `${dynamicStyles.primaryColor}22` }}
+                          >
+                            <div>
+                              Package duration: <strong>{formatPackageDuration(selectedPackage)}</strong>
+                            </div>
+                            <div>
+                              Amount to record: <strong>ETB {paymentAmountPreview.toLocaleString()}</strong>
+                            </div>
+                            <div>
+                              Calculated expiry: <strong>{membershipExpiryPreview ? membershipExpiryPreview.toLocaleDateString() : '-'}</strong>
+                            </div>
+                          </div>
+                        )}
                         {selectedPackage?.requires_trainer && (
                           <FormField
                             control={form.control}
