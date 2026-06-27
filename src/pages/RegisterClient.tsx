@@ -36,6 +36,7 @@ import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
 import QRCodeSVG from 'react-qr-code';
 import { useGym } from "@/contexts/GymContext";
+import { createPlaceholderEmail } from "@/lib/placeholderEmail";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
 
@@ -55,7 +56,7 @@ const formSchema = z.object({
     { message: "Password must be at least 8 characters" }
   ),
   email: z.string().optional().refine(
-    value => !value || z.string().email().safeParse(value).success,
+    value => !value?.trim() || z.string().email().safeParse(value.trim()).success,
     { message: "Please enter a valid email or leave it blank." }
   ),
   gender: z.string().min(1, { message: "Gender is required." }),
@@ -394,6 +395,8 @@ export default function RegisterClient() {
         }
       }
 
+      const profileEmail = email || createPlaceholderEmail(userId);
+
       // Generate QR code data
       const qrData = JSON.stringify({
         userId: userId,
@@ -409,7 +412,7 @@ export default function RegisterClient() {
         p_first_name: values.first_name,
         p_last_name: values.last_name,
         p_gender: values.gender,
-        p_email: email || null,
+        p_email: profileEmail,
         p_phone: values.phone,
         p_emergency_name: values.emergency_name || null,
         p_emergency_phone: values.emergency_phone || null,
@@ -859,6 +862,9 @@ export default function RegisterClient() {
                                     className={fieldState.invalid ? "border-red-500" : ""}
                                   />
                                 </FormControl>
+                                <p className="text-xs text-muted-foreground">
+                                  Leave blank if the client does not want to share an email.
+                                </p>
                                 <FormMessage>
                                   {fieldState.error?.message ? fieldState.error.message : ""}
                                 </FormMessage>

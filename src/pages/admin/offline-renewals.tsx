@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { supabase } from '@/lib/supabaseClient';
 import { recordPayment } from '@/lib/gymApi';
+import { createPlaceholderEmail, isPlaceholderEmail } from '@/lib/placeholderEmail';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
 import { OfflineRenewalModal, OfflineRenewalValues, type OfflineRenewalPackage } from '@/components/Modals/OfflineRenewalModal';
 import { SimpleModal } from '@/components/SimpleModal';
@@ -480,6 +481,7 @@ export default function AdminOfflineRenewals() {
       }
 
       const fullName = `${values.first_name.trim()} ${values.last_name.trim()}`.trim();
+      const profileEmail = values.email.trim() || createPlaceholderEmail(userId);
       const paidAtIso = dateInputToAddisIso(values.payment_date);
       const expiryIso = addPackageDuration(new Date(paidAtIso), selectedPackage).toISOString();
       const qrData = JSON.stringify({
@@ -497,7 +499,7 @@ export default function AdminOfflineRenewals() {
           first_name: values.first_name.trim(),
           last_name: values.last_name.trim(),
           gender: values.gender,
-          email: values.email.trim() || null,
+          email: profileEmail,
           phone: values.phone.trim(),
           emergency_name: values.emergency_name.trim() || null,
           emergency_phone: values.emergency_phone.trim() || null,
@@ -686,7 +688,7 @@ export default function AdminOfflineRenewals() {
                           </Avatar>
                           <div className="min-w-0">
                             <div className="font-semibold text-gray-900">{member.full_name}</div>
-                            <div className="truncate text-sm text-gray-500">{member.email || '-'}</div>
+                            <div className="truncate text-sm text-gray-500">{isPlaceholderEmail(member.email) ? '-' : member.email || '-'}</div>
                             <div className="text-xs text-gray-400">{member.phone || '-'}</div>
                           </div>
                         </div>
@@ -784,6 +786,9 @@ export default function AdminOfflineRenewals() {
                 value={registrationValues.email}
                 onChange={(event) => updateRegistrationValue('email', event.target.value)}
               />
+              <p className="text-xs text-gray-500">
+                Leave blank if the member does not want to share an email.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="offline-phone">Phone</Label>

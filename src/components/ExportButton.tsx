@@ -2,6 +2,7 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { isPlaceholderEmail } from "@/lib/placeholderEmail";
 
 interface MembershipInfo {
   user_id: string;
@@ -37,7 +38,7 @@ export function ExportButton({ filteredMembers }: ExportButtonProps) {
 
     const csvData = filteredMembers.map(member => [
       member.full_name,
-      member.email,
+      isPlaceholderEmail(member.email) ? '' : member.email,
       member.phone,
       member.package_name,
       member.created_at ? new Date(member.created_at).toLocaleDateString() : '-',

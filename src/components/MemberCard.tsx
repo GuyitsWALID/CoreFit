@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Bell, MoreVertical } from "lucide-react";
 import ActionsDropdown  from "./ActionsDropdown";
 import { supabase } from "@/lib/supabaseClient";
+import { isPlaceholderEmail } from "@/lib/placeholderEmail";
 import { MembershipInfo } from "@/types/memberships";
 
 interface MemberCardProps {
@@ -76,7 +77,7 @@ export  function MemberCard({
           </Avatar>
           <div>
             <div className="font-semibold text-xl mb-1">{member.full_name}</div>
-            <div className="text-gray-500 text-sm mb-1">{member.email}</div>
+            <div className="text-gray-500 text-sm mb-1">{isPlaceholderEmail(member.email) ? "-" : member.email}</div>
             <div className="text-gray-400 text-xs">{member.phone}</div>
           </div>
         </div>
