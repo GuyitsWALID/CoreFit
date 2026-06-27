@@ -33,7 +33,7 @@ const toMembershipRow = (row: any): MembershipInfo => {
 
   return {
     user_id: row.user_id ?? row.id,
-    full_name: row.full_name ?? `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Unnamed member',
+    full_name: (row.full_name ?? `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim()) || 'Unnamed member',
     email: row.email ?? '',
     phone: row.phone ?? '',
     package_id: row.package_id ?? row.packages?.id ?? '',
