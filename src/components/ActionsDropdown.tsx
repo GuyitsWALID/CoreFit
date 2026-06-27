@@ -8,13 +8,13 @@ import {
   ArrowUpRight,
   Users,
   SquarePlus,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 import DeactivateModal from "./Modals/DeactivateModal";
 import UserDetailModal from "./Modals/UserDetailModal";
 import type { MembershipInfo } from "@/types/memberships";
-import { on } from "process";
 
 interface ActionsDropdownProps {
   member: MembershipInfo;
@@ -29,6 +29,8 @@ interface ActionsDropdownProps {
   onOfflineRenewal?: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void;
+  onDelete: (member: MembershipInfo) => void;
+  onRefresh?: () => void;
 }
 
 export default function ActionsDropdown({
@@ -44,6 +46,8 @@ export default function ActionsDropdown({
   onOfflineRenewal,
   onUpgrade,
   onCoaching,
+  onDelete,
+  onRefresh,
 }: ActionsDropdownProps) {
   const { toast } = useToast();
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -134,11 +138,6 @@ export default function ActionsDropdown({
 
   // Check if member can be frozen
   const isFreezeEligible = getTotalDays(member.duration_unit, member.duration_value) >= 90;
-
-  // Reasonable implementation: reload the page or refetch data
-  function onRefresh() {
-    window.location.reload();
-  }
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -259,6 +258,15 @@ export default function ActionsDropdown({
               Activate Membership
             </button>
           )}
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm text-red-700 flex items-center gap-2 hover:bg-red-50"
+            onClick={handleAction(() => onDelete(member))}
+            disabled={processingAction === `delete-${member.user_id}`}
+          >
+            <Trash2 className="h-4 w-4" />
+            {processingAction === `delete-${member.user_id}` ? "Deleting..." : "Delete Member"}
+          </button>
         </div>
       )}
       <UserDetailModal
@@ -275,8 +283,4 @@ export default function ActionsDropdown({
       />
     </div>
   );
-}
-
-function onRefresh() {
-  throw new Error("Function not implemented.");
 }

@@ -23,6 +23,8 @@ interface MemberCardProps {
   onOfflineRenewal?: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void; // ONLY CHANGE: Added this prop
+  onDelete: (member: MembershipInfo) => void;
+  onRefresh?: () => void;
   formatDate?: (value: string | null | undefined) => string;
 }
 const statusColorMap: Record<string, string> = {
@@ -49,6 +51,8 @@ export  function MemberCard({
   onOfflineRenewal,
   onUpgrade,
   onCoaching, // ONLY CHANGE: Added this prop
+  onDelete,
+  onRefresh,
   formatDate = (value) => value && !isNaN(Date.parse(value)) ? new Date(value).toLocaleDateString() : "-",
 }: MemberCardProps) {
 
@@ -148,6 +152,8 @@ export  function MemberCard({
             onOfflineRenewal={onOfflineRenewal}
             onUpgrade={onUpgrade}
             onCoaching={onCoaching}
+            onDelete={onDelete}
+            onRefresh={onRefresh}
           />
         </div>
       )}

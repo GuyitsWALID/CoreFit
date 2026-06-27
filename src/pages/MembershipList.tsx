@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Users, Clock, AlertTriangle, CheckCircle, CalendarDays } from "lucide-react";
+import { Users, Clock, AlertTriangle, CheckCircle, CalendarDays, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 import { useGym } from "@/contexts/GymContext";
@@ -14,6 +14,8 @@ import { isPlaceholderEmail, isPlaceholderPhone } from "@/lib/placeholderEmail";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { SimpleModal } from "@/components/SimpleModal";
 
 // Import all the extracted components
 import {
@@ -71,6 +73,8 @@ export default function MembershipList() {
   const [notifTitle, setNotifTitle] = useState("");
   const [notifMessage, setNotifMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState(false);
+  const [deleteMember, setDeleteMember] = useState<MembershipInfo | null>(null);
   
   const [upgradeDialog, setUpgradeDialog] = useState(false);
   const [upgradeMember, setUpgradeMember] = useState<MembershipInfo | null>(null);
@@ -704,6 +708,76 @@ export default function MembershipList() {
     });
   };
 
+  const refreshMembershipList = async () => {
+    await Promise.all([
+      fetchMembershipData({ searchTerm, statusFilter, packageFilter, activeTab, showPageLoading: false }),
+      fetchCounts(),
+    ]);
+  };
+
+  const openDeleteMemberModal = (member: MembershipInfo) => {
+    setDeleteMember(member);
+    setDeleteDialog(true);
+    setOpenDropdown(null);
+  };
+
+  const handleDeleteMember = async () => {
+    if (!deleteMember) return;
+
+    const member = deleteMember;
+
+    setProcessingAction(`delete-${member.user_id}`);
+
+    try {
+      const { error: rpcError } = await supabase.rpc('delete_member_completely', {
+        p_user_id: member.user_id,
+      });
+
+      if (rpcError) {
+        const functionMissing = /function .*delete_member_completely|could not find the function|schema cache/i.test(rpcError.message || '');
+        if (!functionMissing) throw rpcError;
+
+        console.warn('delete_member_completely RPC is not deployed yet; falling back to public table cleanup.', rpcError);
+        const relatedDeletes = [
+          supabase.from('client_checkins').delete().eq('user_id', member.user_id),
+          supabase.from('one_to_one_coaching').delete().eq('user_id', member.user_id),
+          supabase.from('payments').delete().eq('user_id', member.user_id),
+        ];
+
+        for (const deletePromise of relatedDeletes) {
+          const { error } = await deletePromise;
+          if (error) throw error;
+        }
+
+        const { error: userDeleteError } = await supabase
+          .from('users')
+          .delete()
+          .eq('id', member.user_id);
+
+        if (userDeleteError) throw userDeleteError;
+      }
+
+      setMembers(previous => previous.filter(existing => existing.user_id !== member.user_id));
+      await fetchCounts();
+
+      toast({
+        title: "Member deleted",
+        description: `${member.full_name} has been removed from CoreFit.`,
+      });
+      setDeleteDialog(false);
+      setDeleteMember(null);
+    } catch (err: any) {
+      console.error("Failed to delete member:", err);
+      toast({
+        title: "Delete failed",
+        description: err?.message || `Could not delete ${member.full_name}.`,
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
   const handleSendNotification = async () => {
     if (!notifTitle.trim() || !notifMessage.trim()) {
       toast({ title: "Fill all fields", description: "Title and message are required.", variant: "destructive" });
@@ -1138,6 +1212,8 @@ const handleUpgradeSubmit = async () => {
                       onRenew={handleRenew}
                       onUpgrade={handleUpgrade}
                       onCoaching={handleCoaching}
+                      onDelete={openDeleteMemberModal}
+                      onRefresh={refreshMembershipList}
                       formatDate={formatMembershipDate}
                     />
                   ))
@@ -1216,6 +1292,63 @@ const handleUpgradeSubmit = async () => {
         onSubmit={handleUpgradeSubmit}
         isProcessing={processingAction === `upgrade-${upgradeMember?.user_id}`}
       />
+
+      <SimpleModal
+        isOpen={deleteDialog}
+        onClose={() => {
+          if (processingAction === `delete-${deleteMember?.user_id}`) return;
+          setDeleteDialog(false);
+          setDeleteMember(null);
+        }}
+        title="Delete Member"
+        icon={<Trash2 className="h-5 w-5 text-red-600" />}
+      >
+        <div className="space-y-5">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <div className="flex gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600" />
+              <div>
+                <p className="font-semibold text-red-900">
+                  Permanently delete {deleteMember?.full_name || "this member"}?
+                </p>
+                <p className="mt-2 text-sm text-red-800">
+                  This removes the member profile, check-in history, payments, and coaching assignments from CoreFit. This cannot be undone.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {deleteMember && (
+            <div className="rounded-md border bg-gray-50 p-3 text-sm text-gray-700">
+              <div><strong>Name:</strong> {deleteMember.full_name}</div>
+              <div><strong>Email:</strong> {isPlaceholderEmail(deleteMember.email) ? "-" : deleteMember.email || "-"}</div>
+              <div><strong>Phone:</strong> {isPlaceholderPhone(deleteMember.phone) ? "-" : deleteMember.phone || "-"}</div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={processingAction === `delete-${deleteMember?.user_id}`}
+              onClick={() => {
+                setDeleteDialog(false);
+                setDeleteMember(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={!deleteMember || processingAction === `delete-${deleteMember?.user_id}`}
+              onClick={handleDeleteMember}
+            >
+              {processingAction === `delete-${deleteMember?.user_id}` ? "Deleting..." : "Delete Member"}
+            </Button>
+          </div>
+        </div>
+      </SimpleModal>
 
       {/* New Coaching Modal */}
       <OneToOneCoachingModal
