@@ -277,10 +277,10 @@ export default function MembershipList() {
     const stFilter = opts?.statusFilter ?? statusFilter;
     const pkFilter = opts?.packageFilter ?? packageFilter;
     const tab = opts?.activeTab ?? activeTab;
+    const canUseRawStatusFilter = ['active', 'paused', 'inactive'].includes(stFilter);
     try {
-      // If active filter — prefer the `users_with_membership_info` view (ensures package fields are populated)
-      // Trigger when either the status dropdown or the Active tab is selected
-      if (stFilter === 'active' || tab === 'active') {
+      // If active tab — prefer the `users_with_membership_info` view (ensures package fields are populated)
+      if (tab === 'active') {
         const nowIso = new Date().toISOString();
         const safe = sTerm ? sTerm.replace(/[%_]/g, "\\$&") : '';
 
@@ -288,6 +288,7 @@ export default function MembershipList() {
         try {
           let viewQuery: any = supabase.from('users_with_membership_info').select('*').gt('membership_expiry', nowIso);
           if (gym && gym.id !== 'default') viewQuery = viewQuery.eq('gym_id', gym.id);
+          if (canUseRawStatusFilter) viewQuery = viewQuery.eq('status', stFilter);
           if (safe) viewQuery = viewQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
           if (pkFilter && pkFilter !== 'all') {
             if (pkFilter === '__none__') viewQuery = viewQuery.is('package_name', null);
@@ -319,6 +320,7 @@ export default function MembershipList() {
           .gt('membership_expiry', nowIsoFallback);
 
         if (gym && gym.id !== 'default') usersQuery = usersQuery.eq('gym_id', gym.id);
+        if (canUseRawStatusFilter) usersQuery = usersQuery.eq('status', stFilter);
         if (safe) usersQuery = usersQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
 
         const { data: userRows, error: usersError } = await usersQuery;
@@ -393,6 +395,7 @@ export default function MembershipList() {
         let viewQuery: any = supabase.from('users_with_membership_info').select('*');
 
         if (gym && gym.id !== 'default') viewQuery = viewQuery.eq('gym_id', gym.id);
+        if (canUseRawStatusFilter) viewQuery = viewQuery.eq('status', stFilter);
 
         if (sTerm && sTerm.trim() !== "") {
           const safe = sTerm.replace(/[%_]/g, "\\$&");
@@ -431,6 +434,10 @@ export default function MembershipList() {
 
       if (gym && gym.id !== 'default') {
         query = query.eq('gym_id', gym.id);
+      }
+
+      if (canUseRawStatusFilter) {
+        query = query.eq('status', stFilter);
       }
 
       if (sTerm && sTerm.trim() !== "") {
@@ -613,13 +620,13 @@ export default function MembershipList() {
 
   const computeStatus = (m: CouponMembershipInfo) => {
     const st = (m.status ?? '').toLowerCase();
-    if (st === 'paused') return 'paused';
-    if (st === 'inactive') return 'inactive';
     if (isCouponUsedUp(m)) return 'expired';
     if (typeof m.days_left === 'number') {
       if (m.days_left <= 0) return 'expired';
-      return 'active';
     }
+    if (st === 'paused') return 'paused';
+    if (st === 'inactive') return 'inactive';
+    if (st === 'expired') return 'expired';
     return 'active';
   };
 
