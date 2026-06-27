@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, Plus, Settings, BarChart3, Users, Menu, X, Upload, LogOut } from 'lucide-react';
+import { Building2, Plus, Settings, BarChart3, Users, Menu, X, Upload, LogOut, CalendarClock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -50,6 +50,12 @@ export const SuperAdSidebar: React.FC<SuperAdSidebarProps> = ({ className, isOpe
       href: '/admin/users',
       icon: Users,
       description: 'Manage system users'
+    },
+    {
+      name: 'Offline Renewals',
+      href: '/admin/offline-renewals',
+      icon: CalendarClock,
+      description: 'Correct backdated renewals'
     },
     {
       name: 'Import Data',

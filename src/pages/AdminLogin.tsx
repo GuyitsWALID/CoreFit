@@ -75,67 +75,101 @@ export default function AdminLogin() {
         return;
       }
 
-      // 2. Fetch admin/staff record to get gym_id and role
-      let staffRecord = null;
-      
-      // First try to find by user ID
-      const { data: staffById, error: staffByIdError } = await supabase
-        .from('staff')
-        .select(`
+      // 2. Fetch admin/staff record to get gym_id and role.
+      // Keep this tolerant: staff/auth ids can differ, and a broken role join should show
+      // a role-specific error instead of pretending the staff account does not exist.
+      const normalizedEmail = (authData.user.email || values.email).trim().toLowerCase();
+      const staffSelect = `
+        id,
+        email,
+        gym_id,
+        first_name,
+        last_name,
+        is_active,
+        roles (
           id,
-          gym_id,
-          first_name,
-          last_name,
-          is_active,
-          roles!inner (
-            id,
-            name
-          ),
-          gyms (
-            id,
-            name,
-            status
-          )
-        `)
+          name
+        ),
+        gyms (
+          id,
+          name,
+          status
+        )
+      `;
+
+      let staffRecord = null;
+      let staffLookupError: any = null;
+      const isActiveStaff = (staff: any) =>
+        staff?.is_active === true || staff?.is_active === 'true' || staff?.is_active === 1;
+      const sameEmail = (staff: any) =>
+        String(staff?.email || '').trim().toLowerCase() === normalizedEmail;
+
+      const { data: staffByIdRows, error: staffByIdError } = await supabase
+        .from('staff')
+        .select(staffSelect)
         .eq('id', authData.user.id)
-        .eq('is_active', true)
-        .single();
+        .limit(1);
 
-      if (!staffByIdError && staffById) {
-        staffRecord = staffById;
-      } else {
-        // Fallback: try to find by email if ID lookup fails
-        const { data: staffByEmail, error: staffByEmailError } = await supabase
+      if (staffByIdError) {
+        console.error('Admin login staff lookup by auth id failed:', staffByIdError);
+        staffLookupError = staffByIdError;
+      }
+
+      if (staffByIdRows?.length) {
+        console.info('Admin login staff auth-id matches:', staffByIdRows.map((staff: any) => ({
+          id: staff.id,
+          email: staff.email,
+          is_active: staff.is_active,
+          role: Array.isArray(staff.roles) ? staff.roles[0]?.name : staff.roles?.name,
+          gym_id: staff.gym_id,
+          gym_status: Array.isArray(staff.gyms) ? staff.gyms[0]?.status : staff.gyms?.status,
+        })));
+      }
+
+      staffRecord = staffByIdRows?.find(isActiveStaff) || null;
+
+      if (!staffRecord) {
+        const { data: staffByEmailRows, error: staffByEmailError } = await supabase
           .from('staff')
-          .select(`
-            id,
-            gym_id,
-            first_name,
-            last_name,
-            is_active,
-            roles!inner (
-              id,
-              name
-            ),
-            gyms (
-              id,
-              name,
-              status
-            )
-          `)
-          .eq('email', values.email)
-          .eq('is_active', true)
-          .single();
+          .select(staffSelect)
+          .ilike('email', `%${normalizedEmail}%`)
+          .limit(5);
 
-        if (!staffByEmailError && staffByEmail) {
-          staffRecord = staffByEmail;
+        if (staffByEmailError) {
+          console.error('Admin login staff lookup by email failed:', staffByEmailError);
+          staffLookupError = staffByEmailError;
         }
+
+        if (staffByEmailRows?.length) {
+          console.info('Admin login staff email matches:', staffByEmailRows.map((staff: any) => ({
+            id: staff.id,
+            email: staff.email,
+            is_active: staff.is_active,
+            role: Array.isArray(staff.roles) ? staff.roles[0]?.name : staff.roles?.name,
+            gym_id: staff.gym_id,
+            gym_status: Array.isArray(staff.gyms) ? staff.gyms[0]?.status : staff.gyms?.status,
+          })));
+        }
+
+        staffRecord = staffByEmailRows?.find((staff: any) =>
+          isActiveStaff(staff) && sameEmail(staff)
+        ) || staffByEmailRows?.find(isActiveStaff) || null;
       }
 
       if (!staffRecord) {
+        console.error('Admin login denied: no active staff record matched authenticated user.', {
+          authUserId: authData.user.id,
+          authEmail: authData.user.email,
+          submittedEmail: values.email,
+          normalizedEmail,
+          staffLookupError,
+        });
+
         toast({
           title: "Access denied",
-          description: "No active admin account found for this email. Please contact your system administrator.",
+          description: staffLookupError?.message
+            ? `Staff lookup failed: ${staffLookupError.message}`
+            : "No visible active staff account matched this login. Check the browser console for the exact auth id/email used.",
           variant: "destructive",
         });
         // Sign out the user since they don't have proper access

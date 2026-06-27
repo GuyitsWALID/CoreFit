@@ -26,7 +26,7 @@ interface ActionsDropdownProps {
   onExtend: (member: MembershipInfo) => void;
   onUnfreeze: (member: MembershipInfo) => void;
   onRenew: (member: MembershipInfo) => void;
-  onOfflineRenewal: (member: MembershipInfo) => void;
+  onOfflineRenewal?: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void;
 }
@@ -198,15 +198,17 @@ export default function ActionsDropdown({
             <RefreshCw className="h-4 w-4" /> Renew Membership
           </button>
 
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 text-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50"
-            onClick={handleAction(() => onOfflineRenewal(member))}
-            disabled={processingAction === `offline-renew-${member.user_id}`}
-          >
-            <CalendarClock className="h-4 w-4" />
-            {processingAction === `offline-renew-${member.user_id}` ? "Recording..." : "Record Offline Renewal"}
-          </button>
+          {onOfflineRenewal && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50"
+              onClick={handleAction(() => onOfflineRenewal(member))}
+              disabled={processingAction === `offline-renew-${member.user_id}`}
+            >
+              <CalendarClock className="h-4 w-4" />
+              {processingAction === `offline-renew-${member.user_id}` ? "Recording..." : "Record Offline Renewal"}
+            </button>
+          )}
 
           {/* Upgrade */}
           <button

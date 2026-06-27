@@ -332,6 +332,9 @@ export default function RegisterClient() {
       let userId = crypto.randomUUID();
 
       if (password) {
+        const { data: existingAuth } = await supabase.auth.getSession();
+        const adminSession = existingAuth.session;
+
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email: values.email,
           password,
@@ -358,6 +361,21 @@ export default function RegisterClient() {
         }
 
         userId = signUpData.user.id;
+
+        if (
+          adminSession?.access_token &&
+          adminSession?.refresh_token &&
+          adminSession.user.id !== userId
+        ) {
+          const { error: restoreSessionError } = await supabase.auth.setSession({
+            access_token: adminSession.access_token,
+            refresh_token: adminSession.refresh_token,
+          });
+
+          if (restoreSessionError) {
+            console.warn("Could not restore admin session after client signup:", restoreSessionError);
+          }
+        }
       }
 
       // Generate QR code data

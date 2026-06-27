@@ -19,7 +19,7 @@ interface MemberCardProps {
   onExtendFreeze: (member: MembershipInfo) => void;
   onUnfreeze: (member: MembershipInfo) => void;
   onRenew: (member: MembershipInfo) => void;
-  onOfflineRenewal: (member: MembershipInfo) => void;
+  onOfflineRenewal?: (member: MembershipInfo) => void;
   onUpgrade: (member: MembershipInfo) => void;
   onCoaching: (member: MembershipInfo) => void; // ONLY CHANGE: Added this prop
 }

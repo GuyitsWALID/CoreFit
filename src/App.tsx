@@ -23,6 +23,7 @@ import AdminGyms from '@/pages/admin/gyms';
 import Analytics from '@/pages/admin/analytics';
 import UserManagement from '@/pages/admin/users';
 import AdminSettings from '@/pages/admin/settings'; 
+import AdminOfflineRenewals from '@/pages/admin/offline-renewals';
 import { MigrationDashboard } from '@/components/MigrationPage';
 import Packages from './pages/Packages.tsx';
 import { SuperAdminGuard } from '@/components/auth/SuperAdminGuard';
@@ -56,6 +57,7 @@ function App() {
             <Route path="onboard" element={<OnboardingForm />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="users" element={<UserManagement />} />
+            <Route path="offline-renewals" element={<AdminOfflineRenewals />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="import" element={<MigrationDashboard />} />
           </Route>
