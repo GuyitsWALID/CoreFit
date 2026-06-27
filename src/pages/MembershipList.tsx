@@ -23,6 +23,7 @@ import { MembershipInfo } from "@/types/memberships";
 import { CoachingSessionData, Trainer } from "@/types/coaching"; // Ensure this matches your types
 import { fetchTrainers } from "@/lib/supabase_trainer_query";
 import FreezeActionModal from "../components/Modals/FreezeActionModal.tsx";
+import { OfflineRenewalModal, OfflineRenewalValues, type OfflineRenewalPackage } from "@/components/Modals/OfflineRenewalModal";
 
 
 const statusColors: Record<string, string> = {
@@ -59,7 +60,9 @@ export default function MembershipList() {
   const [upgradeDialog, setUpgradeDialog] = useState(false);
   const [upgradeMember, setUpgradeMember] = useState<MembershipInfo | null>(null);
   const [selectedPackage, setSelectedPackage] = useState("");
-  const [availablePackages, setAvailablePackages] = useState<Array<{id: string, name: string, price: number}>>([]);
+  const [availablePackages, setAvailablePackages] = useState<OfflineRenewalPackage[]>([]);
+  const [offlineRenewalDialog, setOfflineRenewalDialog] = useState(false);
+  const [offlineRenewalMember, setOfflineRenewalMember] = useState<MembershipInfo | null>(null);
   
   // New coaching modal states
   const [coachingDialog, setCoachingDialog] = useState(false);
@@ -616,12 +619,18 @@ export default function MembershipList() {
     try {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name, price')
+        .select('id, name, price, duration_value, duration_unit')
         .eq('gym_id', gym.id)
         .order('price', { ascending: true });
       
       if (!error) {
-        setAvailablePackages(data || []);
+        setAvailablePackages((data || []).map((pkg: any) => ({
+          id: pkg.id,
+          name: pkg.name,
+          price: Number(pkg.price ?? 0),
+          duration_value: Number(pkg.duration_value ?? 0),
+          duration_unit: pkg.duration_unit ?? 'days',
+        })));
       }
     } catch (error) {
       console.error('Error fetching packages:', error);
@@ -743,6 +752,58 @@ const handleUpgrade = (member: MembershipInfo) => {
   setUpgradeDialog(true);
   setOpenDropdown(null);
   fetchPackages();
+};
+
+const handleOfflineRenewal = (member: MembershipInfo) => {
+  setOfflineRenewalMember(member);
+  setOfflineRenewalDialog(true);
+  setOpenDropdown(null);
+  fetchPackages();
+};
+
+const handleOfflineRenewalSubmit = async (values: OfflineRenewalValues) => {
+  if (!offlineRenewalMember) return;
+  setProcessingAction(`offline-renew-${offlineRenewalMember.user_id}`);
+
+  try {
+    const { data, error } = await supabase.rpc('record_offline_renewal', {
+      p_user_id: offlineRenewalMember.user_id,
+      p_package_id: values.packageId,
+      p_payment_date: values.paymentDate,
+      p_amount: values.amount,
+      p_payment_method: values.paymentMethod,
+      p_remarks: values.remarks || null,
+    });
+
+    if (error) {
+      toast({
+        title: "Offline renewal failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const result = Array.isArray(data) && data.length > 0 ? data[0] : data;
+    toast({
+      title: "Offline renewal recorded",
+      description: result?.new_expiry_date
+        ? `${offlineRenewalMember.full_name}'s new expiry is ${new Date(result.new_expiry_date).toLocaleDateString()}.`
+        : `${offlineRenewalMember.full_name}'s renewal was recorded.`,
+    });
+    setOfflineRenewalDialog(false);
+    setOfflineRenewalMember(null);
+    await fetchMembershipData();
+    await fetchCounts();
+  } catch (err: any) {
+    toast({
+      title: "Offline renewal failed",
+      description: err?.message || "Unknown error",
+      variant: "destructive",
+    });
+  } finally {
+    setProcessingAction(null);
+  }
 };
 
 const handleUpgradeSubmit = async () => {
@@ -1035,6 +1096,7 @@ const handleUpgradeSubmit = async () => {
                       onExtendFreeze={openExtend}
                       onUnfreeze={handleUnfreeze}
                       onRenew={handleRenew}
+                      onOfflineRenewal={handleOfflineRenewal}
                       onUpgrade={handleUpgrade}
                       onCoaching={handleCoaching}
                     />
@@ -1113,6 +1175,18 @@ const handleUpgradeSubmit = async () => {
         setSelectedPackage={setSelectedPackage}
         onSubmit={handleUpgradeSubmit}
         isProcessing={processingAction === `upgrade-${upgradeMember?.user_id}`}
+      />
+
+      <OfflineRenewalModal
+        isOpen={offlineRenewalDialog}
+        onClose={() => {
+          setOfflineRenewalDialog(false);
+          setOfflineRenewalMember(null);
+        }}
+        member={offlineRenewalMember}
+        packages={availablePackages}
+        onSubmit={handleOfflineRenewalSubmit}
+        isProcessing={processingAction === `offline-renew-${offlineRenewalMember?.user_id}`}
       />
 
       {/* New Coaching Modal */}

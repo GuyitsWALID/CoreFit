@@ -77,8 +77,11 @@ declare global {
   interface Window {
     BarcodeDetector?: any;
     jsQR?: any;
+    simulateUsbScanner?: (value: string, options?: { delay?: number; suffix?: 'Enter' | 'Tab' | 'none' }) => Promise<void>;
   }
 }
+
+type CheckInSource = 'camera' | 'manual' | 'usb';
 
 export default function CheckIns() {
   const { toast } = useToast();
@@ -105,7 +108,9 @@ export default function CheckIns() {
   
   // Add state to prevent duplicate processing
   const [isProcessingQR, setIsProcessingQR] = useState(false);
+  const isProcessingQRRef = useRef(false);
   const [lastProcessedQR, setLastProcessedQR] = useState<string>('');
+  const lastProcessedQRRef = useRef<string>('');
   const lastProcessedTimeRef = useRef<number>(0);
   
   const todayDate = new Date().toISOString().split('T')[0];
@@ -128,7 +133,27 @@ export default function CheckIns() {
   }, [gym]);
 
   // Use the physical scanner hook
-  usePhysicalScanner({ onScan: (value) => handleQrResult(value) });
+  usePhysicalScanner({ onScan: (value) => handleQrResult(value, 'usb') });
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    window.simulateUsbScanner = async (value, options = {}) => {
+      const delay = options.delay ?? 8;
+      const suffix = options.suffix ?? 'Enter';
+      for (const char of value) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: char, bubbles: true }));
+        await new Promise(resolve => window.setTimeout(resolve, delay));
+      }
+      if (suffix !== 'none') {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: suffix, bubbles: true }));
+      }
+    };
+
+    return () => {
+      delete window.simulateUsbScanner;
+    };
+  }, []);
 
   useEffect(() => {
     if (gym && gym.id !== 'default') {
@@ -146,6 +171,18 @@ export default function CheckIns() {
   const addDebugInfo = (info: string) => {
     console.log('QR Debug:', info);
     setDebugInfo(prev => [...prev.slice(-4), `${new Date().toLocaleTimeString()}: ${info}`]);
+  };
+
+  const logCheckInDiagnostic = (label: string, details?: unknown) => {
+    if (details === undefined) {
+      console.info(`[CheckIn] ${label}`);
+      return;
+    }
+    console.info(`[CheckIn] ${label}`, details);
+  };
+
+  const logCheckInError = (label: string, details?: unknown) => {
+    console.error(`[CheckIn] ${label}`, details);
   };
 
   // Determine whether a package's access level allows check-in at the current time
@@ -169,21 +206,32 @@ export default function CheckIns() {
   // Safely insert a client_checkins row but fallback if package columns are missing in DB schema
   const safeInsertClientCheckin = async (payload: Record<string, any>) => {
     try {
+      logCheckInDiagnostic('Attempting client check-in insert', payload);
       const { error } = await supabase.from('client_checkins').insert([payload]);
-      if (!error) return { ok: true };
+      if (!error) {
+        logCheckInDiagnostic('Client check-in insert succeeded');
+        return { ok: true };
+      }
 
       // If the error suggests a missing column in the schema, retry without package metadata
       const msg = (error.message || '').toString().toLowerCase();
+      logCheckInError('Client check-in insert failed', error);
       if (msg.includes('package_access_level_at_checkin') || msg.includes('package_type_at_checkin') || msg.includes('could not find') || msg.includes('does not exist') || msg.includes('schema cache')) {
         addDebugInfo('client_checkins schema missing package columns, retrying without those fields');
         const { package_type_at_checkin, package_access_level_at_checkin, ...fallback } = payload as any;
+        logCheckInDiagnostic('Retrying client check-in insert without package metadata', fallback);
         const { error: fallbackError } = await supabase.from('client_checkins').insert([fallback]);
-        if (!fallbackError) return { ok: true, fallback: true };
+        if (!fallbackError) {
+          logCheckInDiagnostic('Client check-in fallback insert succeeded');
+          return { ok: true, fallback: true };
+        }
+        logCheckInError('Client check-in fallback insert failed', fallbackError);
         return { ok: false, error: fallbackError };
       }
 
       return { ok: false, error };
     } catch (err: any) {
+      logCheckInError('Client check-in insert threw unexpectedly', err);
       return { ok: false, error: err };
     }
   };
@@ -432,7 +480,7 @@ export default function CheckIns() {
       scanTimerRef.current = window.setInterval(async () => {
         try {
           // Skip if already processing a QR code
-          if (isProcessingQR) {
+          if (isProcessingQRRef.current) {
             return;
           }
 
@@ -495,23 +543,26 @@ export default function CheckIns() {
             const trimmedValue = detectedValue.trim();
             
             // Prevent duplicate processing of the same QR code within 3 seconds
-            if (trimmedValue === lastProcessedQR && (currentTime - lastProcessedTimeRef.current) < 3000) {
+            if (trimmedValue === lastProcessedQRRef.current && (currentTime - lastProcessedTimeRef.current) < 3000) {
               addDebugInfo('Duplicate QR code detected, skipping');
               return;
             }
 
             // Set processing flag to prevent multiple simultaneous processing
+            isProcessingQRRef.current = true;
             setIsProcessingQR(true);
+            lastProcessedQRRef.current = trimmedValue;
             setLastProcessedQR(trimmedValue);
             lastProcessedTimeRef.current = currentTime;
             
             addDebugInfo(`QR Code detected: ${trimmedValue.substring(0, 100)}`);
             
             try {
-              await handleQrResult(trimmedValue);
+              await handleQrResult(trimmedValue, 'camera');
             } finally {
               // Always reset processing flag after handling
               setTimeout(() => {
+                isProcessingQRRef.current = false;
                 setIsProcessingQR(false);
               }, 1000); // 1 second cooldown
             }
@@ -532,12 +583,14 @@ export default function CheckIns() {
       video.removeEventListener('error', onError);
       cancelAnimationFrame(rAF);
     };
-  }, [qrScanActive, barcodeDetectorSupported, jsQRLoaded, isProcessingQR, lastProcessedQR]);
+  }, [qrScanActive, barcodeDetectorSupported, jsQRLoaded]);
 
   const stopQrScan = () => {
     addDebugInfo('Stopping QR scan');
     setQrScanActive(false);
+    isProcessingQRRef.current = false;
     setIsProcessingQR(false);
+    lastProcessedQRRef.current = '';
     setLastProcessedQR('');
     lastProcessedTimeRef.current = 0;
     
@@ -596,7 +649,9 @@ export default function CheckIns() {
     try {
       setQrStatus('scanning');
       setDebugInfo([]);
+      isProcessingQRRef.current = false;
       setIsProcessingQR(false);
+      lastProcessedQRRef.current = '';
       setLastProcessedQR('');
       lastProcessedTimeRef.current = 0;
       
@@ -641,13 +696,7 @@ export default function CheckIns() {
 
     // Filter by gym context if available
     if (gym && gym.id !== 'default') {
-      if (type === 'user') {
-        // For users, check via users table gym_id
-        query = query.eq('users.gym_id', gym.id);
-      } else {
-        // For staff, check via staff table gym_id
-        query = query.eq('staff.gym_id', gym.id);
-      }
+      query = query.eq('gym_id', gym.id);
     }
 
     const { data, error } = await query;
@@ -655,31 +704,46 @@ export default function CheckIns() {
     if (error) {
       // If error happens, don't block; just log
       addDebugInfo(`dedupe check error (${type}): ${error.message}`);
+      logCheckInError(`Dedupe check failed for ${type}`, error);
       return false;
     }
+    logCheckInDiagnostic(`Dedupe check completed for ${type}`, { id, foundRecent: Array.isArray(data) && data.length > 0 });
     return Array.isArray(data) && data.length > 0;
   };
 
   const [scanLocked, setScanLocked] = useState(false);
+  const scanLockedRef = useRef(false);
   const scanLockTimerRef = useRef<number | null>(null);
 
-  const handleQrResult = async (value: string) => {
-    if (scanLocked) {
+  const processCheckInCode = async (value: string, source: CheckInSource) => {
+    if (scanLockedRef.current) {
       addDebugInfo('Scan ignored: scanLocked is active');
       return;
     }
 
     // Immediately lock to prevent concurrent/duplicate handling
+    scanLockedRef.current = true;
     setScanLocked(true);
 
     let scanSucceeded = false;
 
     try {
       const code = value.trim();
+      if (!code || code.length < 3) {
+        addDebugInfo(`Ignored ${source} scan: empty or too short`);
+        logCheckInDiagnostic('Ignored scan because it was empty or too short', { source, rawValue: value });
+        return;
+      }
       const nowIso = new Date().toISOString();
       const dateStr = nowIso.split('T')[0];
 
-      addDebugInfo(`Processing QR code: ${code.substring(0, 50)}...`);
+      addDebugInfo(`Processing ${source} QR code: ${code.substring(0, 50)}...`);
+      logCheckInDiagnostic('Processing scan', {
+        source,
+        code,
+        gymId: gym?.id ?? null,
+        codeLength: code.length,
+      });
 
       // First, try to parse as JSON (new format from registration)
       let qrData: any = null;
@@ -696,6 +760,7 @@ export default function CheckIns() {
           // Check if gym matches
           if (gym && gym.id !== 'default' && qrData.gymId && qrData.gymId !== gym.id) {
             addDebugInfo(`Gym ID mismatch: QR has ${qrData.gymId}, current gym is ${gym.id}`);
+            logCheckInError('Rejected scan because QR gym does not match current gym', { qrGymId: qrData.gymId, currentGymId: gym.id });
             toast({
               title: 'Wrong gym',
               description: 'This QR code is for a different gym location.',
@@ -708,7 +773,7 @@ export default function CheckIns() {
           // Look up user by ID
           let userQuery = supabase
             .from('users')
-            .select('id, first_name, last_name, email, package_id, gym_id, packages(name)')
+            .select('id, first_name, last_name, email, package_id, gym_id, packages(name, access_level)')
             .eq('id', qrData.userId);
 
           // Filter by gym if available
@@ -720,10 +785,12 @@ export default function CheckIns() {
 
           if (userErr) {
             addDebugInfo(`User lookup error: ${userErr.message}`);
+            logCheckInError('User lookup failed for JSON userId path', userErr);
             throw new Error(`Database error: ${userErr.message}`);
           }
 
           if (userMatch) {
+            logCheckInDiagnostic('Matched user by JSON userId', userMatch);
             // Dedupe guard
             if (await alreadyCheckedInRecently('user', userMatch.id)) {
               addDebugInfo('Duplicate user check-in prevented by time window');
@@ -772,6 +839,7 @@ export default function CheckIns() {
             const insertResult = await safeInsertClientCheckin(checkInData);
             if (!insertResult.ok) {
               const errMsg = insertResult.error?.message || JSON.stringify(insertResult.error);
+              logCheckInError('Client check-in insert result was not ok', insertResult.error);
               throw new Error(`Failed to record check-in: ${errMsg}`);
             }
             if (insertResult.fallback) addDebugInfo('Check-in inserted without package metadata (DB lacks columns)');
@@ -786,11 +854,13 @@ export default function CheckIns() {
             return; 
           } else {
             addDebugInfo(`User not found with ID: ${qrData.userId} in gym ${gym?.id}`);
+            logCheckInDiagnostic('No user matched JSON userId path', { userId: qrData.userId, gymId: gym?.id });
           }
         } else if (qrData.staffId) {
           // Check if gym matches for staff
           if (gym && gym.id !== 'default' && qrData.gymId && qrData.gymId !== gym.id) {
             addDebugInfo(`Gym ID mismatch for staff: QR has ${qrData.gymId}, current gym is ${gym.id}`);
+            logCheckInError('Rejected staff scan because QR gym does not match current gym', { qrGymId: qrData.gymId, currentGymId: gym.id });
             toast({
               title: 'Wrong gym',
               description: 'This staff QR code is for a different gym location.',
@@ -814,10 +884,12 @@ export default function CheckIns() {
 
           if (staffErr) {
             addDebugInfo(`Staff lookup error: ${staffErr.message}`);
+            logCheckInError('Staff lookup failed for JSON staffId path', staffErr);
             throw new Error(`Database error: ${staffErr.message}`);
           }
 
           if (staffMatch) {
+            logCheckInDiagnostic('Matched staff by JSON staffId', staffMatch);
             // Dedupe guard
             if (await alreadyCheckedInRecently('staff', staffMatch.id)) {
               addDebugInfo('Duplicate staff check-in prevented by time window');
@@ -841,8 +913,10 @@ export default function CheckIns() {
               }]);
 
             if (staffInsertError) {
+              logCheckInError('Staff check-in insert failed for JSON staffId path', staffInsertError);
               throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
             }
+            logCheckInDiagnostic('Staff check-in insert succeeded for JSON staffId path');
 
             scanSucceeded = true;
             setQrStatus('success');
@@ -854,6 +928,7 @@ export default function CheckIns() {
             return;
           } else {
             addDebugInfo(`Staff not found with ID: ${qrData.staffId} in gym ${gym?.id}`);
+            logCheckInDiagnostic('No staff matched JSON staffId path', { staffId: qrData.staffId, gymId: gym?.id });
           }
         }
       }
@@ -861,16 +936,18 @@ export default function CheckIns() {
       // Fallback: Try to match by qr_code_data field in users table
       const { data: userByQrCode, error: qrCodeErr } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email, package_id, packages(name), qr_code_data')
+            .select('id, first_name, last_name, email, package_id, packages(name, access_level), qr_code_data')
         .eq('gym_id', gym?.id)
         .eq('qr_code_data', code)
         .maybeSingle();
 
       if (qrCodeErr) {
         addDebugInfo(`qr_code_data lookup error: ${qrCodeErr.message}`);
+        logCheckInError('User qr_code_data lookup failed', qrCodeErr);
       }
 
       if (userByQrCode) {
+        logCheckInDiagnostic('Matched user by stored qr_code_data', userByQrCode);
         // Dedupe guard
         if (await alreadyCheckedInRecently('user', userByQrCode.id)) {
           addDebugInfo('Duplicate user check-in prevented by time window (qr_code_data path)');
@@ -886,6 +963,7 @@ export default function CheckIns() {
           user_id: userByQrCode.id,
           checkin_time: nowIso,
           checkin_date: dateStr,
+          gym_id: gym?.id || null,
         };
 
         const packageInfo = userByQrCode.packages as any;
@@ -910,6 +988,7 @@ export default function CheckIns() {
 
         const insertResult = await safeInsertClientCheckin(extendedCheckInData);
         if (!insertResult.ok) {
+          logCheckInError('Client check-in insert failed for qr_code_data path', insertResult.error);
           throw new Error(`Failed to record check-in: ${insertResult.error?.message || JSON.stringify(insertResult.error)}`);
         }
         if (insertResult.fallback) addDebugInfo('Check-in inserted without package metadata (DB lacks columns)');
@@ -934,9 +1013,11 @@ export default function CheckIns() {
 
       if (staffQrErr) {
         addDebugInfo(`staff qr_code lookup error: ${staffQrErr.message}`);
+        logCheckInError('Staff qr_code lookup failed', staffQrErr);
       }
 
       if (staffByQrCode) {
+        logCheckInDiagnostic('Matched staff by stored qr_code', staffByQrCode);
         // Dedupe guard
         if (await alreadyCheckedInRecently('staff', staffByQrCode.id)) {
           addDebugInfo('Duplicate staff check-in prevented by time window (qr_code path)');
@@ -954,11 +1035,15 @@ export default function CheckIns() {
             staff_id: staffByQrCode.id,
             checkin_time: nowIso,
             checkin_date: dateStr,
+            gym_id: gym?.id || null,
           }]);
         if (staffInsertError) {
+          logCheckInError('Staff check-in insert failed for qr_code path', staffInsertError);
           throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
         }
+        logCheckInDiagnostic('Staff check-in insert succeeded for qr_code path');
 
+        scanSucceeded = true;
         setQrStatus('success');
         toast({
           title: 'Check-in successful',
@@ -989,6 +1074,7 @@ export default function CheckIns() {
       const { id, kind } = extractIdFromPayload(code);
       if (!id) {
         addDebugInfo('No valid ID found in QR code');
+        logCheckInDiagnostic('No valid ID could be extracted from scan payload', { code });
         setQrStatus('not_found');
         toast({
           title: 'QR code not recognized',
@@ -1006,7 +1092,7 @@ export default function CheckIns() {
       if (kind !== 'staff') {
         const { data: userById } = await supabase
           .from('users')
-          .select('id, first_name, last_name, email, package_id, packages(name)')
+          .select('id, first_name, last_name, email, package_id, packages(name, access_level)')
           .eq('gym_id', gym?.id)
           .eq('id', id)
           .maybeSingle();
@@ -1015,6 +1101,7 @@ export default function CheckIns() {
           person = userById;
           isUser = true;
           addDebugInfo(`Found user by ID: ${person.first_name} ${person.last_name}`);
+          logCheckInDiagnostic('Matched user by legacy/simple ID', person);
         }
       }
 
@@ -1030,11 +1117,13 @@ export default function CheckIns() {
           person = staffById;
           isUser = false;
           addDebugInfo(`Found staff by ID: ${person.first_name} ${person.last_name}`);
+          logCheckInDiagnostic('Matched staff by legacy/simple ID', person);
         }
       }
 
       if (!person) {
         addDebugInfo('Person not found in database');
+        logCheckInDiagnostic('No user or staff matched extracted ID', { id, kind, gymId: gym?.id });
         setQrStatus('not_found');
         toast({
           title: 'QR code not recognized',
@@ -1060,6 +1149,7 @@ export default function CheckIns() {
           user_id: person.id,
           checkin_time: nowIso,
           checkin_date: dateStr,
+          gym_id: gym?.id || null,
         };
 
         // Resolve package access level if available
@@ -1089,6 +1179,7 @@ export default function CheckIns() {
 
         const insertResult = await safeInsertClientCheckin(extendedCheckInData);
         if (!insertResult.ok) {
+          logCheckInError('Client check-in insert failed for legacy/simple ID path', insertResult.error);
           throw new Error(`Failed to record check-in: ${insertResult.error?.message || JSON.stringify(insertResult.error)}`);
         }
         if (insertResult.fallback) addDebugInfo('Check-in inserted without package metadata (DB lacks columns)');
@@ -1105,10 +1196,15 @@ export default function CheckIns() {
 
         const { error: staffInsertError } = await supabase
           .from('staff_checkins')
-          .insert([{ staff_id: person.id, checkin_time: nowIso, checkin_date: dateStr }]);
-        if (staffInsertError) throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
+          .insert([{ staff_id: person.id, checkin_time: nowIso, checkin_date: dateStr, gym_id: gym?.id || null }]);
+        if (staffInsertError) {
+          logCheckInError('Staff check-in insert failed for legacy/simple ID path', staffInsertError);
+          throw new Error(`Failed to record staff check-in: ${staffInsertError.message}`);
+        }
+        logCheckInDiagnostic('Staff check-in insert succeeded for legacy/simple ID path');
       }
 
+      scanSucceeded = true;
       setQrStatus('success');
       toast({
         title: 'Check-in successful',
@@ -1118,6 +1214,7 @@ export default function CheckIns() {
 
     } catch (err: any) {
       addDebugInfo(`QR handling error: ${err.message}`);
+      logCheckInError('Scan processing failed', err);
       setQrStatus('error');
       toast({
         title: 'Check-in error',
@@ -1129,16 +1226,20 @@ export default function CheckIns() {
       if (scanSucceeded) {
         if (scanLockTimerRef.current) window.clearTimeout(scanLockTimerRef.current);
         scanLockTimerRef.current = window.setTimeout(() => {
+          scanLockedRef.current = false;
           setScanLocked(false);
           scanLockTimerRef.current = null;
           addDebugInfo('Scan lock released after cooldown');
         }, 5000);
       } else {
         // release lock immediately if not successful so retries are possible
+        scanLockedRef.current = false;
         setScanLocked(false);
       }
     }
   };
+
+  const handleQrResult = (value: string, source: CheckInSource = 'manual') => processCheckInCode(value, source);
 
   const handleManualQr = async () => {
     if (!manualQr.trim()) {
@@ -1151,7 +1252,7 @@ export default function CheckIns() {
     }
     
     // Prevent duplicate manual processing
-    if (isProcessingQR) {
+    if (isProcessingQRRef.current) {
       toast({
         title: 'Processing in progress',
         description: 'Please wait for the current check-in to complete.',
@@ -1160,11 +1261,13 @@ export default function CheckIns() {
       return;
     }
     
+    isProcessingQRRef.current = true;
     setIsProcessingQR(true);
     try {
-      await handleQrResult(manualQr.trim());
+      await handleQrResult(manualQr.trim(), 'manual');
     } finally {
       setTimeout(() => {
+        isProcessingQRRef.current = false;
         setIsProcessingQR(false);
       }, 1000);
     }

@@ -8,6 +8,16 @@ import { MapPin, Globe, Menu } from 'lucide-react';
 export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuClick }) => {
   const { gym, loading, isDefaultGym } = useGym();
 
+  const getReadableTextColor = (hexColor: string) => {
+    const normalized = hexColor.replace('#', '');
+    if (normalized.length !== 6) return 'white';
+    const red = parseInt(normalized.slice(0, 2), 16);
+    const green = parseInt(normalized.slice(2, 4), 16);
+    const blue = parseInt(normalized.slice(4, 6), 16);
+    const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+    return brightness > 155 ? '#111827' : 'white';
+  };
+
   if (loading) {
     return (
       <>
@@ -35,14 +45,27 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
 
   if (!gym) return null;
 
+  const brandColor = gym.brand_color || '#2563eb';
+  const activeBadgeStyle = {
+    backgroundColor: gym.status === 'active' ? brandColor : '#6b7280',
+    color: gym.status === 'active' ? getReadableTextColor(brandColor) : 'white',
+    boxShadow: gym.status === 'active' ? `0 0 0 1px ${brandColor}30, 0 6px 16px ${brandColor}25` : 'none',
+    border: gym.status === 'active' ? `1px solid ${brandColor}40` : undefined,
+  };
+  const themedOutlineStyle = {
+    borderColor: `${brandColor}60`,
+    color: brandColor,
+    backgroundColor: `${brandColor}10`,
+  };
+
   return (
     <>
       {/* Compact mobile header - only show essential info */}
       <div 
         className="border-b shadow-sm sm:hidden"
         style={{ 
-          background: `linear-gradient(135deg, ${gym.brand_color || '#2563eb'}10 0%, ${gym.brand_color || '#1e40af'}10 100%)`,
-          borderBottomColor: `${gym.brand_color || '#2563eb'}20`
+          background: `linear-gradient(135deg, ${brandColor}10 0%, ${brandColor}10 100%)`,
+          borderBottomColor: `${brandColor}20`
         }}
       >
         <div className="container mx-auto px-4 py-3">
@@ -53,18 +76,11 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
                   <Menu size={18} />
                 </Button>
               </div>
-              <h2 className="text-lg font-semibold truncate" style={{ color: gym.brand_color || '#2563eb' }}>{gym.name}</h2>
+              <h2 className="text-lg font-semibold truncate" style={{ color: brandColor }}>{gym.name}</h2>
             </div>
             <div className="flex items-center gap-2">
               <Badge
-                style={{
-                  backgroundColor: gym.status === 'active' ? '#39ff14' : '#6b7280',
-                  color: gym.status === 'active' ? '#052e16' : 'white',
-                  boxShadow: gym.status === 'active'
-                    ? '0 0 6px #39ff14, 0 0 14px rgba(57, 255, 20, 0.85), 0 0 24px rgba(57, 255, 20, 0.45)'
-                    : 'none',
-                  border: gym.status === 'active' ? '1px solid #b7ffab' : undefined,
-                }}
+                style={activeBadgeStyle}
                 className="text-xs px-2 py-1"
               >
                 {gym.status}
@@ -78,8 +94,8 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
       <div 
         className="border-b shadow-sm hidden sm:block"
         style={{ 
-          background: `linear-gradient(135deg, ${gym.brand_color || '#2563eb'}10 0%, ${gym.brand_color || '#1e40af'}10 100%)`,
-          borderBottomColor: `${gym.brand_color || '#2563eb'}20`
+          background: `linear-gradient(135deg, ${brandColor}10 0%, ${brandColor}10 100%)`,
+          borderBottomColor: `${brandColor}20`
         }}
       >
         <div className="container mx-auto px-4 py-4">
@@ -89,7 +105,7 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
               <div>
                 <h1 
                   className="text-2xl font-bold"
-                  style={{ color: gym.brand_color || '#2563eb' }}
+                  style={{ color: brandColor }}
                 >
                   {gym.name}
                 </h1>
@@ -112,19 +128,12 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
             
             <div className="flex items-center gap-2">
               {isDefaultGym && (
-                <Badge variant="outline" className="text-xs">
+                <Badge variant="outline" className="text-xs" style={themedOutlineStyle}>
                   Default Configuration
                 </Badge>
               )}
               <Badge 
-                style={{ 
-                  backgroundColor: gym.status === 'active' ? '#39ff14' : '#6b7280',
-                  color: gym.status === 'active' ? '#052e16' : 'white',
-                  boxShadow: gym.status === 'active'
-                    ? '0 0 6px #39ff14, 0 0 14px rgba(57, 255, 20, 0.85), 0 0 24px rgba(57, 255, 20, 0.45)'
-                    : 'none',
-                  border: gym.status === 'active' ? '1px solid #b7ffab' : undefined,
-                }}
+                style={activeBadgeStyle}
               >
                 {gym.status}
               </Badge>
@@ -144,7 +153,7 @@ export const DynamicHeader: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCl
                   key={index} 
                   variant="outline" 
                   className="text-xs"
-                  style={{ borderColor: `${gym.brand_color || '#2563eb'}40` }}
+                  style={{ borderColor: `${brandColor}40` }}
                 >
                   {amenity}
                 </Badge>
