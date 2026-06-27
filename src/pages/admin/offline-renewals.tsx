@@ -1,16 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Menu, RefreshCw, Search, Users } from 'lucide-react';
+import { CalendarClock, Menu, Plus, RefreshCw, Search, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { supabase } from '@/lib/supabaseClient';
+import { recordPayment } from '@/lib/gymApi';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
 import { OfflineRenewalModal, OfflineRenewalValues, type OfflineRenewalPackage } from '@/components/Modals/OfflineRenewalModal';
+import { SimpleModal } from '@/components/SimpleModal';
 import type { MembershipInfo, MembershipStatus } from '@/types/memberships';
 
 type GymOption = {
@@ -19,7 +22,77 @@ type GymOption = {
   status?: string | null;
 };
 
+type AdminOfflinePackage = OfflineRenewalPackage & {
+  requires_trainer?: boolean;
+};
+
+type TrainerOption = {
+  id: string;
+  full_name: string;
+};
+
+type OfflineRegistrationValues = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  date_of_birth: string;
+  gender: string;
+  package_id: string;
+  payment_date: string;
+  amount: string;
+  payment_method: string;
+  remarks: string;
+  emergency_name: string;
+  emergency_phone: string;
+  relationship: string;
+  fitness_goal: string;
+  trainer_id: string;
+  password: string;
+};
+
 const allowedDurationUnits = ['days', 'weeks', 'months', 'years'] as const;
+
+const emptyRegistrationValues = (): OfflineRegistrationValues => ({
+  first_name: '',
+  last_name: '',
+  email: '',
+  phone: '',
+  date_of_birth: '',
+  gender: '',
+  package_id: '',
+  payment_date: new Date().toISOString().slice(0, 10),
+  amount: '',
+  payment_method: 'offline',
+  remarks: '',
+  emergency_name: '',
+  emergency_phone: '',
+  relationship: '',
+  fitness_goal: '',
+  trainer_id: '',
+  password: '',
+});
+
+const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage) => {
+  const next = new Date(date);
+  switch (pkg.duration_unit) {
+    case 'days':
+      next.setDate(next.getDate() + pkg.duration_value);
+      break;
+    case 'weeks':
+      next.setDate(next.getDate() + pkg.duration_value * 7);
+      break;
+    case 'months':
+      next.setMonth(next.getMonth() + pkg.duration_value);
+      break;
+    case 'years':
+      next.setFullYear(next.getFullYear() + pkg.duration_value);
+      break;
+  }
+  return next;
+};
+
+const dateInputToAddisIso = (dateValue: string) => `${dateValue}T00:00:00+03:00`;
 
 const toMembershipRow = (row: any): MembershipInfo => {
   const expiry = row.membership_expiry ?? null;
@@ -63,12 +136,16 @@ export default function AdminOfflineRenewals() {
   const [selectedGymId, setSelectedGymId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [members, setMembers] = useState<MembershipInfo[]>([]);
-  const [packages, setPackages] = useState<OfflineRenewalPackage[]>([]);
+  const [packages, setPackages] = useState<AdminOfflinePackage[]>([]);
+  const [trainers, setTrainers] = useState<TrainerOption[]>([]);
   const [loadingGyms, setLoadingGyms] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [selectedMember, setSelectedMember] = useState<MembershipInfo | null>(null);
   const [renewalOpen, setRenewalOpen] = useState(false);
   const [processingMemberId, setProcessingMemberId] = useState<string | null>(null);
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [registrationValues, setRegistrationValues] = useState<OfflineRegistrationValues>(() => emptyRegistrationValues());
+  const [creatingUser, setCreatingUser] = useState(false);
 
   const selectedGym = useMemo(
     () => gyms.find(gym => gym.id === selectedGymId) ?? null,
@@ -83,10 +160,12 @@ export default function AdminOfflineRenewals() {
     if (!selectedGymId) {
       setMembers([]);
       setPackages([]);
+      setTrainers([]);
       return;
     }
 
     fetchPackages(selectedGymId);
+    fetchTrainers(selectedGymId);
     const timeout = window.setTimeout(() => {
       fetchMembers(selectedGymId, searchTerm);
     }, 250);
@@ -119,7 +198,7 @@ export default function AdminOfflineRenewals() {
     try {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name, price, duration_value, duration_unit')
+        .select('id, name, price, duration_value, duration_unit, requires_trainer')
         .eq('gym_id', gymId)
         .eq('archived', false)
         .order('name', { ascending: true });
@@ -133,6 +212,7 @@ export default function AdminOfflineRenewals() {
         duration_unit: allowedDurationUnits.includes(String(pkg.duration_unit).toLowerCase() as any)
           ? String(pkg.duration_unit).toLowerCase() as OfflineRenewalPackage['duration_unit']
           : 'days',
+        requires_trainer: Boolean(pkg.requires_trainer),
       })));
     } catch (err: any) {
       toast({
@@ -141,6 +221,39 @@ export default function AdminOfflineRenewals() {
         variant: 'destructive',
       });
       setPackages([]);
+    }
+  };
+
+  const fetchTrainers = async (gymId: string) => {
+    try {
+      const { data: trainerRole, error: roleError } = await supabase
+        .from('roles')
+        .select('id')
+        .eq('name', 'trainer')
+        .maybeSingle();
+
+      if (roleError) throw roleError;
+      if (!trainerRole?.id) {
+        setTrainers([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('staff')
+        .select('id, first_name, last_name, full_name')
+        .eq('gym_id', gymId)
+        .eq('role_id', trainerRole.id)
+        .eq('is_active', true)
+        .order('first_name', { ascending: true });
+
+      if (error) throw error;
+      setTrainers((data ?? []).map((trainer: any) => ({
+        id: trainer.id,
+        full_name: trainer.full_name || `${trainer.first_name ?? ''} ${trainer.last_name ?? ''}`.trim() || 'Unnamed trainer',
+      })));
+    } catch (err) {
+      console.warn('Could not load trainers for offline registration:', err);
+      setTrainers([]);
     }
   };
 
@@ -238,6 +351,215 @@ export default function AdminOfflineRenewals() {
     }
   };
 
+  const selectedRegistrationPackage = packages.find(pkg => pkg.id === registrationValues.package_id) ?? null;
+  const registrationExpiryPreview = useMemo(() => {
+    if (!selectedRegistrationPackage || !registrationValues.payment_date) return null;
+    return addPackageDuration(new Date(dateInputToAddisIso(registrationValues.payment_date)), selectedRegistrationPackage);
+  }, [registrationValues.payment_date, selectedRegistrationPackage]);
+
+  const updateRegistrationValue = (field: keyof OfflineRegistrationValues, value: string) => {
+    setRegistrationValues(previous => {
+      const next = { ...previous, [field]: value };
+      if (field === 'package_id') {
+        const pkg = packages.find(packageOption => packageOption.id === value);
+        next.amount = pkg ? String(pkg.price ?? 0) : next.amount;
+        if (!pkg?.requires_trainer) next.trainer_id = '';
+      }
+      return next;
+    });
+  };
+
+  const openRegistration = () => {
+    const defaultPackage = packages[0] ?? null;
+    setRegistrationValues({
+      ...emptyRegistrationValues(),
+      package_id: defaultPackage?.id ?? '',
+      amount: defaultPackage ? String(defaultPackage.price ?? 0) : '',
+    });
+    setRegistrationOpen(true);
+  };
+
+  const handleCreateOfflineUser = async () => {
+    if (!selectedGymId || !selectedGym) return;
+
+    const values = registrationValues;
+    const selectedPackage = packages.find(pkg => pkg.id === values.package_id) ?? null;
+    const requiredFields = [
+      values.first_name.trim(),
+      values.last_name.trim(),
+      values.email.trim(),
+      values.phone.trim(),
+      values.date_of_birth,
+      values.gender,
+      values.package_id,
+      values.payment_date,
+    ];
+
+    if (requiredFields.some(value => !value)) {
+      toast({
+        title: 'Missing registration details',
+        description: 'Please complete the required client, package, and payment date fields.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (values.password && values.password.trim().length < 8) {
+      toast({
+        title: 'Password too short',
+        description: 'Optional dashboard password must be at least 8 characters.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!selectedPackage || selectedPackage.duration_value <= 0) {
+      toast({
+        title: 'Invalid package',
+        description: 'Please select a package with a valid duration.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (selectedPackage.requires_trainer && !values.trainer_id) {
+      toast({
+        title: 'Trainer required',
+        description: 'This package requires assigning a trainer.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const amount = Number(values.amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast({
+        title: 'Invalid amount',
+        description: 'Payment amount must be zero or greater.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setCreatingUser(true);
+
+    try {
+      let userId = crypto.randomUUID();
+      const password = values.password.trim();
+
+      if (password) {
+        const { data: currentAuth } = await supabase.auth.getSession();
+        const adminSession = currentAuth.session;
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: values.email.trim(),
+          password,
+        });
+
+        if (signUpError) throw signUpError;
+        if (!signUpData.user?.id) throw new Error('Client Auth account was not created.');
+        userId = signUpData.user.id;
+
+        if (
+          adminSession?.access_token &&
+          adminSession?.refresh_token &&
+          adminSession.user.id !== userId
+        ) {
+          const { error: restoreSessionError } = await supabase.auth.setSession({
+            access_token: adminSession.access_token,
+            refresh_token: adminSession.refresh_token,
+          });
+          if (restoreSessionError) console.warn('Could not restore super-admin session after client signup:', restoreSessionError);
+        }
+      }
+
+      const fullName = `${values.first_name.trim()} ${values.last_name.trim()}`.trim();
+      const paidAtIso = dateInputToAddisIso(values.payment_date);
+      const expiryIso = addPackageDuration(new Date(paidAtIso), selectedPackage).toISOString();
+      const qrData = JSON.stringify({
+        userId,
+        firstName: values.first_name.trim(),
+        lastName: values.last_name.trim(),
+        packageId: values.package_id,
+        gymId: selectedGymId,
+      });
+
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          first_name: values.first_name.trim(),
+          last_name: values.last_name.trim(),
+          full_name: fullName,
+          gender: values.gender,
+          email: values.email.trim(),
+          phone: values.phone.trim(),
+          emergency_name: values.emergency_name.trim() || null,
+          emergency_phone: values.emergency_phone.trim() || null,
+          relationship: values.relationship.trim() || null,
+          fitness_goal: values.fitness_goal.trim() || null,
+          package_id: values.package_id,
+          created_at: paidAtIso,
+          membership_expiry: expiryIso,
+          status: 'active',
+          date_of_birth: values.date_of_birth,
+          qr_code_data: qrData,
+          gym_id: selectedGymId,
+        });
+
+      if (insertError) throw insertError;
+
+      if (values.trainer_id) {
+        const { error: coachingError } = await supabase
+          .from('one_to_one_coaching')
+          .insert({
+            user_id: userId,
+            trainer_id: values.trainer_id,
+            start_date: values.payment_date,
+            end_date: expiryIso.slice(0, 10),
+            is_active: true,
+            notes: 'Assigned during super-admin offline registration.',
+          });
+
+        if (coachingError) console.warn('Offline registration trainer assignment failed:', coachingError);
+      }
+
+      if (amount > 0) {
+        await recordPayment({
+          user_id: userId,
+          gym_id: selectedGymId,
+          package_id: values.package_id,
+          amount,
+          payment_method: values.payment_method.trim() || 'offline',
+          remarks: JSON.stringify({
+            type: 'offline_backdated_registration',
+            note: values.remarks.trim() || null,
+            entered_at: new Date().toISOString(),
+            payment_date: paidAtIso,
+            gym_name: selectedGym.name,
+            package_name: selectedPackage.name,
+            membership_expiry: expiryIso,
+          }),
+        });
+      }
+
+      toast({
+        title: 'Offline user registered',
+        description: `${fullName} was registered for ${selectedGym.name}.`,
+      });
+      setRegistrationOpen(false);
+      setRegistrationValues(emptyRegistrationValues());
+      await fetchMembers(selectedGymId, searchTerm);
+    } catch (err: any) {
+      toast({
+        title: 'Offline registration failed',
+        description: err?.message || 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-gray-50">
       <SuperAdSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
@@ -260,14 +582,23 @@ export default function AdminOfflineRenewals() {
                 Record backdated member renewals for any gym from one controlled system-admin area.
               </p>
             </div>
-            <Button
-              variant="outline"
-              onClick={() => selectedGymId ? fetchMembers(selectedGymId, searchTerm) : fetchGyms()}
-              disabled={loadingGyms || loadingMembers}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${loadingGyms || loadingMembers ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                onClick={openRegistration}
+                disabled={!selectedGymId || packages.length === 0}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                New User
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => selectedGymId ? fetchMembers(selectedGymId, searchTerm) : fetchGyms()}
+                disabled={loadingGyms || loadingMembers}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${loadingGyms || loadingMembers ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
 
           <Card>
@@ -404,6 +735,228 @@ export default function AdminOfflineRenewals() {
         onSubmit={handleRenewalSubmit}
         isProcessing={processingMemberId === selectedMember?.user_id}
       />
+
+      <SimpleModal
+        isOpen={registrationOpen}
+        onClose={() => {
+          if (creatingUser) return;
+          setRegistrationOpen(false);
+        }}
+        title="Register Offline User"
+        icon={<Plus className="h-5 w-5" />}
+      >
+        <div className="space-y-5">
+          <div className="rounded-md bg-blue-50 p-3 text-sm text-blue-900">
+            Registering for <strong>{selectedGym?.name ?? 'selected gym'}</strong>. The real payment date will be used as the member registration date.
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-first-name">First name</Label>
+              <Input
+                id="offline-first-name"
+                value={registrationValues.first_name}
+                onChange={(event) => updateRegistrationValue('first_name', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-last-name">Last name</Label>
+              <Input
+                id="offline-last-name"
+                value={registrationValues.last_name}
+                onChange={(event) => updateRegistrationValue('last_name', event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-email">Email</Label>
+              <Input
+                id="offline-email"
+                type="email"
+                value={registrationValues.email}
+                onChange={(event) => updateRegistrationValue('email', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-phone">Phone</Label>
+              <Input
+                id="offline-phone"
+                value={registrationValues.phone}
+                onChange={(event) => updateRegistrationValue('phone', event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-dob">Date of birth</Label>
+              <Input
+                id="offline-dob"
+                type="date"
+                value={registrationValues.date_of_birth}
+                onChange={(event) => updateRegistrationValue('date_of_birth', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Gender</Label>
+              <Select value={registrationValues.gender} onValueChange={(value) => updateRegistrationValue('gender', value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select gender" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="male">Male</SelectItem>
+                  <SelectItem value="female">Female</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Membership Package</Label>
+            <Select value={registrationValues.package_id} onValueChange={(value) => updateRegistrationValue('package_id', value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select package" />
+              </SelectTrigger>
+              <SelectContent>
+                {packages.map(pkg => (
+                  <SelectItem key={pkg.id} value={pkg.id}>
+                    {pkg.name} - ETB {Number(pkg.price || 0).toLocaleString()} / {pkg.duration_value} {pkg.duration_unit}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedRegistrationPackage?.requires_trainer && (
+            <div className="space-y-2">
+              <Label>Trainer</Label>
+              <Select value={registrationValues.trainer_id} onValueChange={(value) => updateRegistrationValue('trainer_id', value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select trainer" />
+                </SelectTrigger>
+                <SelectContent>
+                  {trainers.map(trainer => (
+                    <SelectItem key={trainer.id} value={trainer.id}>
+                      {trainer.full_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-payment-date-register">Real payment / registration date</Label>
+              <Input
+                id="offline-payment-date-register"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={registrationValues.payment_date}
+                onChange={(event) => updateRegistrationValue('payment_date', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-register-amount">Amount</Label>
+              <Input
+                id="offline-register-amount"
+                type="number"
+                min="0"
+                step="0.01"
+                value={registrationValues.amount}
+                onChange={(event) => updateRegistrationValue('amount', event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-register-method">Payment method</Label>
+              <Input
+                id="offline-register-method"
+                value={registrationValues.payment_method}
+                onChange={(event) => updateRegistrationValue('payment_method', event.target.value)}
+                placeholder="offline"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-register-password">Password (optional)</Label>
+              <Input
+                id="offline-register-password"
+                type="password"
+                value={registrationValues.password}
+                onChange={(event) => updateRegistrationValue('password', event.target.value)}
+                placeholder="Optional dashboard password"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-emergency-name">Emergency contact name</Label>
+              <Input
+                id="offline-emergency-name"
+                value={registrationValues.emergency_name}
+                onChange={(event) => updateRegistrationValue('emergency_name', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-emergency-phone">Emergency contact phone</Label>
+              <Input
+                id="offline-emergency-phone"
+                value={registrationValues.emergency_phone}
+                onChange={(event) => updateRegistrationValue('emergency_phone', event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="offline-relationship">Relationship</Label>
+              <Input
+                id="offline-relationship"
+                value={registrationValues.relationship}
+                onChange={(event) => updateRegistrationValue('relationship', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="offline-fitness-goal">Fitness goal</Label>
+              <Input
+                id="offline-fitness-goal"
+                value={registrationValues.fitness_goal}
+                onChange={(event) => updateRegistrationValue('fitness_goal', event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="offline-register-remarks">Note or source</Label>
+            <Input
+              id="offline-register-remarks"
+              value={registrationValues.remarks}
+              onChange={(event) => updateRegistrationValue('remarks', event.target.value)}
+              placeholder="Paper form, spreadsheet row, receipt number..."
+            />
+          </div>
+
+          <div className="rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+            <div>Registration date: <strong>{registrationValues.payment_date || '-'}</strong></div>
+            <div>Calculated expiry: <strong>{registrationExpiryPreview ? registrationExpiryPreview.toLocaleDateString() : '-'}</strong></div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setRegistrationOpen(false)} disabled={creatingUser} type="button">
+              Cancel
+            </Button>
+            <Button onClick={handleCreateOfflineUser} disabled={creatingUser} type="button">
+              {creatingUser ? 'Registering...' : 'Register User'}
+            </Button>
+          </div>
+        </div>
+      </SimpleModal>
     </div>
   );
 }
