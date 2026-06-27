@@ -326,6 +326,7 @@ export default function AdminOfflineRenewals() {
         p_user_id: selectedMember.user_id,
         p_package_id: values.packageId,
         p_payment_date: values.paymentDate,
+        p_periods_paid: values.periodsPaid,
         p_amount: values.amount,
         p_payment_method: values.paymentMethod,
         p_remarks: values.remarks || null,

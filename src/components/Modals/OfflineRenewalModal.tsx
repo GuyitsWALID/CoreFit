@@ -18,6 +18,7 @@ export type OfflineRenewalPackage = {
 export type OfflineRenewalValues = {
   packageId: string;
   paymentDate: string;
+  periodsPaid: number;
   amount: number;
   paymentMethod: string;
   remarks: string;
@@ -34,20 +35,21 @@ interface OfflineRenewalModalProps {
 
 const todayInputValue = () => new Date().toISOString().slice(0, 10);
 
-const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage) => {
+const addPackageDuration = (date: Date, pkg: OfflineRenewalPackage, periods = 1) => {
   const next = new Date(date);
+  const durationValue = pkg.duration_value * periods;
   switch (pkg.duration_unit) {
     case "days":
-      next.setDate(next.getDate() + pkg.duration_value);
+      next.setDate(next.getDate() + durationValue);
       break;
     case "weeks":
-      next.setDate(next.getDate() + pkg.duration_value * 7);
+      next.setDate(next.getDate() + durationValue * 7);
       break;
     case "months":
-      next.setMonth(next.getMonth() + pkg.duration_value);
+      next.setMonth(next.getMonth() + durationValue);
       break;
     case "years":
-      next.setFullYear(next.getFullYear() + pkg.duration_value);
+      next.setFullYear(next.getFullYear() + durationValue);
       break;
   }
   return next;
@@ -72,6 +74,7 @@ export function OfflineRenewalModal({
 }: OfflineRenewalModalProps) {
   const [packageId, setPackageId] = useState("");
   const [paymentDate, setPaymentDate] = useState(todayInputValue());
+  const [periodsPaid, setPeriodsPaid] = useState("1");
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("offline");
   const [remarks, setRemarks] = useState("");
@@ -86,37 +89,53 @@ export function OfflineRenewalModal({
     const defaultPackage = packages.find(pkg => pkg.id === member.package_id) ?? packages[0] ?? null;
     setPackageId(defaultPackage?.id ?? "");
     setPaymentDate(todayInputValue());
+    setPeriodsPaid("1");
     setAmount(defaultPackage?.price != null ? String(defaultPackage.price) : "");
     setPaymentMethod("offline");
     setRemarks("");
   }, [isOpen, member, packages]);
 
   useEffect(() => {
-    if (selectedPackage) setAmount(String(selectedPackage.price ?? 0));
-  }, [selectedPackage?.id]);
+    const periods = Number(periodsPaid || 1);
+    if (selectedPackage && Number.isInteger(periods) && periods > 0) {
+      setAmount(String(Number(selectedPackage.price ?? 0) * periods));
+    }
+  }, [selectedPackage?.id, periodsPaid]);
 
   const preview = useMemo(() => {
     if (!member || !selectedPackage || !paymentDate) return null;
+    const periods = Number(periodsPaid || 1);
+    if (!Number.isInteger(periods) || periods < 1) return null;
     const paidAt = toLocalDate(paymentDate);
     if (!paidAt) return null;
     const currentExpiry = toLocalDate(member.membership_expiry);
     const startDate = currentExpiry && currentExpiry > paidAt ? currentExpiry : paidAt;
     return {
       startDate,
-      newExpiry: addPackageDuration(startDate, selectedPackage),
+      newExpiry: addPackageDuration(startDate, selectedPackage, periods),
     };
-  }, [member, paymentDate, selectedPackage]);
+  }, [member, paymentDate, periodsPaid, selectedPackage]);
 
   if (!isOpen || !member) return null;
 
   const amountNumber = Number(amount);
-  const canSubmit = Boolean(packageId && paymentDate && Number.isFinite(amountNumber) && amountNumber >= 0);
+  const periodsPaidNumber = Number(periodsPaid);
+  const canSubmit = Boolean(
+    packageId &&
+    paymentDate &&
+    Number.isInteger(periodsPaidNumber) &&
+    periodsPaidNumber >= 1 &&
+    periodsPaidNumber <= 120 &&
+    Number.isFinite(amountNumber) &&
+    amountNumber >= 0
+  );
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     await onSubmit({
       packageId,
       paymentDate,
+      periodsPaid: periodsPaidNumber,
       amount: amountNumber,
       paymentMethod: paymentMethod.trim() || "offline",
       remarks: remarks.trim(),
@@ -152,7 +171,7 @@ export function OfflineRenewalModal({
           </Select>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="offline-payment-date">Real payment date</Label>
             <Input
@@ -161,6 +180,17 @@ export function OfflineRenewalModal({
               value={paymentDate}
               max={todayInputValue()}
               onChange={event => setPaymentDate(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="offline-periods-paid">Periods paid</Label>
+            <Input
+              id="offline-periods-paid"
+              type="number"
+              min="1"
+              step="1"
+              value={periodsPaid}
+              onChange={event => setPeriodsPaid(event.target.value)}
             />
           </div>
           <div className="space-y-2">
@@ -198,6 +228,7 @@ export function OfflineRenewalModal({
 
         <div className="rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
           <div>Calculated start: <strong>{formatDate(preview?.startDate ?? null)}</strong></div>
+          <div>Periods paid: <strong>{periodsPaid || "1"}</strong></div>
           <div>New expiry: <strong>{formatDate(preview?.newExpiry ?? null)}</strong></div>
         </div>
 
