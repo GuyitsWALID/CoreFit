@@ -300,6 +300,31 @@ export default function CheckIns() {
     return normalizePackageSnapshot(pkgRow);
   };
 
+  const calculateCouponPeriodStart = (user: any, pkg: PackageSnapshot | null) => {
+    const expiry = user?.membership_expiry ? new Date(user.membership_expiry) : null;
+    if (!expiry || Number.isNaN(expiry.getTime())) {
+      return user?.created_at && !Number.isNaN(Date.parse(user.created_at))
+        ? new Date(user.created_at).toISOString()
+        : new Date(0).toISOString();
+    }
+
+    const durationValue = Number(pkg?.duration_value ?? 0);
+    const durationUnit = String(pkg?.duration_unit ?? 'days').toLowerCase();
+    if (!Number.isFinite(durationValue) || durationValue <= 0) {
+      return user?.created_at && !Number.isNaN(Date.parse(user.created_at))
+        ? new Date(user.created_at).toISOString()
+        : new Date(0).toISOString();
+    }
+
+    const start = new Date(expiry);
+    if (durationUnit.startsWith('month')) start.setMonth(start.getMonth() - durationValue);
+    else if (durationUnit.startsWith('year')) start.setFullYear(start.getFullYear() - durationValue);
+    else if (durationUnit.startsWith('week')) start.setDate(start.getDate() - durationValue * 7);
+    else start.setDate(start.getDate() - durationValue);
+
+    return start.toISOString();
+  };
+
   const validateCouponAccess = async (user: any, pkg: PackageSnapshot | null): Promise<boolean> => {
     if (!pkg?.is_coupon) return true;
 
@@ -336,9 +361,7 @@ export default function CheckIns() {
       return false;
     }
 
-    const periodStart = user.created_at && !Number.isNaN(Date.parse(user.created_at))
-      ? new Date(user.created_at).toISOString()
-      : new Date(0).toISOString();
+    const periodStart = calculateCouponPeriodStart(user, pkg);
 
     const { count, error } = await supabase
       .from('client_checkins')
@@ -466,9 +489,8 @@ export default function CheckIns() {
         return;
       }
 
-      const periodStart = user.created_at && !Number.isNaN(Date.parse(user.created_at))
-        ? user.created_at
-        : '1970-01-01T00:00:00.000Z';
+      const pkg = normalizePackageSnapshot(user.packages);
+      const periodStart = calculateCouponPeriodStart(user, pkg);
 
       const { count, error } = await supabase
         .from('client_checkins')

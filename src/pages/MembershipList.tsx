@@ -242,6 +242,27 @@ export default function MembershipList() {
     return Math.ceil((new Date(expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   };
 
+  const calculateCouponPeriodStart = (row: CouponMembershipInfo, packageMeta?: any) => {
+    const expiry = row.membership_expiry ? new Date(row.membership_expiry) : null;
+    if (!expiry || Number.isNaN(expiry.getTime())) {
+      return row.created_at || '1970-01-01T00:00:00.000Z';
+    }
+
+    const durationValue = Number(packageMeta?.duration_value ?? row.duration_value ?? 0);
+    const durationUnit = String(packageMeta?.duration_unit ?? row.duration_unit ?? 'days').toLowerCase();
+    if (!Number.isFinite(durationValue) || durationValue <= 0) {
+      return row.created_at || '1970-01-01T00:00:00.000Z';
+    }
+
+    const start = new Date(expiry);
+    if (durationUnit.startsWith('month')) start.setMonth(start.getMonth() - durationValue);
+    else if (durationUnit.startsWith('year')) start.setFullYear(start.getFullYear() - durationValue);
+    else if (durationUnit.startsWith('week')) start.setDate(start.getDate() - durationValue * 7);
+    else start.setDate(start.getDate() - durationValue);
+
+    return start.toISOString();
+  };
+
   const enrichCouponMembershipRows = async (rows: any[]): Promise<CouponMembershipInfo[]> => {
     if (!Array.isArray(rows) || rows.length === 0) return [];
 
@@ -256,7 +277,7 @@ export default function MembershipList() {
 
     const { data: packageRows, error: packageError } = await supabase
       .from('packages')
-      .select('id, is_coupon, number_of_passes')
+      .select('id, is_coupon, number_of_passes, duration_value, duration_unit')
       .in('id', packageIds);
 
     if (packageError) {
@@ -274,7 +295,8 @@ export default function MembershipList() {
         return;
       }
 
-      const periodStart = row.created_at || '1970-01-01T00:00:00.000Z';
+      const packageMeta = packageById.get(row.package_id || '');
+      const periodStart = calculateCouponPeriodStart(row, packageMeta);
       const { count, error } = await supabase
         .from('client_checkins')
         .select('*', { count: 'exact', head: true })
@@ -307,7 +329,7 @@ export default function MembershipList() {
         number_of_passes: passLimit,
         coupon_used_passes: usedPasses,
         coupon_remaining_passes: remainingPasses,
-        days_left: dateDaysLeft <= 0 ? dateDaysLeft : remainingPasses,
+        days_left: dateDaysLeft,
       };
     });
   };
@@ -665,10 +687,10 @@ export default function MembershipList() {
 
   const computeStatus = (m: CouponMembershipInfo) => {
     const st = (m.status ?? '').toLowerCase();
-    if (isCouponUsedUp(m)) return 'expired';
     if (typeof m.days_left === 'number') {
       if (m.days_left <= 0) return 'expired';
     }
+    if (isCouponUsedUp(m)) return 'used_up';
     if (st === 'paused') return 'paused';
     if (st === 'inactive') return 'inactive';
     if (st === 'expired') return 'expired';
