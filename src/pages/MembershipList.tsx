@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Users, Clock, AlertTriangle, CheckCircle, CalendarDays, Trash2 } from "lucide-react";
+import { Users, Clock, AlertTriangle, CheckCircle, CalendarDays, Trash2, Edit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 import { useGym } from "@/contexts/GymContext";
@@ -10,11 +10,21 @@ import {
   formatGregorianDate,
   toGregorianDateKey,
 } from "@/lib/ethiopianCalendar";
-import { isPlaceholderEmail, isPlaceholderPhone } from "@/lib/placeholderEmail";
+import { createPlaceholderEmail, createPlaceholderPhone, isPlaceholderEmail, isPlaceholderPhone } from "@/lib/placeholderEmail";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SimpleModal } from "@/components/SimpleModal";
 
 // Import all the extracted components
@@ -22,11 +32,11 @@ import {
   StatsCard,
   SearchFilters,
   MembershipTabs,
-  MemberCard,
   NotificationModal,
   UpgradeModal,
   ExportButton,
 } from "@/components";
+import { MemberCard } from "@/components/MemberCard";
 import { OneToOneCoachingModal } from "@/components/OneToOneCoachingModal";
 import FreezeModal, { FreezeMode } from "@/components/Modals/FreezeActionModal";
 import { MembershipInfo } from "@/types/memberships";
@@ -40,6 +50,22 @@ type CouponMembershipInfo = MembershipInfo & {
   number_of_passes?: number | null;
   coupon_used_passes?: number;
   coupon_remaining_passes?: number;
+};
+
+type EditMemberForm = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  date_of_birth: string;
+  gender: string;
+  emergency_name: string;
+  emergency_phone: string;
+  relationship: string;
+  fitness_goal: string;
+  package_id: string;
+  membership_expiry: string;
+  status: MembershipInfo['status'];
 };
 
 const statusColors: Record<string, string> = {
@@ -82,6 +108,23 @@ export default function MembershipList() {
   const [isSending, setIsSending] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [deleteMember, setDeleteMember] = useState<MembershipInfo | null>(null);
+  const [editDialog, setEditDialog] = useState(false);
+  const [editMember, setEditMember] = useState<MembershipInfo | null>(null);
+  const [editForm, setEditForm] = useState<EditMemberForm>({
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    date_of_birth: "",
+    gender: "",
+    emergency_name: "",
+    emergency_phone: "",
+    relationship: "",
+    fitness_goal: "",
+    package_id: "",
+    membership_expiry: "",
+    status: "active",
+  });
   
   const [upgradeDialog, setUpgradeDialog] = useState(false);
   const [upgradeMember, setUpgradeMember] = useState<MembershipInfo | null>(null);
@@ -850,6 +893,164 @@ export default function MembershipList() {
     setOpenDropdown(null);
   };
 
+  const toDateInputValue = (value: string | null | undefined) => {
+    if (!value || Number.isNaN(Date.parse(value))) return "";
+    return new Date(value).toISOString().slice(0, 10);
+  };
+
+  const splitMemberName = (fullName: string) => {
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    return {
+      firstName: parts[0] || "",
+      lastName: parts.slice(1).join(" ") || "",
+    };
+  };
+
+  const updateEditField = <K extends keyof EditMemberForm>(field: K, value: EditMemberForm[K]) => {
+    setEditForm(previous => ({ ...previous, [field]: value }));
+  };
+
+  const openEditMemberModal = async (member: MembershipInfo) => {
+    const fallbackName = splitMemberName(member.full_name);
+    setEditMember(member);
+    setOpenDropdown(null);
+    fetchPackages();
+    setEditForm({
+      first_name: fallbackName.firstName,
+      last_name: fallbackName.lastName,
+      email: isPlaceholderEmail(member.email) ? "" : member.email || "",
+      phone: isPlaceholderPhone(member.phone) ? "" : member.phone || "",
+      date_of_birth: "",
+      gender: "",
+      emergency_name: "",
+      emergency_phone: "",
+      relationship: "",
+      fitness_goal: "",
+      package_id: member.package_id || "",
+      membership_expiry: toDateInputValue(member.membership_expiry),
+      status: member.status,
+    });
+    setEditDialog(true);
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('first_name, last_name, email, phone, date_of_birth, gender, emergency_name, emergency_phone, relationship, fitness_goal, package_id, membership_expiry, status')
+      .eq('id', member.user_id)
+      .maybeSingle();
+
+    if (error) {
+      toast({
+        title: "Could not load full profile",
+        description: "Showing the membership list details instead.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (data) {
+      setEditForm({
+        first_name: data.first_name || fallbackName.firstName,
+        last_name: data.last_name || fallbackName.lastName,
+        email: isPlaceholderEmail(data.email) ? "" : data.email || "",
+        phone: isPlaceholderPhone(data.phone) ? "" : data.phone || "",
+        date_of_birth: toDateInputValue(data.date_of_birth),
+        gender: data.gender || "",
+        emergency_name: data.emergency_name || "",
+        emergency_phone: data.emergency_phone || "",
+        relationship: data.relationship || "",
+        fitness_goal: data.fitness_goal || "",
+        package_id: data.package_id || "",
+        membership_expiry: toDateInputValue(data.membership_expiry),
+        status: (data.status || member.status) as MembershipInfo['status'],
+      });
+    }
+  };
+
+  const handleEditMemberSubmit = async () => {
+    if (!editMember || !gym || gym.id === 'default') return;
+
+    const firstName = editForm.first_name.trim();
+    const lastName = editForm.last_name.trim();
+
+    if (!firstName || !lastName) {
+      toast({
+        title: "Name required",
+        description: "First name and last name are required.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (editForm.email.trim() && !/^\S+@\S+\.\S+$/.test(editForm.email.trim())) {
+      toast({
+        title: "Invalid email",
+        description: "Enter a valid email address or leave it blank.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setProcessingAction(`edit-${editMember.user_id}`);
+
+    try {
+      const email = editForm.email.trim() || createPlaceholderEmail(editMember.user_id);
+      const phone = editForm.phone.trim() || createPlaceholderPhone(editMember.user_id);
+      const expiryIso = editForm.membership_expiry
+        ? new Date(`${editForm.membership_expiry}T00:00:00`).toISOString()
+        : null;
+
+      const { error } = await supabase
+        .from('users')
+        .update({
+          first_name: firstName,
+          last_name: lastName,
+          email,
+          phone,
+          date_of_birth: editForm.date_of_birth || null,
+          gender: editForm.gender || null,
+          emergency_name: editForm.emergency_name.trim() || null,
+          emergency_phone: editForm.emergency_phone.trim() || null,
+          relationship: editForm.relationship.trim() || null,
+          fitness_goal: editForm.fitness_goal.trim() || null,
+          package_id: editForm.package_id || null,
+          membership_expiry: expiryIso,
+          status: editForm.status,
+        })
+        .eq('id', editMember.user_id)
+        .eq('gym_id', gym.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Member updated",
+        description: `${firstName} ${lastName}'s profile has been updated.`,
+      });
+      setEditDialog(false);
+      setEditMember(null);
+      await refreshMembershipList();
+    } catch (error: any) {
+      toast({
+        title: "Update failed",
+        description: error?.message || "Could not update this member.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
+  useEffect(() => {
+    const handleEditEvent = (event: Event) => {
+      const member = (event as CustomEvent<MembershipInfo>).detail;
+      if (member?.user_id) {
+        openEditMemberModal(member);
+      }
+    };
+
+    window.addEventListener("corefit:edit-member", handleEditEvent);
+    return () => window.removeEventListener("corefit:edit-member", handleEditEvent);
+  }, [gym?.id, availablePackages.length]);
+
   const handleDeleteMember = async () => {
     if (!deleteMember) return;
     if (staffRole === 'receptionist') {
@@ -1432,6 +1633,173 @@ const handleUpgradeSubmit = async () => {
         onSubmit={handleUpgradeSubmit}
         isProcessing={processingAction === `upgrade-${upgradeMember?.user_id}`}
       />
+
+      <SimpleModal
+        isOpen={editDialog}
+        onClose={() => {
+          if (processingAction === `edit-${editMember?.user_id}`) return;
+          setEditDialog(false);
+          setEditMember(null);
+        }}
+        title="Edit Member"
+        icon={<Edit className="h-5 w-5" />}
+      >
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-first-name">First Name</Label>
+              <Input
+                id="edit-first-name"
+                value={editForm.first_name}
+                onChange={(event) => updateEditField('first_name', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-last-name">Last Name</Label>
+              <Input
+                id="edit-last-name"
+                value={editForm.last_name}
+                onChange={(event) => updateEditField('last_name', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-email">Email</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                placeholder="Optional email"
+                value={editForm.email}
+                onChange={(event) => updateEditField('email', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-phone">Phone</Label>
+              <Input
+                id="edit-phone"
+                placeholder="Optional phone"
+                value={editForm.phone}
+                onChange={(event) => updateEditField('phone', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-date-of-birth">Date of Birth</Label>
+              <Input
+                id="edit-date-of-birth"
+                type="date"
+                value={editForm.date_of_birth}
+                onChange={(event) => updateEditField('date_of_birth', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Gender</Label>
+              <Select value={editForm.gender} onValueChange={(value) => updateEditField('gender', value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select gender" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="male">Male</SelectItem>
+                  <SelectItem value="female">Female</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Membership Package</Label>
+              <Select value={editForm.package_id} onValueChange={(value) => updateEditField('package_id', value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select package" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availablePackages.length === 0 ? (
+                    <SelectItem value="no-packages" disabled>No packages available</SelectItem>
+                  ) : (
+                    availablePackages.map((pkg) => (
+                      <SelectItem key={pkg.id} value={pkg.id}>
+                        {pkg.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-membership-expiry">Membership Expiry</Label>
+              <Input
+                id="edit-membership-expiry"
+                type="date"
+                value={editForm.membership_expiry}
+                onChange={(event) => updateEditField('membership_expiry', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={editForm.status} onValueChange={(value) => updateEditField('status', value as MembershipInfo['status'])}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="paused">Paused</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-emergency-phone">Emergency Phone</Label>
+              <Input
+                id="edit-emergency-phone"
+                value={editForm.emergency_phone}
+                onChange={(event) => updateEditField('emergency_phone', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-emergency-name">Emergency Name</Label>
+              <Input
+                id="edit-emergency-name"
+                value={editForm.emergency_name}
+                onChange={(event) => updateEditField('emergency_name', event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-relationship">Relationship</Label>
+              <Input
+                id="edit-relationship"
+                value={editForm.relationship}
+                onChange={(event) => updateEditField('relationship', event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-fitness-goal">Fitness Goal</Label>
+            <Textarea
+              id="edit-fitness-goal"
+              value={editForm.fitness_goal}
+              onChange={(event) => updateEditField('fitness_goal', event.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setEditDialog(false);
+                setEditMember(null);
+              }}
+              disabled={processingAction === `edit-${editMember?.user_id}`}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleEditMemberSubmit}
+              disabled={processingAction === `edit-${editMember?.user_id}`}
+            >
+              {processingAction === `edit-${editMember?.user_id}` ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      </SimpleModal>
 
       <SimpleModal
         isOpen={deleteDialog}

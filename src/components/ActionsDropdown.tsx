@@ -9,6 +9,7 @@ import {
   Users,
   SquarePlus,
   Trash2,
+  Edit,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
@@ -249,6 +250,16 @@ export default function ActionsDropdown({
             onClick={handleAction(() => setDetailOpen(true))}
           >
             <MoreHorizontal className="h-4 w-4" /> View Details
+          </button>
+
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50"
+            onClick={handleAction(() => {
+              window.dispatchEvent(new CustomEvent("corefit:edit-member", { detail: member }));
+            })}
+          >
+            <Edit className="h-4 w-4" /> Edit Member
           </button>
 
           {/* Deactivate / Activate */}

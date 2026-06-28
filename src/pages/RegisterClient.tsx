@@ -65,6 +65,7 @@ const formSchema = z.object({
     const periods = Number(value);
     return Number.isInteger(periods) && periods >= 1 && periods <= 120;
   }, { message: "Periods paid must be a whole number between 1 and 120." }),
+  payment_method: z.enum(["cash", "transfer"]),
   trainer_id: z.string().optional(),
   emergency_name: z.string().optional(),
   emergency_phone: z.string().optional(),
@@ -162,6 +163,7 @@ export default function RegisterClient() {
       gender: "",
       package_id: "",
       membership_periods: "1",
+      payment_method: "cash",
       trainer_id: "",
       emergency_name: "",
       emergency_phone: "",
@@ -173,6 +175,8 @@ export default function RegisterClient() {
   });
 
   const watchedPeriods = form.watch("membership_periods");
+  const watchedEmail = form.watch("email");
+  const hasEmailForDashboardLogin = Boolean(watchedEmail?.trim());
   const membershipPeriods = Number(watchedPeriods || 1);
   const membershipExpiryPreview = selectedPackage && Number.isInteger(membershipPeriods) && membershipPeriods > 0
     ? addPackageDuration(new Date(), selectedPackage, membershipPeriods)
@@ -260,6 +264,13 @@ export default function RegisterClient() {
   }
 
   const togglePasswordVisibility = () => setShowPassword((v) => !v);
+
+  useEffect(() => {
+    if (!hasEmailForDashboardLogin) {
+      form.setValue("password", "");
+      setShowPassword(false);
+    }
+  }, [form, hasEmailForDashboardLogin]);
 
   const generatePassword = () => {
     const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
@@ -527,7 +538,7 @@ export default function RegisterClient() {
             gym_id: gym.id,
             package_id: selectedRegistrationPackage.id,
             amount: registrationAmount,
-            payment_method: 'admin',
+            payment_method: values.payment_method,
             remarks: `Registration: ${selectedRegistrationPackage.name}; periods paid: ${paidPeriods}; expiry: ${membershipExpiry.toISOString()}`,
           });
         } catch (payErr) {
@@ -956,48 +967,52 @@ export default function RegisterClient() {
                             )}
                           />
                         </div>
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          <FormField
-                            control={form.control}
-                            name="password"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Password (optional)</FormLabel>
-                                <div className="flex gap-2">
-                                  <div className="relative flex-1">
-                                    <FormControl>
-                                      <Input
-                                        placeholder="Optional dashboard password"
-                                        type={showPassword ? "text" : "password"}
-                                        {...field}
-                                      />
-                                    </FormControl>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                                      onClick={togglePasswordVisibility}
+                        {hasEmailForDashboardLogin && (
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <FormField
+                              control={form.control}
+                              name="password"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Password (optional)</FormLabel>
+                                  <div className="flex gap-2">
+                                    <div className="relative flex-1">
+                                      <FormControl>
+                                        <Input
+                                          placeholder="Optional dashboard password"
+                                          type={showPassword ? "text" : "password"}
+                                          {...field}
+                                        />
+                                      </FormControl>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                        onClick={togglePasswordVisibility}
+                                      >
+                                        {showPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
+                                      </Button>
+                                    </div>
+                                    <Button 
+                                      type="button" 
+                                      onClick={generatePassword} 
+                                      variant="outline"
+                                      style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
                                     >
-                                      {showPassword ? <EyeOff className="h-4 w-4 text-muted-foreground" /> : <Eye className="h-4 w-4 text-muted-foreground" />}
+                                      Generate
                                     </Button>
                                   </div>
-                                  <Button 
-                                    type="button" 
-                                    onClick={generatePassword} 
-                                    variant="outline"
-                                    style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
-                                  >
-                                    Generate
-                                  </Button>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  Leave blank if this client does not need dashboard access yet.
-                                </p>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                                  <p className="text-xs text-muted-foreground">
+                                    Add a password only if this client needs dashboard access.
+                                  </p>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <FormField
                             control={form.control}
                             name="package_id"
@@ -1044,6 +1059,27 @@ export default function RegisterClient() {
                                 <p className="text-xs text-muted-foreground">
                                   Example: for a 1-month package, enter 2 when the client paid for 2 months.
                                 </p>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="payment_method"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Payment Method</FormLabel>
+                                <Select onValueChange={field.onChange} value={field.value}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select payment method" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="cash">Cash</SelectItem>
+                                    <SelectItem value="transfer">Transfer</SelectItem>
+                                  </SelectContent>
+                                </Select>
                                 <FormMessage />
                               </FormItem>
                             )}
