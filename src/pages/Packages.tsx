@@ -244,6 +244,15 @@ export default function Packages() {
   };
 
   const handleEdit = (pkg: Package) => {
+    if (staffRole === 'receptionist') {
+      toast({
+        title: "Action not allowed",
+        description: "Receptionists cannot edit packages.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setFormData({
       id: pkg.id,
       name: pkg.name || "",
@@ -337,10 +346,10 @@ export default function Packages() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!isEditing && staffRole === 'receptionist') {
+    if (staffRole === 'receptionist') {
       toast({
         title: "Action not allowed",
-        description: "Receptionists cannot create packages.",
+        description: `Receptionists cannot ${isEditing ? 'edit' : 'create'} packages.`,
         variant: "destructive"
       });
       return;
@@ -443,7 +452,7 @@ export default function Packages() {
   const filteredPackages = packages.filter(pkg => 
     activeTab === 'active' ? !pkg.archived : pkg.archived
   );
-  const canCreateOrArchivePackages = staffRole !== null && staffRole !== 'receptionist';
+  const canManagePackages = staffRole !== null && staffRole !== 'receptionist';
 
   const renderPackageCard = (pkg: Package) => (
     <Card key={pkg.id} className="transition-all hover:shadow-md" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
@@ -495,15 +504,17 @@ export default function Packages() {
         </ul>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={() => handleEdit(pkg)}
-          style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
-        >
-          <Edit className="mr-1 h-4 w-4" /> Edit
-        </Button>
-        {canCreateOrArchivePackages && (
+        {canManagePackages && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleEdit(pkg)}
+            style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
+          >
+            <Edit className="mr-1 h-4 w-4" /> Edit
+          </Button>
+        )}
+        {canManagePackages && (
           <Button
             variant={pkg.archived ? "default" : "secondary"}
             size="sm"
@@ -545,15 +556,17 @@ export default function Packages() {
         )}
       </div>
       <div className="flex gap-2 ml-4">
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={() => handleEdit(pkg)}
-          style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
-        >
-          <Edit className="mr-1 h-4 w-4" /> Edit
-        </Button>
-        {canCreateOrArchivePackages && (
+        {canManagePackages && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleEdit(pkg)}
+            style={{ borderColor: dynamicStyles.primaryColor, color: dynamicStyles.primaryColor }}
+          >
+            <Edit className="mr-1 h-4 w-4" /> Edit
+          </Button>
+        )}
+        {canManagePackages && (
           <Button
             variant={pkg.archived ? "default" : "secondary"}
             size="sm"
@@ -651,7 +664,7 @@ export default function Packages() {
               
               <div className="flex items-center gap-4">
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  {canCreateOrArchivePackages && (
+                  {canManagePackages && (
                     <DialogTrigger asChild>
                       <Button
                         className="text-white"
