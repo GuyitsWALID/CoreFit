@@ -737,11 +737,16 @@ export default function AdminUsers() {
   };
 
   const handleDownloadQrJpgs = async () => {
-    const targets = filteredUsers.filter(user => Boolean(user.id));
+    const targets = filteredUsers.filter(user =>
+      Boolean(user.id) &&
+      user.user_type === 'client' &&
+      user.status === 'active' &&
+      Number(user.days_left ?? 0) > 0
+    );
     if (targets.length === 0) {
       toast({
-        title: "No users to export",
-        description: "Adjust the filters and try again.",
+        title: "No active members to export",
+        description: "Only active client members with valid memberships are included.",
         variant: "destructive"
       });
       return;
@@ -888,7 +893,7 @@ export default function AdminUsers() {
                 variant="outline"
               >
                 <Download className="h-4 w-4 mr-2" />
-                {downloadingQrCards ? 'Preparing QR JPGs...' : 'Download QR JPGs'}
+                {downloadingQrCards ? 'Preparing QR JPGs...' : 'Download Active Member QR JPGs'}
               </Button>
             </div>
           </div>
