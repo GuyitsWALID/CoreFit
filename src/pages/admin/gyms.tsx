@@ -140,6 +140,7 @@ export default function AdminGyms() {
       const { data, error } = await supabase
         .from('roles')
         .select('id, name, description')
+        .neq('name', 'super_admin')
         .order('name');
 
       if (error) {

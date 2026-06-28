@@ -214,7 +214,11 @@ export default function TeamManagement() {
   };
 
   const fetchRoles = async () => {
-    const { data, error } = await supabase.from('roles').select('*');
+    const { data, error } = await supabase
+      .from('roles')
+      .select('*')
+      .neq('name', 'super_admin')
+      .order('name', { ascending: true });
     if (!error && data) setRoles(data);
   };
 
