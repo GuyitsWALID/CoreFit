@@ -569,81 +569,39 @@ export default function MembershipList() {
   const fetchCounts = async () => {
     if (!gym || gym.id === 'default') return;
     try {
-      const { count: usersCount, error: usersErr } = await supabase
-        .from('users')
-        .select('*', { count: 'exact', head: true })
-        .eq('gym_id', gym.id);
-      if (!usersErr && typeof usersCount === 'number') setDbTotalCount(usersCount ?? 0);
-
       const nowIso = new Date().toISOString();
-
-      // Prefer using the `users` table for counts so they match the Reports implementation
-      // If the users query fails for some reason, fall back to the users_with_membership_info view.
       const futureIso = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
-      try {
-        // Total users
-        const { count: usersCount, error: usersErr } = await supabase
-          .from('users')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id);
-        if (!usersErr && typeof usersCount === 'number') setDbTotalCount(usersCount ?? 0);
 
-        // Active users: membership_expiry > NOW()
-        const { count: activeCnt } = await supabase
+      const baseCountQuery = () =>
+        supabase
           .from('users')
           .select('*', { count: 'exact', head: true })
           .eq('gym_id', gym.id)
-          .gt('membership_expiry', nowIso);
-        if (typeof activeCnt === 'number') setDbActiveCount(activeCnt ?? 0);
+          .not('package_id', 'is', null)
+          .not('membership_expiry', 'is', null);
 
-        // Expiring soon
-        const { count: expCnt } = await supabase
-          .from('users')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
+      const [totalResult, activeResult, expiringResult, expiredResult] = await Promise.all([
+        baseCountQuery(),
+        baseCountQuery()
+          .eq('status', 'active')
+          .gt('membership_expiry', nowIso),
+        baseCountQuery()
+          .eq('status', 'active')
           .gt('membership_expiry', nowIso)
-          .lte('membership_expiry', futureIso);
-        if (typeof expCnt === 'number') setDbExpiringCount(expCnt ?? 0);
+          .lte('membership_expiry', futureIso),
+        baseCountQuery()
+          .lte('membership_expiry', nowIso),
+      ]);
 
-        // Expired
-        const { count: expiredCnt } = await supabase
-          .from('users')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .lt('membership_expiry', nowIso);
-        if (typeof expiredCnt === 'number') setDbExpiredCount(expiredCnt ?? 0);
-      } catch (e) {
-        console.warn('users table count queries failed, falling back to users_with_membership_info view:', e);
+      if (totalResult.error) throw totalResult.error;
+      if (activeResult.error) throw activeResult.error;
+      if (expiringResult.error) throw expiringResult.error;
+      if (expiredResult.error) throw expiredResult.error;
 
-        // Fallback to view
-        const { count: totalCntView, error: totalErr } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id);
-        if (!totalErr && typeof totalCntView === 'number') setDbTotalCount(totalCntView ?? 0);
-
-        const { count: activeCntView } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .gt('membership_expiry', nowIso);
-        if (typeof activeCntView === 'number') setDbActiveCount(activeCntView ?? 0);
-
-        const { count: expCntView } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .gt('membership_expiry', nowIso)
-          .lte('membership_expiry', futureIso);
-        if (typeof expCntView === 'number') setDbExpiringCount(expCntView ?? 0);
-
-        const { count: expiredCntView } = await supabase
-          .from('users_with_membership_info')
-          .select('*', { count: 'exact', head: true })
-          .eq('gym_id', gym.id)
-          .lt('membership_expiry', nowIso);
-        if (typeof expiredCntView === 'number') setDbExpiredCount(expiredCntView ?? 0);
-      }
+      setDbTotalCount(totalResult.count ?? 0);
+      setDbActiveCount(activeResult.count ?? 0);
+      setDbExpiringCount(expiringResult.count ?? 0);
+      setDbExpiredCount(expiredResult.count ?? 0);
     } catch (e) {
       console.error('fetchCounts error', e);
     }
@@ -705,16 +663,12 @@ export default function MembershipList() {
     return m.days_left <= 10 && m.days_left > 0;
   };
 
-  const hasCouponMembers = members.some((member) => member.is_coupon);
+  const allMembersCount = dbTotalCount;
+  const activeCount = dbActiveCount;
+  const expiringCount = dbExpiringCount;
+  const expiredCount = dbExpiredCount;
 
-  // Fallback client-side calculations kept for local UI. Coupon packages use client-side counts
-  // because "used up" is derived from check-in history rather than membership_expiry alone.
-  const allMembersCount = dbTotalCount ?? members.length;
-  const expiringCount = hasCouponMembers ? members.filter(isExpiringMembership).length : dbExpiringCount ?? members.filter((m) => m.days_left <= 10 && m.days_left > 0).length;
-  const expiredCount = hasCouponMembers ? members.filter((m) => computeStatus(m) === 'expired').length : dbExpiredCount ?? members.filter((m) => m.days_left <= 0).length;
-  const activeCount = hasCouponMembers ? members.filter((m) => computeStatus(m) === 'active').length : dbActiveCount ?? members.filter((m) => m.days_left > 0 && (m.status ?? '').toLowerCase() !== 'paused').length;
-
-  const filteredMembers = members.filter((member) => {
+  const membersMatchingSearchAndFilters = members.filter((member) => {
     const searchableEmail = isPlaceholderEmail(member.email) ? '' : member.email || '';
     const searchablePhone = isPlaceholderPhone(member.phone) ? '' : member.phone || '';
     const matchesSearch =
@@ -726,13 +680,22 @@ export default function MembershipList() {
     const matchesStatus = statusFilter === "all" || computeStatus(member) === statusFilter;
     const matchesPackage = packageFilter === "all" || (packageFilter === "__none__" ? !member.package_name : member.package_name === packageFilter);
 
+    return matchesSearch && matchesStatus && matchesPackage;
+  });
+
+  const tabAllMembersCount = membersMatchingSearchAndFilters.length;
+  const tabActiveCount = membersMatchingSearchAndFilters.filter((m) => computeStatus(m) === 'active').length;
+  const tabExpiringCount = membersMatchingSearchAndFilters.filter(isExpiringMembership).length;
+  const tabExpiredCount = membersMatchingSearchAndFilters.filter((m) => computeStatus(m) === 'expired').length;
+
+  const filteredMembers = membersMatchingSearchAndFilters.filter((member) => {
     let matchesTab = true;
     if (activeTab === "all") matchesTab = true;
     if (activeTab === "active") matchesTab = computeStatus(member) === 'active';
     if (activeTab === "expiring") matchesTab = isExpiringMembership(member);
     if (activeTab === "expired") matchesTab = computeStatus(member) === 'expired';
 
-    return matchesSearch && matchesStatus && matchesPackage && matchesTab;
+    return matchesTab;
   }).sort((a, b) => {
     if (sortOrder === 'asc') return a.full_name.localeCompare(b.full_name);
     if (sortOrder === 'desc') return b.full_name.localeCompare(a.full_name);
@@ -1350,10 +1313,10 @@ const handleUpgradeSubmit = async () => {
               <MembershipTabs
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
-                totalMembers={allMembersCount}
-                activeCount={activeCount}
-                expiringCount={expiringCount}
-                expiredCount={expiredCount}
+                totalMembers={tabAllMembersCount}
+                activeCount={tabActiveCount}
+                expiringCount={tabExpiringCount}
+                expiredCount={tabExpiredCount}
               />
               
               {/* Member List */}
