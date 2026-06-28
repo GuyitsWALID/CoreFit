@@ -145,7 +145,7 @@ export default function Dashboard() {
 
   // Growth chart state
   type GrowthRange = '1d' | '7d' | '30d' | '90d' | '12m';
-  const [growthRange, setGrowthRange] = useState<GrowthRange>('7d');
+  const [growthRange, setGrowthRange] = useState<GrowthRange>('30d');
   const [growthPoints, setGrowthPoints] = useState<Array<{ label: string; value: number; raw: string }>>([]);
   const [growthLoading, setGrowthLoading] = useState(false);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -200,8 +200,8 @@ export default function Dashboard() {
   }, [gym, gymLoading, revenueRangeDays]);
 
   useEffect(() => {
-    loadGrowthData(growthRange);
-  }, [growthRange]);
+    if (gym && !gymLoading) loadGrowthData(growthRange);
+  }, [gym, gymLoading, growthRange]);
 
   // Date utilities
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -214,6 +214,8 @@ export default function Dashboard() {
 
   // Fetch growth data with range (cumulative users over time)
   const loadGrowthData = async (range: GrowthRange) => {
+    if (!gym?.id) return;
+
     setGrowthLoading(true);
     try {
       const now = new Date();

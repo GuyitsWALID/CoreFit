@@ -75,6 +75,7 @@ export default function Packages() {
   const [isEditing, setIsEditing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [staffRole, setStaffRole] = useState<'admin' | 'receptionist' | null>(null);
 
   // Dynamic styling based on gym configuration
   const dynamicStyles = useMemo(() => {
@@ -97,8 +98,49 @@ export default function Packages() {
     if (gym && gym.id !== 'default') {
       fetchPackages();
       fetchAccessLevelTypes();
+      fetchStaffRole();
     }
   }, [gym]);
+
+  const fetchStaffRole = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setStaffRole('admin');
+        return;
+      }
+
+      let query = supabase
+        .from('staff')
+        .select(`id, email, roles!inner ( name )`)
+        .eq('id', user.id);
+
+      if (gym?.id) query = query.eq('gym_id', gym.id);
+
+      let { data: staffData, error } = await query.single();
+
+      if (error || !staffData) {
+        let emailQuery = supabase
+          .from('staff')
+          .select(`id, email, roles!inner ( name )`)
+          .eq('email', user.email);
+
+        if (gym?.id) emailQuery = emailQuery.eq('gym_id', gym.id);
+
+        const { data: emailData, error: emailError } = await emailQuery.single();
+        if (!emailError && emailData) staffData = emailData;
+      }
+
+      const rawRole = Array.isArray((staffData as any)?.roles)
+        ? (staffData as any).roles[0]?.name
+        : (staffData as any)?.roles?.name;
+      const roleName = (rawRole ?? '').toString().trim().toLowerCase();
+
+      setStaffRole(roleName === 'receptionist' ? 'receptionist' : 'admin');
+    } catch {
+      setStaffRole('admin');
+    }
+  };
 
   const fetchPackages = async () => {
     if (!gym || gym.id === 'default') return;
@@ -220,6 +262,15 @@ export default function Packages() {
   };
 
   const handleArchive = async (id: string, isArchived: boolean) => {
+    if (staffRole === 'receptionist') {
+      toast({
+        title: "Action not allowed",
+        description: "Receptionists cannot archive or restore packages.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('packages')
@@ -285,6 +336,15 @@ export default function Packages() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isEditing && staffRole === 'receptionist') {
+      toast({
+        title: "Action not allowed",
+        description: "Receptionists cannot create packages.",
+        variant: "destructive"
+      });
+      return;
+    }
     
     if (!gym || gym.id === 'default') {
       toast({
@@ -383,6 +443,7 @@ export default function Packages() {
   const filteredPackages = packages.filter(pkg => 
     activeTab === 'active' ? !pkg.archived : pkg.archived
   );
+  const canCreateOrArchivePackages = staffRole !== null && staffRole !== 'receptionist';
 
   const renderPackageCard = (pkg: Package) => (
     <Card key={pkg.id} className="transition-all hover:shadow-md" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
@@ -442,15 +503,17 @@ export default function Packages() {
         >
           <Edit className="mr-1 h-4 w-4" /> Edit
         </Button>
-        <Button 
-          variant={pkg.archived ? "default" : "secondary"} 
-          size="sm" 
-          onClick={() => handleArchive(pkg.id, pkg.archived)}
-          style={pkg.archived ? { backgroundColor: dynamicStyles.primaryColor } : {}}
-        >
-          <Archive className="mr-1 h-4 w-4" /> 
-          {pkg.archived ? 'Restore' : 'Archive'}
-        </Button>
+        {canCreateOrArchivePackages && (
+          <Button
+            variant={pkg.archived ? "default" : "secondary"}
+            size="sm"
+            onClick={() => handleArchive(pkg.id, pkg.archived)}
+            style={pkg.archived ? { backgroundColor: dynamicStyles.primaryColor } : {}}
+          >
+            <Archive className="mr-1 h-4 w-4" />
+            {pkg.archived ? 'Restore' : 'Archive'}
+          </Button>
+        )}
       </CardFooter>
     </Card>
   );
@@ -490,15 +553,17 @@ export default function Packages() {
         >
           <Edit className="mr-1 h-4 w-4" /> Edit
         </Button>
-        <Button 
-          variant={pkg.archived ? "default" : "secondary"} 
-          size="sm" 
-          onClick={() => handleArchive(pkg.id, pkg.archived)}
-          style={pkg.archived ? { backgroundColor: dynamicStyles.primaryColor } : {}}
-        >
-          <Archive className="mr-1 h-4 w-4" /> 
-          {pkg.archived ? 'Restore' : 'Archive'}
-        </Button>
+        {canCreateOrArchivePackages && (
+          <Button
+            variant={pkg.archived ? "default" : "secondary"}
+            size="sm"
+            onClick={() => handleArchive(pkg.id, pkg.archived)}
+            style={pkg.archived ? { backgroundColor: dynamicStyles.primaryColor } : {}}
+          >
+            <Archive className="mr-1 h-4 w-4" />
+            {pkg.archived ? 'Restore' : 'Archive'}
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -586,15 +651,17 @@ export default function Packages() {
               
               <div className="flex items-center gap-4">
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button 
-                      className="text-white" 
-                      onClick={resetForm}
-                      style={{ backgroundColor: dynamicStyles.primaryColor }}
-                    >
-                      <Plus className="mr-2 h-4 w-4" /> Add New Package
-                    </Button>
-                  </DialogTrigger>
+                  {canCreateOrArchivePackages && (
+                    <DialogTrigger asChild>
+                      <Button
+                        className="text-white"
+                        onClick={resetForm}
+                        style={{ backgroundColor: dynamicStyles.primaryColor }}
+                      >
+                        <Plus className="mr-2 h-4 w-4" /> Add New Package
+                      </Button>
+                    </DialogTrigger>
+                  )}
                   <DialogContent className="sm:max-w-[525px] max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
                       <DialogTitle style={{ color: dynamicStyles.primaryColor }}>
