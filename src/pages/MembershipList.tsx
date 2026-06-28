@@ -155,12 +155,57 @@ export default function MembershipList() {
   const [canFreeze, setCanFreeze] = useState<Record<string, boolean>>({});
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [staffRole, setStaffRole] = useState<'admin' | 'receptionist' | null>(null);
 
   // Data fetching
   useEffect(() => {
     fetchMembershipData();
     
   }, []);
+
+  useEffect(() => {
+    if (gym && gym.id !== 'default') fetchStaffRole();
+  }, [gym]);
+
+  const fetchStaffRole = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setStaffRole('admin');
+        return;
+      }
+
+      let query = supabase
+        .from('staff')
+        .select(`id, email, roles!inner ( name )`)
+        .eq('id', user.id);
+
+      if (gym?.id) query = query.eq('gym_id', gym.id);
+
+      let { data: staffData, error } = await query.single();
+
+      if (error || !staffData) {
+        let emailQuery = supabase
+          .from('staff')
+          .select(`id, email, roles!inner ( name )`)
+          .eq('email', user.email);
+
+        if (gym?.id) emailQuery = emailQuery.eq('gym_id', gym.id);
+
+        const { data: emailData, error: emailError } = await emailQuery.single();
+        if (!emailError && emailData) staffData = emailData;
+      }
+
+      const rawRole = Array.isArray((staffData as any)?.roles)
+        ? (staffData as any).roles[0]?.name
+        : (staffData as any)?.roles?.name;
+      const roleName = (rawRole ?? '').toString().trim().toLowerCase();
+
+      setStaffRole(roleName === 'receptionist' ? 'receptionist' : 'admin');
+    } catch {
+      setStaffRole('admin');
+    }
+  };
 
   // Update styling based on gym configuration
   const dynamicStyles = useMemo(() => {
@@ -671,6 +716,7 @@ export default function MembershipList() {
     if (sortOrder === 'desc') return b.full_name.localeCompare(a.full_name);
     return 0;
   });
+  const canDeactivateOrDeleteMembers = staffRole !== null && staffRole !== 'receptionist';
 
   // Pagination (client-side slicing for all filters)
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
@@ -801,6 +847,15 @@ export default function MembershipList() {
   };
 
   const openDeleteMemberModal = (member: MembershipInfo) => {
+    if (staffRole === 'receptionist') {
+      toast({
+        title: "Action not allowed",
+        description: "Receptionists cannot delete members.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setDeleteMember(member);
     setDeleteDialog(true);
     setOpenDropdown(null);
@@ -808,6 +863,16 @@ export default function MembershipList() {
 
   const handleDeleteMember = async () => {
     if (!deleteMember) return;
+    if (staffRole === 'receptionist') {
+      toast({
+        title: "Action not allowed",
+        description: "Receptionists cannot delete members.",
+        variant: "destructive"
+      });
+      setDeleteDialog(false);
+      setDeleteMember(null);
+      return;
+    }
 
     const member = deleteMember;
 
@@ -1300,6 +1365,7 @@ const handleUpgradeSubmit = async () => {
                       onDelete={openDeleteMemberModal}
                       onRefresh={refreshMembershipList}
                       formatDate={formatMembershipDate}
+                      canDeactivateOrDelete={canDeactivateOrDeleteMembers}
                     />
                   ))
                 )}

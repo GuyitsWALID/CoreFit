@@ -31,6 +31,7 @@ interface ActionsDropdownProps {
   onCoaching: (member: MembershipInfo) => void;
   onDelete: (member: MembershipInfo) => void;
   onRefresh?: () => void;
+  canDeactivateOrDelete?: boolean;
 }
 
 export default function ActionsDropdown({
@@ -48,6 +49,7 @@ export default function ActionsDropdown({
   onCoaching,
   onDelete,
   onRefresh,
+  canDeactivateOrDelete = true,
 }: ActionsDropdownProps) {
   const { toast } = useToast();
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -73,6 +75,16 @@ export default function ActionsDropdown({
    * Handles any status change. Reason is required only for deactivation.
    */
   const handleStatusChange = async (newStatus: "active" | "inactive", reason?: string) => {
+    if (newStatus === "inactive" && !canDeactivateOrDelete) {
+      toast({
+        title: "Action not allowed",
+        description: "Receptionists cannot deactivate members.",
+        variant: "destructive",
+      });
+      setDeactOpen(false);
+      return;
+    }
+
     if (newStatus === "inactive" && !reason?.trim()) {
       toast({
         title: "Reason required",
@@ -240,7 +252,7 @@ export default function ActionsDropdown({
           </button>
 
           {/* Deactivate / Activate */}
-          {["active", "expired", "paused"].includes(member.status) && (
+          {canDeactivateOrDelete && ["active", "expired", "paused"].includes(member.status) && (
             <button
               type="button"
               className="w-full text-left px-3 py-2 text-sm text-red-600 flex items-center gap-2 hover:bg-red-50"
@@ -258,15 +270,17 @@ export default function ActionsDropdown({
               Activate Membership
             </button>
           )}
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 text-sm text-red-700 flex items-center gap-2 hover:bg-red-50"
-            onClick={handleAction(() => onDelete(member))}
-            disabled={processingAction === `delete-${member.user_id}`}
-          >
-            <Trash2 className="h-4 w-4" />
-            {processingAction === `delete-${member.user_id}` ? "Deleting..." : "Delete Member"}
-          </button>
+          {canDeactivateOrDelete && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm text-red-700 flex items-center gap-2 hover:bg-red-50"
+              onClick={handleAction(() => onDelete(member))}
+              disabled={processingAction === `delete-${member.user_id}`}
+            >
+              <Trash2 className="h-4 w-4" />
+              {processingAction === `delete-${member.user_id}` ? "Deleting..." : "Delete Member"}
+            </button>
+          )}
         </div>
       )}
       <UserDetailModal

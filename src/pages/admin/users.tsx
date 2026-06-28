@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SuperAdSidebar } from '@/pages/admin/superAdSidebar';
 import { isPlaceholderEmail, isPlaceholderPhone } from '@/lib/placeholderEmail';
+import QRCode from 'react-qr-code';
 
 interface UserData {
   id: string;
@@ -62,6 +63,9 @@ interface UserData {
   package_name?: string;
   membership_expiry?: string;
   days_left?: number;
+  qr_code_data?: string | null;
+  qr_code?: string | null;
+  gym_brand_color?: string | null;
 }
 
 interface UserStats {
@@ -98,6 +102,8 @@ export default function AdminUsers() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [downloadingQrCards, setDownloadingQrCards] = useState(false);
+  const qrRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -162,8 +168,10 @@ export default function AdminUsers() {
           created_at,
           membership_expiry,
           gym_id,
+          qr_code_data,
           gyms (
-            name
+            name,
+            brand_color
           ),
           packages (
             name
@@ -186,8 +194,10 @@ export default function AdminUsers() {
           is_active,
           created_at,
           gym_id,
+          qr_code,
           gyms (
-            name
+            name,
+            brand_color
           ),
           roles (
             name
@@ -215,9 +225,11 @@ export default function AdminUsers() {
           created_at: user.created_at,
           gym_id: user.gym_id,
           gym_name: (user.gyms as any)?.name,
+          gym_brand_color: (user.gyms as any)?.brand_color,
           package_name: (user.packages as any)?.name,
           membership_expiry: user.membership_expiry,
-          days_left: daysLeft
+          days_left: daysLeft,
+          qr_code_data: user.qr_code_data
         };
       });
 
@@ -233,7 +245,9 @@ export default function AdminUsers() {
         created_at: staff.created_at,
         gym_id: staff.gym_id,
         gym_name: (staff.gyms as any)?.name,
-        role_name: (staff.roles as any)?.name
+        gym_brand_color: (staff.gyms as any)?.brand_color,
+        role_name: (staff.roles as any)?.name,
+        qr_code: staff.qr_code
       }));
 
       const allUsers = [...clientUsers, ...staffUsers];
@@ -482,6 +496,306 @@ export default function AdminUsers() {
     URL.revokeObjectURL(url);
   };
 
+  const getQrValue = (user: UserData) => {
+    if (user.user_type === 'client') {
+      return user.qr_code_data || JSON.stringify({ userId: user.id, gymId: user.gym_id || null });
+    }
+
+    return user.qr_code || JSON.stringify({ staffId: user.id, gymId: user.gym_id || null });
+  };
+
+  const sanitizeFilename = (value: string) =>
+    (value || 'user').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase() || 'user';
+
+  const wrapText = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    maxWidth: number,
+    lineHeight: number,
+  ) => {
+    const words = String(text || '').split(' ');
+    let line = '';
+
+    for (let i = 0; i < words.length; i++) {
+      const testLine = `${line}${words[i]} `;
+      if (ctx.measureText(testLine).width > maxWidth && i > 0) {
+        ctx.fillText(line, x, y);
+        line = `${words[i]} `;
+        y += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+
+    ctx.fillText(line, x, y);
+  };
+
+  const buildQrCardCanvas = async (user: UserData): Promise<HTMLCanvasElement | null> => {
+    const svgEl = qrRefs.current[user.id]?.querySelector('svg');
+    if (!svgEl) return null;
+
+    let svgData = new XMLSerializer().serializeToString(svgEl);
+    svgData = svgData.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '');
+    svgData = svgData.replace(/\s(width|height)="[^"]*"/g, '');
+    svgData = svgData.replace(/<svg([^>]*)>/, '<svg$1 width="760" height="760" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" image-rendering="pixelated">');
+    svgData = svgData.replace(/\sstroke="[^"]*"/g, '');
+    svgData = svgData.replace(/fill="(?!#ffffff)[^"]*"/g, 'fill="#000000"');
+    svgData = svgData.replace(/<rect[^>]*width="100%"[^>]*>/g, '');
+    svgData = svgData.replace(/<svg([^>]*)>/, '<svg$1><rect width="100%" height="100%" fill="#ffffff"/>');
+
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    return await new Promise<HTMLCanvasElement | null>((resolve) => {
+      img.onload = () => {
+        const canvasWidth = 1400;
+        const canvasHeight = 700;
+        const canvas = document.createElement('canvas');
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          resolve(null);
+          return;
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+        const stripeHeight = 90;
+        ctx.fillStyle = user.gym_brand_color || dynamicStyles.primaryColor;
+        ctx.fillRect(0, 0, canvasWidth, stripeHeight);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 28px Inter, Arial, sans-serif';
+        ctx.fillText(user.gym_name || 'Gym', 40, 58);
+
+        const qrSize = 380;
+        const padding = 60;
+        const qrX = canvasWidth - qrSize - padding;
+        const qrY = (canvasHeight - qrSize) / 2;
+        const boxX = qrX - 10;
+        const boxY = qrY - 10;
+        const boxW = qrSize + 20;
+        const boxH = qrSize + 20;
+        const radius = 18;
+
+        ctx.imageSmoothingEnabled = false;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(16,24,40,0.04)';
+        ctx.beginPath();
+        ctx.moveTo(boxX + radius, boxY);
+        ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, radius);
+        ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, radius);
+        ctx.arcTo(boxX, boxY + boxH, boxX, boxY, radius);
+        ctx.arcTo(boxX, boxY, boxX + boxW, boxY, radius);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(boxX + radius, boxY);
+        ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, radius);
+        ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, radius);
+        ctx.arcTo(boxX, boxY + boxH, boxX, boxY, radius);
+        ctx.arcTo(boxX, boxY, boxX + boxW, boxY, radius);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#e6e6e6';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.drawImage(img, qrX, qrY, qrSize, qrSize);
+
+        const leftX = padding;
+        let textY = stripeHeight + 70;
+
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 48px Inter, Arial, sans-serif';
+        wrapText(ctx, user.full_name || '-', leftX, textY, qrX - leftX - padding, 56);
+
+        textY += 90;
+        ctx.font = '26px Inter, Arial, sans-serif';
+        ctx.fillStyle = '#111111';
+        wrapText(ctx, isPlaceholderEmail(user.email) ? '-' : user.email || '-', leftX, textY, qrX - leftX - padding, 34);
+
+        textY += 48;
+        ctx.font = '20px Inter, Arial, sans-serif';
+        ctx.fillText(`Phone: ${isPlaceholderPhone(user.phone) ? '-' : user.phone || '-'}`, leftX, textY);
+
+        textY += 36;
+        ctx.fillText(`Type: ${user.user_type}`, leftX, textY);
+
+        textY += 36;
+        ctx.fillText(`${user.user_type === 'client' ? 'Package' : 'Role'}: ${user.package_name || user.role_name || '-'}`, leftX, textY);
+
+        textY += 60;
+        ctx.font = '18px Inter, Arial, sans-serif';
+        ctx.fillStyle = '#6b7280';
+        ctx.fillText(`Registered to: ${user.gym_name || ''}`, leftX, textY + 12);
+
+        URL.revokeObjectURL(url);
+        resolve(canvas);
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+
+      img.src = url;
+    });
+  };
+
+  const canvasToJpegBlob = (canvas: HTMLCanvasElement) =>
+    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+
+  const crcTable = useMemo(() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      table[i] = c >>> 0;
+    }
+    return table;
+  }, []);
+
+  const crc32 = (data: Uint8Array) => {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) crc = crcTable[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+
+  const createZip = async (files: Array<{ name: string; blob: Blob }>) => {
+    const encoder = new TextEncoder();
+    const chunks: BlobPart[] = [];
+    const centralChunks: BlobPart[] = [];
+    let offset = 0;
+    const now = new Date();
+    const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+    const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+
+    for (const file of files) {
+      const nameBytes = encoder.encode(file.name);
+      const bytes = new Uint8Array(await file.blob.arrayBuffer());
+      const crc = crc32(bytes);
+
+      const local = new ArrayBuffer(30 + nameBytes.length);
+      const localView = new DataView(local);
+      localView.setUint32(0, 0x04034b50, true);
+      localView.setUint16(4, 20, true);
+      localView.setUint16(6, 0, true);
+      localView.setUint16(8, 0, true);
+      localView.setUint16(10, dosTime, true);
+      localView.setUint16(12, dosDate, true);
+      localView.setUint32(14, crc, true);
+      localView.setUint32(18, bytes.length, true);
+      localView.setUint32(22, bytes.length, true);
+      localView.setUint16(26, nameBytes.length, true);
+      new Uint8Array(local, 30).set(nameBytes);
+      chunks.push(local, bytes);
+
+      const central = new ArrayBuffer(46 + nameBytes.length);
+      const centralView = new DataView(central);
+      centralView.setUint32(0, 0x02014b50, true);
+      centralView.setUint16(4, 20, true);
+      centralView.setUint16(6, 20, true);
+      centralView.setUint16(8, 0, true);
+      centralView.setUint16(10, 0, true);
+      centralView.setUint16(12, dosTime, true);
+      centralView.setUint16(14, dosDate, true);
+      centralView.setUint32(16, crc, true);
+      centralView.setUint32(20, bytes.length, true);
+      centralView.setUint32(24, bytes.length, true);
+      centralView.setUint16(28, nameBytes.length, true);
+      centralView.setUint32(42, offset, true);
+      new Uint8Array(central, 46).set(nameBytes);
+      centralChunks.push(central);
+
+      offset += local.byteLength + bytes.length;
+    }
+
+    const centralSize = centralChunks.reduce((sum, chunk) => sum + (chunk as ArrayBuffer).byteLength, 0);
+    const end = new ArrayBuffer(22);
+    const endView = new DataView(end);
+    endView.setUint32(0, 0x06054b50, true);
+    endView.setUint16(8, files.length, true);
+    endView.setUint16(10, files.length, true);
+    endView.setUint32(12, centralSize, true);
+    endView.setUint32(16, offset, true);
+
+    return new Blob([...chunks, ...centralChunks, end], { type: 'application/zip' });
+  };
+
+  const handleDownloadQrJpgs = async () => {
+    const targets = filteredUsers.filter(user => Boolean(user.id));
+    if (targets.length === 0) {
+      toast({
+        title: "No users to export",
+        description: "Adjust the filters and try again.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setDownloadingQrCards(true);
+    try {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+
+      const files: Array<{ name: string; blob: Blob }> = [];
+      for (const user of targets) {
+        const canvas = await buildQrCardCanvas(user);
+        if (!canvas) continue;
+        const blob = await canvasToJpegBlob(canvas);
+        if (!blob) continue;
+
+        const gymName = sanitizeFilename(user.gym_name || 'no_gym');
+        const userName = sanitizeFilename(user.full_name || user.id);
+        files.push({
+          name: `${gymName}/${userName}-${user.id.slice(0, 8)}-ID.jpg`,
+          blob,
+        });
+      }
+
+      if (files.length === 0) throw new Error('Could not generate any QR cards.');
+
+      const zip = await createZip(files);
+      const url = URL.createObjectURL(zip);
+      const a = document.createElement('a');
+      const gymName = gymFilter === 'all'
+        ? 'all-gyms'
+        : sanitizeFilename(gyms.find(gym => gym.id === gymFilter)?.name || 'gym');
+      a.href = url;
+      a.download = `${gymName}-qr-id-cards-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "QR cards ready",
+        description: `Downloaded ${files.length} JPG ID cards.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Download failed",
+        description: error?.message || "Could not generate QR card archive.",
+        variant: "destructive"
+      });
+    } finally {
+      setDownloadingQrCards(false);
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-800';
@@ -567,6 +881,14 @@ export default function AdminUsers() {
               >
                 <Download className="h-4 w-4 mr-2" />
                 Export CSV
+              </Button>
+              <Button
+                onClick={handleDownloadQrJpgs}
+                disabled={downloadingQrCards || filteredUsers.length === 0}
+                variant="outline"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                {downloadingQrCards ? 'Preparing QR JPGs...' : 'Download QR JPGs'}
               </Button>
             </div>
           </div>
@@ -1008,6 +1330,19 @@ export default function AdminUsers() {
               </div>
             </CardContent>
           </Card>
+
+          <div className="fixed -left-[10000px] top-0 h-0 w-0 overflow-hidden" aria-hidden="true">
+            {filteredUsers.map(user => (
+              <div
+                key={user.id}
+                ref={(node) => {
+                  qrRefs.current[user.id] = node;
+                }}
+              >
+                <QRCode value={getQrValue(user)} size={176} fgColor="#000000" bgColor="#ffffff" />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
