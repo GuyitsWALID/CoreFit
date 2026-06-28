@@ -687,6 +687,10 @@ export default function MembershipList() {
   const tabActiveCount = membersMatchingSearchAndFilters.filter((m) => computeStatus(m) === 'active').length;
   const tabExpiringCount = membersMatchingSearchAndFilters.filter(isExpiringMembership).length;
   const tabExpiredCount = membersMatchingSearchAndFilters.filter((m) => computeStatus(m) === 'expired').length;
+  const hasActiveSearchOrFilter =
+    searchTerm.trim() !== "" ||
+    statusFilter !== "all" ||
+    packageFilter !== "all";
 
   const filteredMembers = membersMatchingSearchAndFilters.filter((member) => {
     let matchesTab = true;
@@ -1313,10 +1317,10 @@ const handleUpgradeSubmit = async () => {
               <MembershipTabs
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
-                totalMembers={tabAllMembersCount}
-                activeCount={tabActiveCount}
-                expiringCount={tabExpiringCount}
-                expiredCount={tabExpiredCount}
+                totalMembers={hasActiveSearchOrFilter ? tabAllMembersCount : allMembersCount}
+                activeCount={hasActiveSearchOrFilter ? tabActiveCount : activeCount}
+                expiringCount={hasActiveSearchOrFilter ? tabExpiringCount : expiringCount}
+                expiredCount={hasActiveSearchOrFilter ? tabExpiredCount : expiredCount}
               />
               
               {/* Member List */}
