@@ -27,6 +27,8 @@ interface MemberCardProps {
   onRefresh?: () => void;
   formatDate?: (value: string | null | undefined) => string;
   canDeactivateOrDelete?: boolean;
+  canDelete?: boolean;
+  canDeactivate?: boolean;
 }
 const statusColorMap: Record<string, string> = {
   active: "bg-green-100 text-green-800",
@@ -57,6 +59,8 @@ export  function MemberCard({
   onRefresh,
   formatDate = (value) => value && !isNaN(Date.parse(value)) ? new Date(value).toLocaleDateString() : "-",
   canDeactivateOrDelete = true,
+  canDelete,
+  canDeactivate,
 }: MemberCardProps) {
 
   const openFreezeModal = () => {
@@ -179,6 +183,8 @@ export  function MemberCard({
             onDelete={onDelete}
             onRefresh={onRefresh}
             canDeactivateOrDelete={canDeactivateOrDelete}
+            canDelete={canDelete}
+            canDeactivate={canDeactivate}
           />
         </div>
       )}

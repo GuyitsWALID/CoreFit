@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useGym } from '@/contexts/GymContext';
 import { DynamicHeader } from '@/components/layout/DynamicHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { getCurrentStaffRole, StaffRole } from '@/lib/staffRole';
 
 // Recharts
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
@@ -31,47 +32,16 @@ export default function Dashboard() {
   const [revenueTodayCoaching, setRevenueTodayCoaching] = useState<number>(0);
   const [revenueTodayTotal, setRevenueTodayTotal] = useState<number>(0);
 
-  // Staff role (used to hide sensitive dashboard elements from receptionists)
-  const [staffRole, setStaffRole] = useState<'admin' | 'receptionist' | null>(null);
+  // Staff role (used to hide sensitive dashboard elements from receptionists and managers)
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
 
   useEffect(() => {
     const fetchStaffRole = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return setStaffRole('admin');
-
-        // Try to find a staff record by user id
-        let { data: staffData, error } = await supabase
-          .from('staff')
-          .select(`id, email, roles!inner ( name )`)
-          .eq('id', user.id)
-          .single();
-
-        // If not found by id, try by email
-        if (error || !staffData) {
-          const { data: emailData, error: emailError } = await supabase
-            .from('staff')
-            .select(`id, email, roles!inner ( name )`)
-            .eq('email', user.email)
-            .single();
-          if (!emailError && emailData) staffData = emailData;
-        }
-
-        if (staffData?.roles) {
-          const _raw = Array.isArray(staffData.roles) ? (staffData.roles as any)[0]?.name : (staffData.roles as any)?.name;
-          const roleName = (_raw ?? '').toString().trim().toLowerCase();
-          if (roleName === 'receptionist') setStaffRole('receptionist');
-          else setStaffRole('admin');
-        } else {
-          setStaffRole('admin');
-        }
-      } catch {
-        setStaffRole('admin');
-      }
+      setStaffRole(await getCurrentStaffRole(gym?.id !== "default" ? gym?.id : null));
     };
 
-    fetchStaffRole();
-  }, []);
+    if (gym) fetchStaffRole();
+  }, [gym?.id]);
 
   // Revenues (overall) from user_combined_costs
   const [totalPackageRevenue, setTotalPackageRevenue] = useState<number>(0);
@@ -87,6 +57,7 @@ export default function Dashboard() {
   const [showPackages, setShowPackages] = useState<boolean>(true);
   const [showCoaching, setShowCoaching] = useState<boolean>(true);
   const [showTotal, setShowTotal] = useState<boolean>(true);
+  const hasRestrictedDashboardView = staffRole === 'receptionist' || staffRole === 'manager';
 
   // For visibility: compute max total and add padding so small values are visible
   const revenueMax = useMemo(() => {
@@ -766,7 +737,7 @@ export default function Dashboard() {
 
             {/* Stat cards - with dynamic colors */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              {staffRole !== 'receptionist' && (
+              {!hasRestrictedDashboardView && (
                 <div onClick={() => navigate(getGymPath('/memberships'))} className="cursor-pointer transition hover:-translate-y-0.5">
                   <div 
                     className="rounded-lg p-0.5"
@@ -826,7 +797,7 @@ export default function Dashboard() {
 
             </div>
 
-            {staffRole !== 'receptionist' && (
+            {!hasRestrictedDashboardView && (
               <>
                 {/* Revenue summary with dynamic colors */}
                 <Card className="mb-6">

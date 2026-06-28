@@ -33,6 +33,8 @@ interface ActionsDropdownProps {
   onDelete: (member: MembershipInfo) => void;
   onRefresh?: () => void;
   canDeactivateOrDelete?: boolean;
+  canDelete?: boolean;
+  canDeactivate?: boolean;
 }
 
 export default function ActionsDropdown({
@@ -51,12 +53,16 @@ export default function ActionsDropdown({
   onDelete,
   onRefresh,
   canDeactivateOrDelete = true,
+  canDelete,
+  canDeactivate,
 }: ActionsDropdownProps) {
   const { toast } = useToast();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const isOpen = openDropdown === member.user_id;
   const [deactOpen, setDeactOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const canDeleteMember = canDelete ?? canDeactivateOrDelete;
+  const canDeactivateMember = canDeactivate ?? canDeactivateOrDelete;
 
   // Toggle dropdown
   const handleToggle = (e: React.MouseEvent) => {
@@ -76,7 +82,7 @@ export default function ActionsDropdown({
    * Handles any status change. Reason is required only for deactivation.
    */
   const handleStatusChange = async (newStatus: "active" | "inactive", reason?: string) => {
-    if (newStatus === "inactive" && !canDeactivateOrDelete) {
+    if (newStatus === "inactive" && !canDeactivateMember) {
       toast({
         title: "Action not allowed",
         description: "Receptionists cannot deactivate members.",
@@ -263,7 +269,7 @@ export default function ActionsDropdown({
           </button>
 
           {/* Deactivate / Activate */}
-          {canDeactivateOrDelete && ["active", "expired", "paused"].includes(member.status) && (
+          {canDeactivateMember && ["active", "expired", "paused"].includes(member.status) && (
             <button
               type="button"
               className="w-full text-left px-3 py-2 text-sm text-red-600 flex items-center gap-2 hover:bg-red-50"
@@ -281,7 +287,7 @@ export default function ActionsDropdown({
               Activate Membership
             </button>
           )}
-          {canDeactivateOrDelete && (
+          {canDeleteMember && (
             <button
               type="button"
               className="w-full text-left px-3 py-2 text-sm text-red-700 flex items-center gap-2 hover:bg-red-50"

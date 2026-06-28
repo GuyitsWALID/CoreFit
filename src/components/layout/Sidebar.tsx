@@ -21,8 +21,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/lib/supabaseClient";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { getCurrentStaffRole, StaffRole } from "@/lib/staffRole";
 
 interface NavItem {
   name: string;
@@ -42,8 +42,11 @@ const navigation: NavItem[] = [
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
-const navItemsByRole: Record<'admin' | 'receptionist', string[]> = {
+const navItemsByRole: Record<StaffRole, string[]> = {
   admin: navigation.map(item => item.name),
+  manager: navigation
+    .filter(item => !["Reports", "Settings"].includes(item.name))
+    .map(item => item.name),
   // Receptionists get a limited set of navigation items suitable for front-desk tasks
   receptionist: [
     "Dashboard",
@@ -63,7 +66,7 @@ export function Sidebar({ isOpen = false, onToggle }: SidebarProps) {
   const { gym } = useGym();
   const location = useLocation();
   const [collapsed, setCollapsed] = React.useState(false);
-  const [role, setRole] = useState<'admin' | 'receptionist' | null>(null);
+  const [role, setRole] = useState<StaffRole | null>(null);
   const isMobile = useIsMobile();
 
   // Close sidebar on mobile when route changes
@@ -75,66 +78,11 @@ export function Sidebar({ isOpen = false, onToggle }: SidebarProps) {
 
   useEffect(() => {
     const fetchStaffRole = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return setRole(null);
-
-      console.log('Current user:', user); // Debug log
-
-      // First try to get staff record by user ID
-      let { data: staffData, error } = await supabase
-        .from('staff')
-        .select(`
-          id, 
-          email, 
-          roles!inner (
-            name
-          )
-        `)
-        .eq('id', user.id)
-        .single();
-
-      // If not found by ID, try by email
-      if (error || !staffData) {
-        console.log('Staff not found by ID, trying email:', user.email); // Debug log
-        const { data: emailData, error: emailError } = await supabase
-          .from('staff')
-          .select(`
-            id, 
-            email, 
-            roles!inner (
-              name
-            )
-          `)
-          .eq('email', user.email)
-          .single();
-        
-        if (!emailError && emailData) {
-          staffData = emailData;
-        }
-      }
-
-      console.log('Staff data:', staffData); // Debug log
-
-      if (staffData?.roles) {
-        const _raw = Array.isArray(staffData.roles) ? staffData.roles[0]?.name : staffData.roles?.name;
-        const roleName = (_raw ?? '').toString().trim().toLowerCase();
-        console.log('Role name:', roleName); // Debug log
-        
-        if (roleName === 'admin' || roleName === 'receptionist') {
-          setRole(roleName as 'admin' | 'receptionist');
-        } else {
-          // Default to admin if role exists but doesn't match expected values
-          setRole('admin');
-        }
-      } else {
-        // If no staff record found, default to admin for logged-in users
-        console.log('No staff record found, defaulting to admin'); // Debug log
-        setRole('admin');
-      }
+      setRole(await getCurrentStaffRole(gym?.id !== "default" ? gym?.id : null));
     };
 
     fetchStaffRole();
-  }, []);
+  }, [gym?.id]);
 
   // Show navigation items based on role, with fallback to show admin items
   const filteredNavItems = navigation.filter(item => {

@@ -28,7 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Eye, EyeOff, Plus, Edit, Grid3X3, List } from 'lucide-react';
+import { Eye, EyeOff, Plus, Edit, Grid3X3, List, Trash2 } from 'lucide-react';
 import { supabase } from "@/lib/supabaseClient";
 
 import { Switch } from "@/components/ui/switch";
@@ -62,6 +62,7 @@ import { callSendWelcomeSmsFunction } from "@/utils/sendWelcomeViaEdge";
 import { useGym } from "@/contexts/GymContext";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { getCurrentStaffRole, StaffRole } from "@/lib/staffRole";
 
 interface Role {
   id: string;
@@ -132,6 +133,10 @@ export default function TeamManagement() {
 
   const [confirmActiveDialog, setConfirmActiveDialog] = useState(false);
   const [pendingActiveMember, setPendingActiveMember] = useState<TeamMember | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [pendingDeleteMember, setPendingDeleteMember] = useState<TeamMember | null>(null);
+  const [isDeletingMember, setIsDeletingMember] = useState(false);
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
 
   const [qrInfo, setQrInfo] = useState<QRInfo | null>(null);
   const qrContainerRef = useRef<HTMLDivElement>(null);
@@ -226,6 +231,7 @@ export default function TeamManagement() {
     if (gym && gym.id !== 'default') {
       fetchTeamMembers();
       fetchRoles();
+      getCurrentStaffRole(gym.id).then(setStaffRole);
     }
   }, [gym]);
 
@@ -303,6 +309,75 @@ export default function TeamManagement() {
     setEditDialogOpen(true);
   };
 
+  const openDeleteDialog = (member: TeamMember) => {
+    if (staffRole === 'manager') {
+      toast({
+        title: "Action not allowed",
+        description: "Managers cannot delete staff members.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPendingDeleteMember(member);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteMember = async () => {
+    if (!pendingDeleteMember || !gym?.id) return;
+    if (staffRole === 'manager') {
+      toast({
+        title: "Action not allowed",
+        description: "Managers cannot delete staff members.",
+        variant: "destructive",
+      });
+      setDeleteDialogOpen(false);
+      setPendingDeleteMember(null);
+      return;
+    }
+
+    setIsDeletingMember(true);
+    try {
+      const { error: historyDeleteError } = await supabase
+        .from('one_to_one_coaching_assignment_history')
+        .delete()
+        .eq('trainer_id', pendingDeleteMember.id);
+
+      if (historyDeleteError) throw historyDeleteError;
+
+      const { error: coachingDeleteError } = await supabase
+        .from('one_to_one_coaching')
+        .delete()
+        .eq('trainer_id', pendingDeleteMember.id);
+
+      if (coachingDeleteError) throw coachingDeleteError;
+
+      const { error } = await supabase
+        .from('staff')
+        .delete()
+        .eq('id', pendingDeleteMember.id)
+        .eq('gym_id', gym.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Staff member deleted",
+        description: `${pendingDeleteMember.first_name} ${pendingDeleteMember.last_name} has been removed from ${gym.name}.`,
+      });
+      setDeleteDialogOpen(false);
+      setPendingDeleteMember(null);
+      await fetchTeamMembers();
+    } catch (error: any) {
+      toast({
+        title: "Delete failed",
+        description: error?.message || "Could not delete this staff member.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeletingMember(false);
+    }
+  };
+
   // Open QR modal for a specific member, generating qr_code if missing
   const openQrForMember = async (member: TeamMember) => {
     try {
@@ -376,6 +451,7 @@ export default function TeamManagement() {
     if (activeTab === 'all') return matchesSearch;
     return matchesSearch && member.roles?.name.toLowerCase() === activeTab;
   });
+  const canDeleteStaff = staffRole !== null && staffRole !== 'manager';
 
   const renderMemberCard = (member: TeamMember) => (
     <Card key={member.id} className="hover:shadow-md transition-shadow" style={{ borderColor: `${dynamicStyles.primaryColor}20` }}>
@@ -431,6 +507,16 @@ export default function TeamManagement() {
           >
             <QrCode className="mr-1 h-4 w-4" /> QR
           </Button>
+          {canDeleteStaff && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openDeleteDialog(member)}
+              className="text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <Trash2 className="mr-1 h-4 w-4" /> Delete
+            </Button>
+          )}
         </div>
       </CardFooter>
     </Card>
@@ -485,6 +571,17 @@ export default function TeamManagement() {
           >
             <QrCode className="h-4 w-4" />
           </Button>
+          {canDeleteStaff && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openDeleteDialog(member)}
+              aria-label="Delete staff member"
+              className="text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </TableCell>
     </TableRow>
@@ -795,6 +892,44 @@ export default function TeamManagement() {
                     className="text-white"
                   >
                     Confirm
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={deleteDialogOpen} onOpenChange={(open) => {
+              if (isDeletingMember) return;
+              setDeleteDialogOpen(open);
+              if (!open) setPendingDeleteMember(null);
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Delete Staff Member</DialogTitle>
+                  <DialogDescription>
+                    Are you sure you want to delete{' '}
+                    <strong>
+                      {pendingDeleteMember?.first_name} {pendingDeleteMember?.last_name}
+                    </strong>
+                    ? This will remove their staff profile from {gym.name}.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setDeleteDialogOpen(false);
+                      setPendingDeleteMember(null);
+                    }}
+                    disabled={isDeletingMember}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={confirmDeleteMember}
+                    disabled={isDeletingMember}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                  >
+                    {isDeletingMember ? "Deleting..." : "Delete"}
                   </Button>
                 </DialogFooter>
               </DialogContent>

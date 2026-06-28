@@ -28,6 +28,7 @@ import { MigrationDashboard } from '@/components/MigrationPage';
 import Packages from './pages/Packages.tsx';
 import { SuperAdminGuard } from '@/components/auth/SuperAdminGuard';
 import { AdminHotkeyGate, hasSuperAdminEntry } from '@/components/auth/AdminHotkeyGate';
+import { ManagerRestrictedRoute } from '@/components/auth/ManagerRestrictedRoute';
 
 // Layout component that wraps gym-specific pages
 const GymLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -74,8 +75,8 @@ function App() {
                 <Route path="/trainers" element={<TrainersList />} />
                 <Route path="/packages" element={<Packages />} />
                 <Route path="/check-ins" element={<CheckIns />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/settings" element={<Settings />} />
+                <Route path="/reports" element={<ManagerRestrictedRoute><Reports /></ManagerRestrictedRoute>} />
+                <Route path="/settings" element={<ManagerRestrictedRoute><Settings /></ManagerRestrictedRoute>} />
                 <Route path="/logout" element={<Logout />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>

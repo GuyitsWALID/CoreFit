@@ -44,6 +44,7 @@ import { CoachingSessionData, Trainer } from "@/types/coaching"; // Ensure this 
 import { fetchTrainers } from "@/lib/supabase_trainer_query";
 import FreezeActionModal from "../components/Modals/FreezeActionModal.tsx";
 import type { OfflineRenewalPackage } from "@/components/Modals/OfflineRenewalModal";
+import { getCurrentStaffRole, StaffRole } from "@/lib/staffRole";
 
 type CouponMembershipInfo = MembershipInfo & {
   is_coupon?: boolean;
@@ -198,7 +199,7 @@ export default function MembershipList() {
   const [canFreeze, setCanFreeze] = useState<Record<string, boolean>>({});
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
-  const [staffRole, setStaffRole] = useState<'admin' | 'receptionist' | null>(null);
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
 
   // Data fetching
   useEffect(() => {
@@ -211,43 +212,7 @@ export default function MembershipList() {
   }, [gym]);
 
   const fetchStaffRole = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setStaffRole('admin');
-        return;
-      }
-
-      let query = supabase
-        .from('staff')
-        .select(`id, email, roles!inner ( name )`)
-        .eq('id', user.id);
-
-      if (gym?.id) query = query.eq('gym_id', gym.id);
-
-      let { data: staffData, error } = await query.single();
-
-      if (error || !staffData) {
-        let emailQuery = supabase
-          .from('staff')
-          .select(`id, email, roles!inner ( name )`)
-          .eq('email', user.email);
-
-        if (gym?.id) emailQuery = emailQuery.eq('gym_id', gym.id);
-
-        const { data: emailData, error: emailError } = await emailQuery.single();
-        if (!emailError && emailData) staffData = emailData;
-      }
-
-      const rawRole = Array.isArray((staffData as any)?.roles)
-        ? (staffData as any).roles[0]?.name
-        : (staffData as any)?.roles?.name;
-      const roleName = (rawRole ?? '').toString().trim().toLowerCase();
-
-      setStaffRole(roleName === 'receptionist' ? 'receptionist' : 'admin');
-    } catch {
-      setStaffRole('admin');
-    }
+    setStaffRole(await getCurrentStaffRole(gym?.id !== "default" ? gym?.id : null));
   };
 
   // Update styling based on gym configuration
@@ -748,7 +713,8 @@ export default function MembershipList() {
     if (sortOrder === 'desc') return b.full_name.localeCompare(a.full_name);
     return 0;
   });
-  const canDeactivateOrDeleteMembers = staffRole !== null && staffRole !== 'receptionist';
+  const canDeactivateMembers = staffRole !== null && staffRole !== 'receptionist';
+  const canDeleteMembers = staffRole !== null && !['receptionist', 'manager'].includes(staffRole);
 
   // Pagination (client-side slicing for all filters)
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
@@ -879,10 +845,10 @@ export default function MembershipList() {
   };
 
   const openDeleteMemberModal = (member: MembershipInfo) => {
-    if (staffRole === 'receptionist') {
+    if (staffRole === 'receptionist' || staffRole === 'manager') {
       toast({
         title: "Action not allowed",
-        description: "Receptionists cannot delete members.",
+        description: "Your role cannot delete members.",
         variant: "destructive"
       });
       return;
@@ -1053,10 +1019,10 @@ export default function MembershipList() {
 
   const handleDeleteMember = async () => {
     if (!deleteMember) return;
-    if (staffRole === 'receptionist') {
+    if (staffRole === 'receptionist' || staffRole === 'manager') {
       toast({
         title: "Action not allowed",
-        description: "Receptionists cannot delete members.",
+        description: "Your role cannot delete members.",
         variant: "destructive"
       });
       setDeleteDialog(false);
@@ -1555,7 +1521,9 @@ const handleUpgradeSubmit = async () => {
                       onDelete={openDeleteMemberModal}
                       onRefresh={refreshMembershipList}
                       formatDate={formatMembershipDate}
-                      canDeactivateOrDelete={canDeactivateOrDeleteMembers}
+                      canDeactivateOrDelete={canDeactivateMembers}
+                      canDelete={canDeleteMembers}
+                      canDeactivate={canDeactivateMembers}
                     />
                   ))
                 )}
