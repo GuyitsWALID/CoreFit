@@ -65,7 +65,10 @@ const formSchema = z.object({
     const periods = Number(value);
     return Number.isInteger(periods) && periods >= 1 && periods <= 120;
   }, { message: "Periods paid must be a whole number between 1 and 120." }),
-  payment_method: z.enum(["cash", "transfer"]),
+  payment_method: z.enum(["cash", "transfer"], {
+    required_error: "Payment method is required.",
+    invalid_type_error: "Payment method must be cash or transfer.",
+  }),
   trainer_id: z.string().optional(),
   emergency_name: z.string().optional(),
   emergency_phone: z.string().optional(),
@@ -524,6 +527,23 @@ export default function RegisterClient() {
         toast({
           title: "Profile registration failed",
           description: rpcError.message,
+          variant: "destructive"
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const { error: paymentMethodError } = await supabase
+        .from('users')
+        .update({ payment_method: values.payment_method })
+        .eq('id', userId)
+        .eq('gym_id', gym.id);
+
+      if (paymentMethodError) {
+        console.error("payment_method update error:", paymentMethodError);
+        toast({
+          title: "Payment method save failed",
+          description: paymentMethodError.message,
           variant: "destructive"
         });
         setIsLoading(false);
