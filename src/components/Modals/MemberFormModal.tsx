@@ -199,6 +199,16 @@ export default function MemberFormModal({
 
     setIsLoading(true);
     try {
+      const selectedRole = roles.find((role) => role.id === values.role);
+      if (!selectedRole) {
+        toast({
+          title: "Role not allowed",
+          description: "Please select a role you are allowed to assign.",
+          variant: "destructive"
+        });
+        return;
+      }
+
       if (memberToEdit) {
         // Update existing member
         const updateData = {

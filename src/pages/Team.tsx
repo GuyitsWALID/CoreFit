@@ -223,6 +223,7 @@ export default function TeamManagement() {
       .from('roles')
       .select('*')
       .neq('name', 'super_admin')
+      .neq('name', 'admin')
       .order('name', { ascending: true });
     if (!error && data) setRoles(data);
   };
@@ -451,6 +452,14 @@ export default function TeamManagement() {
     if (activeTab === 'all') return matchesSearch;
     return matchesSearch && member.roles?.name.toLowerCase() === activeTab;
   });
+  const assignableRoles = useMemo(() => {
+    return roles.filter((role) => {
+      const normalizedRole = role.name.trim().toLowerCase();
+      if (normalizedRole === 'super_admin' || normalizedRole === 'admin') return false;
+      if (normalizedRole === 'manager' && staffRole !== 'admin') return false;
+      return true;
+    });
+  }, [roles, staffRole]);
   const canDeleteStaff = staffRole !== null && staffRole !== 'manager';
 
   const renderMemberCard = (member: TeamMember) => (
@@ -944,7 +953,7 @@ export default function TeamManagement() {
                 setEditMember(null);
               }}
               memberToEdit={editMember}
-              roles={roles}
+              roles={assignableRoles}
               onSave={async () => {
                 await fetchTeamMembers();
                 // QR dialog is handled by realtime insert listener
