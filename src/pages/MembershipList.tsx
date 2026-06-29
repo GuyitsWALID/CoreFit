@@ -64,9 +64,6 @@ type EditMemberForm = {
   emergency_phone: string;
   relationship: string;
   fitness_goal: string;
-  package_id: string;
-  membership_expiry: string;
-  status: MembershipInfo['status'];
 };
 
 const statusColors: Record<string, string> = {
@@ -122,10 +119,11 @@ export default function MembershipList() {
     emergency_phone: "",
     relationship: "",
     fitness_goal: "",
-    package_id: "",
-    membership_expiry: "",
-    status: "active",
   });
+  const [renewDialog, setRenewDialog] = useState(false);
+  const [renewMember, setRenewMember] = useState<MembershipInfo | null>(null);
+  const [renewSelectedPackage, setRenewSelectedPackage] = useState("");
+  const [renewPaymentMethod, setRenewPaymentMethod] = useState<"cash" | "transfer">("cash");
   
   const [upgradeDialog, setUpgradeDialog] = useState(false);
   const [upgradeMember, setUpgradeMember] = useState<MembershipInfo | null>(null);
@@ -872,6 +870,18 @@ export default function MembershipList() {
     };
   };
 
+  const isMembershipActiveByExpiry = (expiry: string | null | undefined) => {
+    if (!expiry || Number.isNaN(Date.parse(expiry))) return false;
+    return new Date(expiry).getTime() > Date.now();
+  };
+
+  const getRenewalPackageId = (member: MembershipInfo | null = renewMember) => {
+    if (!member) return "";
+    return isMembershipActiveByExpiry(member.membership_expiry)
+      ? member.package_id || ""
+      : renewSelectedPackage || member.package_id || "";
+  };
+
   const updateEditField = <K extends keyof EditMemberForm>(field: K, value: EditMemberForm[K]) => {
     setEditForm(previous => ({ ...previous, [field]: value }));
   };
@@ -880,7 +890,6 @@ export default function MembershipList() {
     const fallbackName = splitMemberName(member.full_name);
     setEditMember(member);
     setOpenDropdown(null);
-    fetchPackages();
     setEditForm({
       first_name: fallbackName.firstName,
       last_name: fallbackName.lastName,
@@ -892,15 +901,12 @@ export default function MembershipList() {
       emergency_phone: "",
       relationship: "",
       fitness_goal: "",
-      package_id: member.package_id || "",
-      membership_expiry: toDateInputValue(member.membership_expiry),
-      status: member.status,
     });
     setEditDialog(true);
 
     const { data, error } = await supabase
       .from('users')
-      .select('first_name, last_name, email, phone, date_of_birth, gender, emergency_name, emergency_phone, relationship, fitness_goal, package_id, membership_expiry, status')
+      .select('first_name, last_name, email, phone, date_of_birth, gender, emergency_name, emergency_phone, relationship, fitness_goal')
       .eq('id', member.user_id)
       .maybeSingle();
 
@@ -925,9 +931,6 @@ export default function MembershipList() {
         emergency_phone: data.emergency_phone || "",
         relationship: data.relationship || "",
         fitness_goal: data.fitness_goal || "",
-        package_id: data.package_id || "",
-        membership_expiry: toDateInputValue(data.membership_expiry),
-        status: (data.status || member.status) as MembershipInfo['status'],
       });
     }
   };
@@ -961,9 +964,6 @@ export default function MembershipList() {
     try {
       const email = editForm.email.trim() || createPlaceholderEmail(editMember.user_id);
       const phone = editForm.phone.trim() || createPlaceholderPhone(editMember.user_id);
-      const expiryIso = editForm.membership_expiry
-        ? new Date(`${editForm.membership_expiry}T00:00:00`).toISOString()
-        : null;
 
       const { error } = await supabase
         .from('users')
@@ -978,9 +978,6 @@ export default function MembershipList() {
           emergency_phone: editForm.emergency_phone.trim() || null,
           relationship: editForm.relationship.trim() || null,
           fitness_goal: editForm.fitness_goal.trim() || null,
-          package_id: editForm.package_id || null,
-          membership_expiry: expiryIso,
-          status: editForm.status,
         })
         .eq('id', editMember.user_id)
         .eq('gym_id', gym.id);
@@ -1101,56 +1098,102 @@ export default function MembershipList() {
     }, 1200);
   };
 
-  const handleRenew = async (member: MembershipInfo) => {
-  setProcessingAction(`renew-${member.user_id}`);
-  setOpenDropdown(null);
+  const handleRenew = (member: MembershipInfo) => {
+    setRenewMember(member);
+    setRenewSelectedPackage(member.package_id || "");
+    setRenewPaymentMethod("cash");
+    setRenewDialog(true);
+    setOpenDropdown(null);
+    fetchPackages();
+  };
 
-  try {
-    const { error } = await supabase.rpc('renew_membership', {
-      p_package_id: member.package_id,
-      p_user_id:    member.user_id,
-    });
+  const handleRenewSubmit = async () => {
+    if (!renewMember || !gym || gym.id === 'default') return;
 
-    if (error) {
+    const packageId = getRenewalPackageId(renewMember);
+    if (!packageId) {
       toast({
-        title: "Renewal failed",
-        description: error.message,
+        title: "Package required",
+        description: "Please select a package before renewing this membership.",
         variant: "destructive",
       });
-    } else {
-      // Record the renewal payment
-      const pkg = availablePackages.find(p => p.id === member.package_id);
-      if (pkg && pkg.price > 0 && gym) {
+      return;
+    }
+
+    setProcessingAction(`renew-${renewMember.user_id}`);
+
+    try {
+      const { error } = await supabase.rpc('renew_membership', {
+        p_package_id: packageId,
+        p_user_id: renewMember.user_id,
+      });
+
+      if (error) throw error;
+
+      const { error: paymentMethodError } = await supabase
+        .from('users')
+        .update({ payment_method: renewPaymentMethod })
+        .eq('id', renewMember.user_id)
+        .eq('gym_id', gym.id);
+
+      if (paymentMethodError) throw paymentMethodError;
+
+      let pkg = availablePackages.find(p => p.id === packageId) ?? null;
+      if (!pkg) {
+        const { data: packageData, error: packageError } = await supabase
+          .from('packages')
+          .select('id, name, price, duration_value, duration_unit')
+          .eq('id', packageId)
+          .eq('gym_id', gym.id)
+          .maybeSingle();
+
+        if (packageError) throw packageError;
+        if (packageData) {
+          pkg = {
+            id: packageData.id,
+            name: packageData.name,
+            price: Number(packageData.price ?? 0),
+            duration_value: Number(packageData.duration_value ?? 0),
+            duration_unit: packageData.duration_unit ?? 'days',
+          };
+        }
+      }
+
+      if (pkg && pkg.price > 0) {
         try {
           await recordPayment({
-            user_id: member.user_id,
+            user_id: renewMember.user_id,
             gym_id: gym.id,
-            package_id: member.package_id,
+            package_id: packageId,
             amount: pkg.price,
-            payment_method: 'admin',
+            payment_method: renewPaymentMethod,
             remarks: `Renewal: ${pkg.name}`,
           });
         } catch (payErr) {
           console.warn('Payment recording failed (non-blocking):', payErr);
         }
       }
+
       toast({
         title: "Membership renewed",
-        description: `${member.full_name}'s membership has been renewed successfully.`,
+        description: `${renewMember.full_name}'s membership has been renewed successfully.`,
       });
+      setRenewDialog(false);
+      setRenewMember(null);
+      setRenewSelectedPackage("");
+      setRenewPaymentMethod("cash");
       await fetchMembershipData();
       await fetchCounts();
+    } catch (err: any) {
+      toast({
+        title: "Renewal failed",
+        description: err?.message || "Could not renew this membership.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingAction(null);
     }
-  } catch (err: any) {
-    toast({
-      title: "Renewal failed",
-      description: `Unexpected error: ${err.message || 'Unknown error'}`,
-      variant: "destructive",
-    });
-  } finally {
-    setProcessingAction(null);
-  }
-};
+  };
 
 
   
@@ -1603,6 +1646,105 @@ const handleUpgradeSubmit = async () => {
       />
 
       <SimpleModal
+        isOpen={renewDialog}
+        onClose={() => {
+          if (processingAction === `renew-${renewMember?.user_id}`) return;
+          setRenewDialog(false);
+          setRenewMember(null);
+          setRenewSelectedPackage("");
+          setRenewPaymentMethod("cash");
+        }}
+        title="Renew Membership"
+        icon={<CalendarDays className="h-5 w-5" />}
+      >
+        {renewMember && (
+          <div className="space-y-5">
+            <div className="rounded-md border bg-gray-50 p-3 text-sm text-gray-700">
+              <div><strong>Name:</strong> {renewMember.full_name}</div>
+              <div><strong>Current package:</strong> {renewMember.package_name || "-"}</div>
+              <div><strong>Current expiry:</strong> {formatMembershipDate(renewMember.membership_expiry)}</div>
+            </div>
+
+            {isMembershipActiveByExpiry(renewMember.membership_expiry) ? (
+              <div className="space-y-2">
+                <Label>Package</Label>
+                <Input
+                  value={renewMember.package_name || "Current package"}
+                  disabled
+                  className="bg-gray-50"
+                />
+                <p className="text-xs text-gray-500">
+                  Active members renew on their current package.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>Package</Label>
+                <Select value={renewSelectedPackage} onValueChange={setRenewSelectedPackage}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select package" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availablePackages.length === 0 ? (
+                      <SelectItem value="no-packages" disabled>No packages available</SelectItem>
+                    ) : (
+                      availablePackages.map((pkg) => (
+                        <SelectItem key={pkg.id} value={pkg.id}>
+                          {pkg.name} - ETB {Number(pkg.price || 0).toLocaleString()}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Payment Method</Label>
+              <Select
+                value={renewPaymentMethod}
+                onValueChange={(value) => setRenewPaymentMethod(value as "cash" | "transfer")}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="transfer">Transfer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setRenewDialog(false);
+                  setRenewMember(null);
+                  setRenewSelectedPackage("");
+                  setRenewPaymentMethod("cash");
+                }}
+                disabled={processingAction === `renew-${renewMember.user_id}`}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleRenewSubmit}
+                disabled={
+                  processingAction === `renew-${renewMember.user_id}` ||
+                  !getRenewalPackageId(renewMember)
+                }
+              >
+                {processingAction === `renew-${renewMember.user_id}` ? "Renewing..." : "Confirm Renewal"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </SimpleModal>
+
+      <SimpleModal
         isOpen={editDialog}
         onClose={() => {
           if (processingAction === `edit-${editMember?.user_id}`) return;
@@ -1668,48 +1810,6 @@ const handleUpgradeSubmit = async () => {
                   <SelectItem value="male">Male</SelectItem>
                   <SelectItem value="female">Female</SelectItem>
                   <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Membership Package</Label>
-              <Select value={editForm.package_id} onValueChange={(value) => updateEditField('package_id', value)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select package" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availablePackages.length === 0 ? (
-                    <SelectItem value="no-packages" disabled>No packages available</SelectItem>
-                  ) : (
-                    availablePackages.map((pkg) => (
-                      <SelectItem key={pkg.id} value={pkg.id}>
-                        {pkg.name}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-membership-expiry">Membership Expiry</Label>
-              <Input
-                id="edit-membership-expiry"
-                type="date"
-                value={editForm.membership_expiry}
-                onChange={(event) => updateEditField('membership_expiry', event.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Status</Label>
-              <Select value={editForm.status} onValueChange={(value) => updateEditField('status', value as MembershipInfo['status'])}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="paused">Paused</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                  <SelectItem value="expired">Expired</SelectItem>
                 </SelectContent>
               </Select>
             </div>
