@@ -68,7 +68,7 @@ function App() {
             <GymLayout>
               <Routes>
                 <Route path="/admin/onboard" element={<OnboardingForm />} />
-                <Route path="/dashboard" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><Dashboard /></GymRoleGuard>} />
+                <Route path="/dashboard" element={<GymRoleGuard allowedRoles={['admin', 'manager']}><Dashboard /></GymRoleGuard>} />
                 <Route path="/memberships" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><MembershipList /></GymRoleGuard>} />
                 <Route path="/register" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><RegisterClient /></GymRoleGuard>} />
                 <Route path="/team" element={<GymRoleGuard allowedRoles={['admin', 'manager']}><Team /></GymRoleGuard>} />

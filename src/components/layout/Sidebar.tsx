@@ -49,7 +49,6 @@ const navItemsByRole: Record<StaffRole, string[]> = {
     .map(item => item.name),
   // Receptionists get a limited set of navigation items suitable for front-desk tasks
   receptionist: [
-    "Dashboard",
     "Memberships",
     "Register Client",
     "Check-ins",

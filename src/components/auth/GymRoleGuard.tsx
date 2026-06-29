@@ -42,16 +42,17 @@ export function GymRoleGuard({ allowedRoles, children }: GymRoleGuardProps) {
     };
   }, [gym?.id]);
 
-  const dashboardPath = useMemo(() => {
+  const fallbackPath = useMemo(() => {
     if (!gym || gym.id === "default") return "/login";
-    return `/${(gym as any).slug || gym.id}/dashboard`;
-  }, [gym]);
+    const prefix = `/${(gym as any).slug || gym.id}`;
+    return role === "receptionist" ? `${prefix}/memberships` : `${prefix}/dashboard`;
+  }, [gym, role]);
 
   if (hasUser === false) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (!role) return null;
 
   if (!allowedRoles.includes(role)) {
-    return <Navigate to={dashboardPath} replace state={{ from: location.pathname }} />;
+    return <Navigate to={fallbackPath} replace state={{ from: location.pathname }} />;
   }
 
   return <>{children}</>;
