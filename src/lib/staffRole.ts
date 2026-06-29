@@ -2,6 +2,16 @@ import { supabase } from "@/lib/supabaseClient";
 
 export type StaffRole = "admin" | "manager" | "receptionist";
 
+export const isCurrentUserSuperAdmin = async (): Promise<boolean> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  const role = String(user?.app_metadata?.role ?? user?.app_metadata?.account_type ?? "").trim().toLowerCase();
+  return role === "super_admin";
+};
+
+type StaffRoleLookup = {
+  roles?: { name?: string | null } | { name?: string | null }[] | null;
+};
+
 const normalizeStaffRole = (value: unknown): StaffRole => {
   const roleName = String(value ?? "").trim().toLowerCase();
   if (roleName === "manager") return "manager";
@@ -21,7 +31,8 @@ export async function getCurrentStaffRole(gymId?: string | null): Promise<StaffR
 
     if (gymId) query = query.eq("gym_id", gymId);
 
-    let { data: staffData, error } = await query.single();
+    const { data, error } = await query.single();
+    let staffData = data as StaffRoleLookup | null;
 
     if (error || !staffData) {
       let emailQuery = supabase
@@ -32,12 +43,12 @@ export async function getCurrentStaffRole(gymId?: string | null): Promise<StaffR
       if (gymId) emailQuery = emailQuery.eq("gym_id", gymId);
 
       const { data: emailData, error: emailError } = await emailQuery.single();
-      if (!emailError && emailData) staffData = emailData;
+      if (!emailError && emailData) staffData = emailData as StaffRoleLookup;
     }
 
-    const rawRole = Array.isArray((staffData as any)?.roles)
-      ? (staffData as any).roles[0]?.name
-      : (staffData as any)?.roles?.name;
+    const rawRole = Array.isArray(staffData?.roles)
+      ? staffData.roles[0]?.name
+      : staffData?.roles?.name;
 
     return normalizeStaffRole(rawRole);
   } catch {

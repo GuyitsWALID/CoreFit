@@ -16,12 +16,25 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '18'
+          node-version: '24'
+
+      - name: Validate Supabase secrets
+        run: |
+          missing=0
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::Missing GitHub secret SUPABASE_ACCESS_TOKEN. Create a fresh Supabase personal access token and save it in this repository's Actions secrets."
+            missing=1
+          fi
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::Missing GitHub secret SUPABASE_PROJECT_REF."
+            missing=1
+          fi
+          exit "$missing"
 
       - name: Install supabase CLI
         run: npm install -g supabase
@@ -38,17 +51,13 @@ jobs:
             echo "SUPABASE_SERVICE_ROLE_KEY not provided as a GitHub secret; ensure it is set if you want functions to have the service role key."
           fi
 
-      - name: Deploy migrate-ping
-        run: supabase functions deploy migrate-ping --project-ref "$SUPABASE_PROJECT_REF"
-
-      - name: Deploy migrate-preview
-        run: supabase functions deploy migrate-preview --project-ref "$SUPABASE_PROJECT_REF"
-
-      - name: Deploy migrate-run
-        run: supabase functions deploy migrate-run --project-ref "$SUPABASE_PROJECT_REF"
-
-      - name: Deploy migrate-generate
-        run: supabase functions deploy migrate-generate --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy edge functions
+        run: |
+          supabase functions deploy migrate-ping --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy migrate-preview --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy migrate-run --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy migrate-generate --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy change-staff-password --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: List deployed functions
         run: supabase functions list --project-ref "$SUPABASE_PROJECT_REF"

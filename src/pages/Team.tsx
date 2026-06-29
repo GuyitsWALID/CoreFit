@@ -62,7 +62,7 @@ import { callSendWelcomeSmsFunction } from "@/utils/sendWelcomeViaEdge";
 import { useGym } from "@/contexts/GymContext";
 import { DynamicHeader } from "@/components/layout/DynamicHeader";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { getCurrentStaffRole, StaffRole } from "@/lib/staffRole";
+import { getCurrentStaffRole, isCurrentUserSuperAdmin, StaffRole } from "@/lib/staffRole";
 
 interface Role {
   id: string;
@@ -137,6 +137,7 @@ export default function TeamManagement() {
   const [pendingDeleteMember, setPendingDeleteMember] = useState<TeamMember | null>(null);
   const [isDeletingMember, setIsDeletingMember] = useState(false);
   const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   const [qrInfo, setQrInfo] = useState<QRInfo | null>(null);
   const qrContainerRef = useRef<HTMLDivElement>(null);
@@ -223,7 +224,6 @@ export default function TeamManagement() {
       .from('roles')
       .select('*')
       .neq('name', 'super_admin')
-      .neq('name', 'admin')
       .order('name', { ascending: true });
     if (!error && data) setRoles(data);
   };
@@ -233,6 +233,7 @@ export default function TeamManagement() {
       fetchTeamMembers();
       fetchRoles();
       getCurrentStaffRole(gym.id).then(setStaffRole);
+      isCurrentUserSuperAdmin().then(setIsSuperAdmin);
     }
   }, [gym]);
 
@@ -455,11 +456,12 @@ export default function TeamManagement() {
   const assignableRoles = useMemo(() => {
     return roles.filter((role) => {
       const normalizedRole = role.name.trim().toLowerCase();
-      if (normalizedRole === 'super_admin' || normalizedRole === 'admin') return false;
+      if (normalizedRole === 'super_admin') return false;
+      if (normalizedRole === 'admin') return isSuperAdmin;
       if (normalizedRole === 'manager' && staffRole !== 'admin') return false;
       return true;
     });
-  }, [roles, staffRole]);
+  }, [roles, staffRole, isSuperAdmin]);
   const canDeleteStaff = staffRole !== null && staffRole !== 'manager';
 
   const renderMemberCard = (member: TeamMember) => (
