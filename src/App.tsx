@@ -28,7 +28,7 @@ import { MigrationDashboard } from '@/components/MigrationPage';
 import Packages from './pages/Packages.tsx';
 import { SuperAdminGuard } from '@/components/auth/SuperAdminGuard';
 import { AdminHotkeyGate, hasSuperAdminEntry } from '@/components/auth/AdminHotkeyGate';
-import { ManagerRestrictedRoute } from '@/components/auth/ManagerRestrictedRoute';
+import { GymRoleGuard } from '@/components/auth/GymRoleGuard';
 
 // Layout component that wraps gym-specific pages
 const GymLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -68,15 +68,15 @@ function App() {
             <GymLayout>
               <Routes>
                 <Route path="/admin/onboard" element={<OnboardingForm />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/memberships" element={<MembershipList />} />
-                <Route path="/register" element={<RegisterClient />} />
-                <Route path="/team" element={<Team />} />
-                <Route path="/trainers" element={<TrainersList />} />
-                <Route path="/packages" element={<Packages />} />
-                <Route path="/check-ins" element={<CheckIns />} />
-                <Route path="/reports" element={<ManagerRestrictedRoute><Reports /></ManagerRestrictedRoute>} />
-                <Route path="/settings" element={<ManagerRestrictedRoute><Settings /></ManagerRestrictedRoute>} />
+                <Route path="/dashboard" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><Dashboard /></GymRoleGuard>} />
+                <Route path="/memberships" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><MembershipList /></GymRoleGuard>} />
+                <Route path="/register" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><RegisterClient /></GymRoleGuard>} />
+                <Route path="/team" element={<GymRoleGuard allowedRoles={['admin', 'manager']}><Team /></GymRoleGuard>} />
+                <Route path="/trainers" element={<GymRoleGuard allowedRoles={['admin', 'manager']}><TrainersList /></GymRoleGuard>} />
+                <Route path="/packages" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><Packages /></GymRoleGuard>} />
+                <Route path="/check-ins" element={<GymRoleGuard allowedRoles={['admin', 'manager', 'receptionist']}><CheckIns /></GymRoleGuard>} />
+                <Route path="/reports" element={<GymRoleGuard allowedRoles={['admin']}><Reports /></GymRoleGuard>} />
+                <Route path="/settings" element={<GymRoleGuard allowedRoles={['admin']}><Settings /></GymRoleGuard>} />
                 <Route path="/logout" element={<Logout />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>

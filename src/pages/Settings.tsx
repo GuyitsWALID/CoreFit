@@ -6,10 +6,23 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { DynamicHeader } from '@/components/layout/DynamicHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { useGym } from "@/contexts/GymContext";
+import { useToast } from "@/hooks/use-toast";
+
+type StaffPasswordTarget = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  email: string | null;
+  roles?: { name?: string | null } | { name?: string | null }[] | null;
+};
 
 const TABS = ["Personal Info", "Notifications", "Account", "Password"];
 
 export default function Settings() {
+  const { gym } = useGym();
+  const { toast } = useToast();
   const [tab, setTab] = useState("Personal Info");
   const [userInfo, setUserInfo] = useState<{ full_name: string; email: string; role: string } | null>(null);
   const [emailNotif, setEmailNotif] = useState(true);
@@ -22,6 +35,14 @@ export default function Settings() {
   const [passwordStrength, setPasswordStrength] = useState(0);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [staffTargets, setStaffTargets] = useState<StaffPasswordTarget[]>([]);
+  const [selectedStaffId, setSelectedStaffId] = useState("");
+  const [staffNewPassword, setStaffNewPassword] = useState("");
+  const [staffConfirmPassword, setStaffConfirmPassword] = useState("");
+  const [staffPasswordStrength, setStaffPasswordStrength] = useState(0);
+  const [staffPasswordError, setStaffPasswordError] = useState("");
+  const [staffPasswordSuccess, setStaffPasswordSuccess] = useState("");
+  const [isChangingStaffPassword, setIsChangingStaffPassword] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -72,6 +93,37 @@ export default function Settings() {
     setPasswordStrength(getPasswordStrength(newPassword));
   }, [newPassword]);
 
+  useEffect(() => {
+    setStaffPasswordStrength(getPasswordStrength(staffNewPassword));
+  }, [staffNewPassword]);
+
+  useEffect(() => {
+    const fetchStaffTargets = async () => {
+      if (!gym || gym.id === "default") return;
+
+      const { data, error } = await supabase
+        .from('staff')
+        .select('id, first_name, last_name, full_name, email, roles(name)')
+        .eq('gym_id', gym.id)
+        .eq('is_active', true)
+        .order('first_name', { ascending: true });
+
+      if (error) {
+        console.error("Could not load staff password targets:", error);
+        return;
+      }
+
+      const allowedTargets = ((data || []) as StaffPasswordTarget[]).filter((staff) => {
+        const rawRole = Array.isArray(staff.roles) ? staff.roles[0]?.name : staff.roles?.name;
+        return ["manager", "receptionist"].includes(String(rawRole || "").trim().toLowerCase());
+      });
+
+      setStaffTargets(allowedTargets);
+    };
+
+    fetchStaffTargets();
+  }, [gym?.id]);
+
   async function handlePasswordReset(e: React.FormEvent) {
     e.preventDefault();
     setPasswordError("");
@@ -111,6 +163,73 @@ export default function Settings() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+    }
+  }
+
+  const generatePassword = () => {
+    const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+    let password = "";
+    for (let i = 0; i < 12; i++) {
+      password += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    return password;
+  };
+
+  const handleGenerateStaffPassword = () => {
+    const password = generatePassword();
+    setStaffNewPassword(password);
+    setStaffConfirmPassword(password);
+    setStaffPasswordError("");
+    setStaffPasswordSuccess("");
+  };
+
+  async function handleStaffPasswordReset(e: React.FormEvent) {
+    e.preventDefault();
+    setStaffPasswordError("");
+    setStaffPasswordSuccess("");
+
+    if (!gym || gym.id === "default") {
+      setStaffPasswordError("Gym context is required.");
+      return;
+    }
+    if (!selectedStaffId || !staffNewPassword || !staffConfirmPassword) {
+      setStaffPasswordError("Select a staff member and enter the new password.");
+      return;
+    }
+    if (staffNewPassword !== staffConfirmPassword) {
+      setStaffPasswordError("New passwords do not match.");
+      return;
+    }
+    if (staffPasswordStrength < 4) {
+      setStaffPasswordError("Password is not strong enough.");
+      return;
+    }
+
+    setIsChangingStaffPassword(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('change-staff-password', {
+        body: {
+          gymId: gym.id,
+          targetStaffId: selectedStaffId,
+          newPassword: staffNewPassword,
+        },
+      });
+
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      setStaffPasswordSuccess("Staff password updated successfully.");
+      setSelectedStaffId("");
+      setStaffNewPassword("");
+      setStaffConfirmPassword("");
+      toast({
+        title: "Staff password updated",
+        description: "The selected staff member can now sign in with the new password.",
+      });
+    } catch (error: any) {
+      setStaffPasswordError(error?.message || "Could not update this staff password.");
+    } finally {
+      setIsChangingStaffPassword(false);
     }
   }
 
@@ -232,43 +351,111 @@ export default function Settings() {
           </div>
         )}
         {tab === "Password" && (
-          <form onSubmit={handlePasswordReset} className="max-w-md mx-auto space-y-6">
-            <h2 className="font-semibold text-lg mb-2">Reset Password</h2>
-            <p className="text-gray-500 mb-4">Change your account password. Make sure your new password is strong.</p>
-            <div>
-              <label className="block text-sm font-medium mb-1">Current Password</label>
-              <Input
-                type="password"
-                value={currentPassword}
-                onChange={e => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
+          <div className="space-y-8">
+            <form onSubmit={handlePasswordReset} className="max-w-md mx-auto space-y-6">
+              <h2 className="font-semibold text-lg mb-2">Reset Password</h2>
+              <p className="text-gray-500 mb-4">Change your account password. Make sure your new password is strong.</p>
+              <div>
+                <label className="block text-sm font-medium mb-1">Current Password</label>
+                <Input
+                  type="password"
+                  value={currentPassword}
+                  onChange={e => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">New Password</label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <PasswordStrengthBar strength={passwordStrength} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Confirm New Password</label>
+                <Input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+              {passwordError && <div className="text-red-600 text-sm">{passwordError}</div>}
+              {passwordSuccess && <div className="text-green-600 text-sm">{passwordSuccess}</div>}
+              <div className="flex justify-end">
+                <Button type="submit">Update Password</Button>
+              </div>
+            </form>
+
+            <div className="border-t pt-8">
+              <form onSubmit={handleStaffPasswordReset} className="max-w-md mx-auto space-y-6">
+                <div>
+                  <h2 className="font-semibold text-lg mb-2">Reset Staff Password</h2>
+                  <p className="text-gray-500 mb-4">
+                    Set a new temporary password for an active manager or receptionist.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Staff Member</label>
+                  <select
+                    value={selectedStaffId}
+                    onChange={e => setSelectedStaffId(e.target.value)}
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Select staff member</option>
+                    {staffTargets.map((staff) => {
+                      const role = Array.isArray(staff.roles) ? staff.roles[0]?.name : staff.roles?.name;
+                      const name = staff.full_name || `${staff.first_name || ""} ${staff.last_name || ""}`.trim() || staff.email || "Unnamed staff";
+                      return (
+                        <option key={staff.id} value={staff.id}>
+                          {name} ({role})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <label className="block text-sm font-medium">New Staff Password</label>
+                    <Button type="button" variant="outline" size="sm" onClick={handleGenerateStaffPassword}>
+                      Generate
+                    </Button>
+                  </div>
+                  <Input
+                    type="password"
+                    value={staffNewPassword}
+                    onChange={e => setStaffNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <PasswordStrengthBar strength={staffPasswordStrength} />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Confirm Staff Password</label>
+                  <Input
+                    type="password"
+                    value={staffConfirmPassword}
+                    onChange={e => setStaffConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                {staffPasswordError && <div className="text-red-600 text-sm">{staffPasswordError}</div>}
+                {staffPasswordSuccess && <div className="text-green-600 text-sm">{staffPasswordSuccess}</div>}
+
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={isChangingStaffPassword || staffPasswordStrength < 4}>
+                    {isChangingStaffPassword ? "Updating..." : "Update Staff Password"}
+                  </Button>
+                </div>
+              </form>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">New Password</label>
-              <Input
-                type="password"
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-              <PasswordStrengthBar strength={passwordStrength} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Confirm New Password</label>
-              <Input
-                type="password"
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-            </div>
-            {passwordError && <div className="text-red-600 text-sm">{passwordError}</div>}
-            {passwordSuccess && <div className="text-green-600 text-sm">{passwordSuccess}</div>}
-            <div className="flex justify-end">
-              <Button type="submit">Update Password</Button>
-            </div>
-          </form>
+          </div>
         )}
           </div>
           </div>
