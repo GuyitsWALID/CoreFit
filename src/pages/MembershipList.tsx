@@ -352,6 +352,62 @@ export default function MembershipList() {
     const tab = opts?.activeTab ?? activeTab;
     const canUseRawStatusFilter = ['active', 'paused', 'inactive'].includes(stFilter);
     try {
+      if (tab === 'expiring') {
+        const nowIso = new Date().toISOString();
+        const futureIso = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
+        const safe = sTerm ? sTerm.replace(/[%_]/g, "\\$&") : '';
+
+        if (pkFilter === '__none__') {
+          setMembers([]);
+          setIsLoading(false);
+          setIsRefreshingMembers(false);
+          return;
+        }
+
+        let usersQuery: any = supabase
+          .from('users')
+          .select('id, full_name, email, phone, status, created_at, membership_expiry, package_id, packages!inner(name, duration_value, duration_unit)')
+          .not('package_id', 'is', null)
+          .not('membership_expiry', 'is', null)
+          .gt('membership_expiry', nowIso)
+          .lte('membership_expiry', futureIso);
+
+        if (gym && gym.id !== 'default') usersQuery = usersQuery.eq('gym_id', gym.id);
+        if (canUseRawStatusFilter) usersQuery = usersQuery.eq('status', stFilter);
+        if (safe) usersQuery = usersQuery.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
+        if (pkFilter && pkFilter !== 'all') usersQuery = usersQuery.eq('packages.name', pkFilter);
+
+        if (sortOrder === 'asc') usersQuery = usersQuery.order('full_name', { ascending: true });
+        else if (sortOrder === 'desc') usersQuery = usersQuery.order('full_name', { ascending: false });
+        else usersQuery = usersQuery.order('membership_expiry', { ascending: true });
+
+        const { data, error } = await usersQuery;
+        if (error) throw error;
+
+        const rows = (data || []).map((user: any) => {
+          const pkg = Array.isArray(user.packages) ? user.packages[0] : user.packages;
+          return {
+            user_id: user.id,
+            full_name: user.full_name,
+            email: user.email,
+            phone: user.phone,
+            package_id: user.package_id,
+            package_name: pkg?.name ?? null,
+            created_at: user.created_at,
+            membership_expiry: user.membership_expiry,
+            status: user.status,
+            days_left: calculateDateDaysLeft(user.membership_expiry),
+            duration_unit: pkg?.duration_unit ?? 'days',
+            duration_value: pkg?.duration_value ?? 0,
+          };
+        });
+
+        setMembers(await enrichCouponMembershipRows(rows));
+        setIsLoading(false);
+        setIsRefreshingMembers(false);
+        return;
+      }
+
       // If active tab — prefer the `users_with_membership_info` view (ensures package fields are populated)
       if (tab === 'active') {
         const nowIso = new Date().toISOString();
@@ -592,7 +648,6 @@ export default function MembershipList() {
           .eq('status', 'active')
           .gt('membership_expiry', nowIso),
         baseCountQuery()
-          .eq('status', 'active')
           .gt('membership_expiry', nowIso)
           .lte('membership_expiry', futureIso),
         baseCountQuery()
